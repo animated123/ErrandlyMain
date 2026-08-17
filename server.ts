@@ -5473,19 +5473,19 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   });
 
-  // API 404 Handler - MUST be before Vite middleware
-  app.all("/api/*all", (req, res) => {
-    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+  // API 404 Handler - MUST be before Vite/static middleware
+  app.use("/api", (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl || req.url}` });
   });
 
   // Global Error Handler for API
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error("[Global Error Handler]", err);
-    if (req.path.startsWith("/api")) {
+    if (req.path && req.path.startsWith("/api")) {
       return res.status(err.status || 500).json({
         success: false,
         message: err.message || "Internal Server Error",
-        error: process.env.NODE_ENV === "development" ? err : {}
+        error: process.env.NODE_ENV === "development" ? (err.message || String(err)) : "Internal Server Error"
       });
     }
     next(err);
@@ -5505,8 +5505,14 @@ Please proceed with the task according to safety guidelines and update milestone
       } else {
         const distPath = path.join(process.cwd(), 'dist');
         app.use(express.static(distPath));
-        app.get('*all', (req, res) => {
-          res.sendFile(path.join(distPath, 'index.html'));
+        app.use((req, res, next) => {
+          if (req.method === "GET" && !req.path.startsWith("/api")) {
+            const indexPath = path.join(distPath, "index.html");
+            if (fs.existsSync(indexPath)) {
+              return res.sendFile(indexPath);
+            }
+          }
+          next();
         });
       }
     }
@@ -5516,6 +5522,20 @@ Please proceed with the task according to safety guidelines and update milestone
   })();
 
   return initAppPromise;
+}
+
+// Default export for serverless / function invocation environments
+export default async function handler(req: any, res: any) {
+  try {
+    const app = await getApp();
+    return app(req, res);
+  } catch (err: any) {
+    console.error("[Serverless Handler Invocation Error]:", err);
+    if (res && typeof res.status === "function") {
+      return res.status(500).json({ error: "Server Initialization Error: " + (err?.message || String(err)) });
+    }
+    throw err;
+  }
 }
 
 // Standalone mode: Start HTTP listener on port 3000 when NOT running in Vercel
