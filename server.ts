@@ -974,6 +974,36 @@ const LOCAL_DB_PATH = isVercelEnv
   ? path.join("/tmp", "local_db.json")
   : path.join(process.cwd(), "local_db.json");
 
+const DEFAULT_APP_SETTINGS = {
+  id: 'app',
+  primary_color: '#2891e2',
+  logo_url: 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png',
+  icon_url: 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png',
+  dashboard_hero_url: 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png',
+  default_ui_scale: 1.1,
+  logo_scale: 3,
+  logo_variant: 'original',
+  saka_keja_base_fee: 1200,
+  saka_keja_percentage: 8,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString()
+};
+
+const DEFAULT_ANDROID_SETTINGS = {
+  id: 'android',
+  primary_color: '#2891e2',
+  logo_url: 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png',
+  icon_url: 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png',
+  dashboard_hero_url: 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png',
+  default_ui_scale: 1.1,
+  logo_scale: 3,
+  logo_variant: 'original',
+  saka_keja_base_fee: 1200,
+  saka_keja_percentage: 8,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString()
+};
+
 function loadLocalDb(): Record<string, any[]> {
   try {
     let db: Record<string, any[]> = {};
@@ -1371,20 +1401,22 @@ const rateLimitMetrics = {
 };
 
 // Periodic Garbage Collector to clean stale tracking records every 3 minutes
-setInterval(() => {
-  const now = Date.now();
-  let cleared = 0;
-  rateLimitStore.forEach((entry, key) => {
-    entry.timestamps = entry.timestamps.filter(ts => now - ts < 600000);
-    if (entry.timestamps.length === 0 && (!entry.blockedUntil || entry.blockedUntil < now)) {
-      rateLimitStore.delete(key);
-      cleared++;
+if (typeof setInterval !== 'undefined') {
+  setInterval(() => {
+    const now = Date.now();
+    let cleared = 0;
+    rateLimitStore.forEach((entry, key) => {
+      entry.timestamps = entry.timestamps.filter(ts => now - ts < 600000);
+      if (entry.timestamps.length === 0 && (!entry.blockedUntil || entry.blockedUntil < now)) {
+        rateLimitStore.delete(key);
+        cleared++;
+      }
+    });
+    if (cleared > 0) {
+      console.log(`[RateLimiter GC] Cleared ${cleared} stale rate limit tracking entries.`);
     }
-  });
-  if (cleared > 0) {
-    console.log(`[RateLimiter GC] Cleared ${cleared} stale rate limit tracking entries.`);
-  }
-}, 3 * 60 * 1000);
+  }, 3 * 60 * 1000).unref();
+}
 
 function sessionRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (!rateLimitConfig.enabled) {
@@ -3747,8 +3779,10 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   };
 
-  // Run every 90 seconds to check, while allowing manual endpoint triggers
-  setInterval(verifyPendingTransactions, 90000);
+  // Run every 90 seconds to check in background, while allowing manual endpoint triggers
+  if (!process.env.VERCEL) {
+    setInterval(verifyPendingTransactions, 90000).unref();
+  }
 
   /**
    * Manual verification endpoint (can be used for instant checks)
