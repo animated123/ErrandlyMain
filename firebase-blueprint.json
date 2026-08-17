@@ -1,0 +1,183 @@
+{
+  "entities": {
+    "FeaturedService": {
+      "title": "FeaturedService",
+      "description": "A featured service displayed on the home screen.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" }
+      },
+      "required": ["id", "title", "description", "imageUrl", "price"]
+    },
+    "ServiceListing": {
+      "title": "ServiceListing",
+      "description": "A listing for a specific service category.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["id", "title", "description", "price", "category"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "A notification for a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "errandId": { "type": "string" }
+      },
+      "required": ["id", "userId", "title", "message", "type", "read", "createdAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A financial transaction for a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "previousBalance": { "type": "number" },
+        "addedBalance": { "type": "number" },
+        "newBalance": { "type": "number" },
+        "transactionCode": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "description": { "type": "string" },
+        "paymentReference": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "amount", "type", "status", "description", "createdAt", "updatedAt"]
+    },
+    "Errand": {
+      "title": "Errand",
+      "description": "An errand task.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string" },
+        "requesterId": { "type": "string" },
+        "runnerId": { "type": "string" },
+        "runnerLocation": { 
+          "type": "object",
+          "properties": {
+            "lat": { "type": "number" },
+            "lng": { "type": "number" }
+          }
+        },
+        "budget": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "status", "requesterId", "createdAt"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Global application settings.",
+      "type": "object",
+      "properties": {
+        "primaryColor": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "iconUrl": { "type": "string" },
+        "defaultUiScale": { "type": "number" },
+        "logoScale": { "type": "number" },
+        "sakaKejaBaseFee": { "type": "number" },
+        "sakaKejaPercentage": { "type": "number" }
+      }
+    },
+    "SupportChat": {
+      "title": "SupportChat",
+      "description": "A support chat session.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "messages": { "type": "array", "items": { "type": "object" } },
+        "unreadByAdmin": { "type": "boolean" },
+        "unreadByUser": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "messages", "updatedAt"]
+    },
+    "RunnerApplication": {
+      "title": "RunnerApplication",
+      "description": "An application to become a runner.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "status", "createdAt"]
+    },
+    "ErrandChatMessage": {
+      "title": "ErrandChatMessage",
+      "description": "A message in an errand chat.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "senderId", "senderName", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/featured_services/{serviceId}": {
+      "schema": "FeaturedService",
+      "description": "Collection of featured services."
+    },
+    "/service_listings/{listingId}": {
+      "schema": "ServiceListing",
+      "description": "Collection of service listings."
+    },
+    "/notifications/{notificationId}": {
+      "schema": "AppNotification",
+      "description": "Collection of user notifications."
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Collection of user transactions."
+    },
+    "/errands/{errandId}": {
+      "schema": "Errand",
+      "description": "Collection of errands."
+    },
+    "/support_chats/{userId}": {
+      "schema": "SupportChat",
+      "description": "Collection of support chats."
+    },
+    "/settings/app": {
+      "schema": "AppSettings",
+      "description": "Global application settings document."
+    },
+    "/runner_applications/{appId}": {
+      "schema": "RunnerApplication",
+      "description": "Collection of runner applications."
+    },
+    "/errand_chats/{errandId}/messages/{msgId}": {
+      "schema": "ErrandChatMessage",
+      "description": "Collection of messages for a specific errand chat."
+    }
+  }
+}

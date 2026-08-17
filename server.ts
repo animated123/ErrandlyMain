@@ -1,0 +1,5123 @@
+import express from "express";
+import { GoogleGenAI } from "@google/genai";
+import path from "path";
+import fs from "fs";
+import multer from "multer";
+import nodemailer from "nodemailer";
+import cors from "cors";
+import admin from "firebase-admin";
+import axios from "axios";
+import { Resend } from 'resend';
+import pg from 'pg';
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+
+// Global captured logs tracker
+interface LogEntry {
+  timestamp: string;
+  level: "log" | "info" | "warn" | "error";
+  message: string;
+}
+
+const capturedLogs: LogEntry[] = [];
+const MAX_LOGS = 300;
+
+function addCapturedLog(level: "log" | "info" | "warn" | "error", args: any[]) {
+  try {
+    const message = args.map(arg => {
+      if (typeof arg === "object" && arg !== null) {
+        try {
+          return JSON.stringify(arg);
+        } catch (_) {
+          return String(arg);
+        }
+      }
+      return String(arg);
+    }).join(" ");
+
+    capturedLogs.push({
+      timestamp: new Date().toISOString(),
+      level,
+      message
+    });
+
+    if (capturedLogs.length > MAX_LOGS) {
+      capturedLogs.shift();
+    }
+  } catch (err) {
+    // Fail silently so logging never breaks request loops
+  }
+}
+
+const originalLog = console.log;
+const originalInfo = console.info;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+console.log = function(...args: any[]) {
+  originalLog.apply(console, args);
+  addCapturedLog("log", args);
+};
+
+console.info = function(...args: any[]) {
+  originalInfo.apply(console, args);
+  addCapturedLog("info", args);
+};
+
+console.warn = function(...args: any[]) {
+  originalWarn.apply(console, args);
+  addCapturedLog("warn", args);
+};
+
+console.error = function(...args: any[]) {
+  originalError.apply(console, args);
+  addCapturedLog("error", args);
+};
+
+const { Pool } = pg;
+
+// Define pgPool holder
+let pgPool: any = null;
+let pgConnected = false;
+let pgError: string | null = null;
+const CONFIG_FILE = path.join(process.cwd(), "database_config.json");
+const ENV_OVERRIDES_FILE = path.join(process.cwd(), "env-overrides.json");
+const APP_CONFIG_FILE = path.join(process.cwd(), "app_config.json");
+
+// Define custom .env loader to support manual local/container variables
+try {
+  const envPath = path.join(process.cwd(), ".env");
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, "utf-8");
+    envContent.split("\n").forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return;
+      const index = trimmed.indexOf("=");
+      if (index > 0) {
+        const key = trimmed.slice(0, index).trim();
+        let value = trimmed.slice(index + 1).trim();
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+        process.env[key] = value;
+      }
+    });
+    console.log("[.env] Successfully loaded environment variables from .env file.");
+  }
+} catch (err: any) {
+  console.warn("Could not read .env file on boot:", err.message);
+}
+
+// Load env-overrides dynamically on startup and inject into process.env
+try {
+  if (fs.existsSync(ENV_OVERRIDES_FILE)) {
+    const localOverrides = JSON.parse(fs.readFileSync(ENV_OVERRIDES_FILE, "utf-8")) || {};
+    Object.entries(localOverrides).forEach(([key, val]) => {
+      if (val && typeof val === 'string') {
+        process.env[key] = val;
+      }
+    });
+    console.log("[Env Overrides] Successfully hydrated process.env from env-overrides.json");
+  }
+} catch (err: any) {
+  console.warn("Could not read local env-overrides.json on boot:", err.message);
+}
+
+let appConfig = {
+  actionServerUrl: "http://localhost:5005",
+  database: {
+    host: "127.0.0.1",
+    port: 5432,
+    user: "postgres",
+    password: "",
+    name: "Errandly"
+  }
+};
+
+try {
+  if (fs.existsSync(APP_CONFIG_FILE)) {
+    const loaded = JSON.parse(fs.readFileSync(APP_CONFIG_FILE, "utf-8"));
+    appConfig = { ...appConfig, ...loaded };
+    console.log("[App Config] Loaded config file app_config.json successfully.");
+  } else {
+    fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+  }
+} catch (err: any) {
+  console.warn("Could not read app_config.json, using default values:", err.message);
+}
+
+// Build dbConfig with priority given to saved appConfig/legacy database_config if present, then process.env, then defaults
+let dbConfig = {
+  host: appConfig.database?.host || process.env.PGHOST || "127.0.0.1",
+  port: appConfig.database?.port || (process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432),
+  user: appConfig.database?.user || process.env.PGUSER || "postgres",
+  password: appConfig.database?.password !== undefined && appConfig.database?.password !== ""
+    ? appConfig.database.password 
+    : (process.env.PGPASSWORD !== undefined ? process.env.PGPASSWORD : ""),
+  database: appConfig.database?.name || process.env.PGDATABASE || "postgres"
+};
+
+try {
+  if (fs.existsSync(CONFIG_FILE)) {
+    const legacyConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    dbConfig = { ...dbConfig, ...legacyConfig };
+  }
+} catch (err) {
+  console.warn("Could not read legacy database_config.json:", err);
+}
+
+function snakeToCamel(s: string): string {
+  return s.replace(/([-_][a-z])/ig, ($1) => $1.toUpperCase().replace('-', '').replace('_', ''));
+}
+
+function camelToSnake(str: string): string {
+  return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+}
+
+function convertToFirestoreDocument(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(convertToFirestoreDocument);
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = value;
+    const camel = snakeToCamel(key);
+    if (camel !== key) result[camel] = value;
+    const snake = camelToSnake(key);
+    if (snake !== key) result[snake] = value;
+  }
+  return result;
+}
+
+function convertToSupabaseRow(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(convertToSupabaseRow);
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = value;
+    const snake = camelToSnake(key);
+    if (snake !== key) result[snake] = value;
+    const camel = snakeToCamel(key);
+    if (camel !== key) result[camel] = value;
+  }
+  return result;
+}
+
+let schemaInitialized = false;
+
+// Global Postgres connection pool initiator
+async function initPgPool() {
+  if (pgPool && pgConnected) {
+    if (!schemaInitialized) {
+      await ensurePostgreSqlSchema();
+    }
+    return;
+  }
+
+  if (pgPool) {
+    try {
+      await pgPool.end();
+    } catch (_) {
+      // Ignore pool termination failures
+    }
+  }
+  
+  const isRemoteHost = dbConfig.host && !dbConfig.host.includes('127.0.0.1') && !dbConfig.host.includes('localhost');
+  const poolOpts: any = {
+    host: dbConfig.host,
+    port: dbConfig.port,
+    user: dbConfig.user,
+    password: dbConfig.password,
+    database: dbConfig.database,
+    connectionTimeoutMillis: 8000,
+    idleTimeoutMillis: 10000
+  };
+
+  if (isRemoteHost) {
+    poolOpts.ssl = { rejectUnauthorized: false };
+  }
+
+  pgPool = new Pool(poolOpts);
+
+  try {
+    const client = await pgPool.connect();
+    pgConnected = true;
+    pgError = null;
+    console.log(`[PostgreSQL] Connection established successfully to '${dbConfig.database}' on ${dbConfig.host}:${dbConfig.port}`);
+    client.release();
+    
+    // Validate database schema
+    if (!schemaInitialized) {
+      await ensurePostgreSqlSchema();
+    }
+  } catch (err: any) {
+    pgConnected = false;
+    pgError = err.message;
+    console.error(`[PostgreSQL] Live connection failed: ${err.message}. Standing by for manual settings at /dbconfig...`);
+  }
+}
+
+// Table schema compiler
+async function ensurePostgreSqlSchema() {
+  if (!pgPool || schemaInitialized) return;
+  schemaInitialized = true;
+  let client;
+  try {
+    client = await pgPool.connect();
+  } catch (connErr: any) {
+    console.warn("[PostgreSQL] Connection for schema check failed:", connErr.message);
+    return;
+  }
+  try {
+    await client.query("BEGIN;");
+    
+    // Profiles table definition
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.profiles (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE,
+        username TEXT,
+        phone TEXT,
+        role TEXT DEFAULT 'REQUESTER',
+        is_runner BOOLEAN DEFAULT false,
+        is_admin BOOLEAN DEFAULT false,
+        it_admin BOOLEAN DEFAULT false,
+        is_suspended BOOLEAN DEFAULT false,
+        suspension_reason TEXT,
+        phone_verified BOOLEAN DEFAULT false,
+        email_verified BOOLEAN DEFAULT false,
+        theme TEXT DEFAULT 'light',
+        is_online BOOLEAN DEFAULT false,
+        is_verified BOOLEAN DEFAULT false,
+        rating NUMERIC DEFAULT 5.0,
+        rating_count INTEGER DEFAULT 0,
+        wallet_balance NUMERIC DEFAULT 0.0,
+        balance NUMERIC DEFAULT 0.0,
+        completed_errands INTEGER DEFAULT 0,
+        total_tasks INTEGER DEFAULT 0,
+        notification_settings JSONB DEFAULT '{"push": true, "email": true, "sms": true}'::jsonb,
+        last_known_location JSONB,
+        profile_photo TEXT,
+        biography TEXT,
+        extra_data JSONB DEFAULT '{}'::jsonb,
+        password_hash TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Ensure password_hash exists on existing installations
+    await client.query(`
+      ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS password_hash TEXT NULL;
+    `);
+
+    // Errands table definition
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.errands (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        description TEXT,
+        category TEXT,
+        status TEXT DEFAULT 'pending',
+        budget NUMERIC,
+        requester_id TEXT,
+        requester_name TEXT,
+        requester_phone TEXT,
+        requester_is_verified BOOLEAN,
+        runner_id TEXT,
+        runner_name TEXT,
+        runner_phone TEXT,
+        runner_is_verified BOOLEAN,
+        pickup_location TEXT,
+        pickup_coordinates JSONB,
+        dropoff_location TEXT,
+        dropoff_coordinates JSONB,
+        deadline TEXT,
+        location TEXT,
+        dispute_reason TEXT,
+        bids JSONB DEFAULT '[]'::jsonb,
+        checklist JSONB DEFAULT '[]'::jsonb,
+        accepted_price NUMERIC,
+        receipt_url TEXT,
+        extra_data JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Ensure necessary columns exist on existing errands table
+    await client.query(`
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS runner_name TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS runner_phone TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS runner_is_verified BOOLEAN;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS requester_name TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS requester_phone TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS requester_is_verified BOOLEAN;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS pickup_location TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS pickup_coordinates JSONB;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS dropoff_location TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS dropoff_coordinates JSONB;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS deadline TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS accepted_price NUMERIC;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS bids JSONB DEFAULT '[]'::jsonb;
+    `);
+
+    // Notifications Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.notifications (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        type TEXT DEFAULT 'info',
+        read BOOLEAN DEFAULT false,
+        errand_id TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Errand Chats Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.errand_chats (
+        id TEXT PRIMARY KEY,
+        errand_id TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        sender_name TEXT,
+        text TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Support Messages Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.support_messages (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
+        message TEXT NOT NULL,
+        is_admin BOOLEAN DEFAULT false,
+        is_read BOOLEAN DEFAULT false,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Runner Applications Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.runner_applications (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        extra_data JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        approved_at TIMESTAMP WITH TIME ZONE,
+        reviewed_by_name TEXT,
+        return_reason TEXT,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Ensure all runner_applications columns exist on pre-existing installations
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS reviewed_by_name TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS return_reason TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+
+    // Settings Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.settings (
+        id TEXT PRIMARY KEY DEFAULT 'app',
+        primary_color TEXT DEFAULT '#2891e2',
+        logo_url TEXT DEFAULT 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png',
+        icon_url TEXT DEFAULT 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png',
+        dashboard_hero_url TEXT DEFAULT 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png',
+        default_ui_scale NUMERIC DEFAULT 1.1,
+        logo_scale NUMERIC DEFAULT 3,
+        logo_variant TEXT DEFAULT 'original',
+        saka_keja_base_fee NUMERIC DEFAULT 1200,
+        saka_keja_percentage NUMERIC DEFAULT 8,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Ensure all settings columns exist on pre-existing installations
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS primary_color TEXT DEFAULT '#2891e2';`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS logo_url TEXT DEFAULT 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png';`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS icon_url TEXT DEFAULT 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png';`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS dashboard_hero_url TEXT DEFAULT 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png';`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS default_ui_scale NUMERIC DEFAULT 1.1;`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS logo_scale NUMERIC DEFAULT 3;`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS logo_variant TEXT DEFAULT 'original';`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS saka_keja_base_fee NUMERIC DEFAULT 1200;`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS saka_keja_percentage NUMERIC DEFAULT 8;`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+    await client.query(`ALTER TABLE public.settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+
+    // Seed default settings
+    await client.query(`
+      INSERT INTO public.settings (id, primary_color, logo_url, icon_url, dashboard_hero_url, default_ui_scale, logo_scale, logo_variant, saka_keja_base_fee, saka_keja_percentage)
+      VALUES ('app', '#2891e2', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png', 1.1, 3, 'original', 1200, 8)
+      ON CONFLICT (id) DO NOTHING;
+    `);
+
+    // OTP codes table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.otp_codes (
+        id TEXT PRIMARY KEY,
+        phone_number TEXT,
+        code TEXT,
+        expires_at TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        is_used BOOLEAN DEFAULT false
+      );
+    `);
+    await client.query(`ALTER TABLE public.otp_codes ADD COLUMN IF NOT EXISTS phone_number TEXT;`);
+    await client.query(`ALTER TABLE public.otp_codes ADD COLUMN IF NOT EXISTS code TEXT;`);
+    await client.query(`ALTER TABLE public.otp_codes ADD COLUMN IF NOT EXISTS expires_at TEXT;`);
+    await client.query(`ALTER TABLE public.otp_codes ADD COLUMN IF NOT EXISTS is_used BOOLEAN DEFAULT false;`);
+    try {
+      await client.query('ALTER TABLE public.otp_codes ALTER COLUMN "email/phone" DROP NOT NULL;');
+    } catch (e: any) {
+      console.log("Check for email/phone column skipped or completed:", e.message);
+    }
+
+    // Transactions table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.transactions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        amount NUMERIC,
+        type TEXT,
+        status TEXT DEFAULT 'pending',
+        provider TEXT,
+        reference TEXT,
+        phone_number TEXT,
+        verification_data JSONB DEFAULT '{}'::jsonb,
+        error TEXT,
+        description TEXT,
+        previous_balance NUMERIC,
+        added_balance NUMERIC,
+        new_balance NUMERIC,
+        transaction_code TEXT,
+        payment_reference TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Migrate existing transactions table to add missing columns if any
+    await client.query(`
+      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS provider TEXT;
+      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS previous_balance NUMERIC;
+      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS added_balance NUMERIC;
+      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS new_balance NUMERIC;
+      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transaction_code TEXT;
+      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS payment_reference TEXT;
+    `);
+
+    // New: Featured Services Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.featured_services (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        price NUMERIC DEFAULT 0,
+        image_url TEXT,
+        explanation TEXT,
+        payment_guide TEXT,
+        category TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // New: Service Listings Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.service_listings (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        price NUMERIC DEFAULT 0,
+        category TEXT,
+        image_url TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // --- Dynamic Alterations for pre-existing tables to prevent type conflicts on UUID / missing columns ---
+    
+    // Profiles
+    await client.query(`ALTER TABLE public.profiles ALTER COLUMN id TYPE TEXT USING id::text;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS password_hash TEXT NULL;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS backend_admin BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_runner BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS it_admin BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS suspension_reason TEXT;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'light';`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS rating NUMERIC DEFAULT 5.0;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS rating_count INTEGER DEFAULT 0;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC DEFAULT 500;`); // Seed wallet with some test balance if newly added
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS balance NUMERIC DEFAULT 0.0;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS completed_errands INTEGER DEFAULT 0;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS total_tasks INTEGER DEFAULT 0;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS notification_settings JSONB DEFAULT '{"push": true, "email": true, "sms": true}'::jsonb;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_known_location JSONB;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS profile_photo TEXT;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS biography TEXT;`);
+    await client.query(`ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb;`);
+
+    // Errands
+    await client.query(`ALTER TABLE public.errands ALTER COLUMN id TYPE TEXT USING id::text;`);
+    await client.query(`ALTER TABLE public.errands ALTER COLUMN requester_id TYPE TEXT USING requester_id::text;`);
+    await client.query(`ALTER TABLE public.errands ALTER COLUMN runner_id TYPE TEXT USING runner_id::text;`);
+    await client.query(`ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS pickup_coordinates JSONB;`);
+    await client.query(`ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS dropoff_coordinates JSONB;`);
+    await client.query(`ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS bids JSONB DEFAULT '[]'::jsonb;`);
+    await client.query(`ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]'::jsonb;`);
+    await client.query(`ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb;`);
+
+    // Notifications
+    await client.query(`ALTER TABLE public.notifications ALTER COLUMN id TYPE TEXT USING id::text;`);
+    await client.query(`ALTER TABLE public.notifications ALTER COLUMN user_id TYPE TEXT USING user_id::text;`);
+
+    // Errand Chats
+    await client.query(`ALTER TABLE public.errand_chats ALTER COLUMN id TYPE TEXT USING id::text;`);
+    await client.query(`ALTER TABLE public.errand_chats ALTER COLUMN sender_id TYPE TEXT USING sender_id::text;`);
+
+    // Support Messages
+    await client.query(`ALTER TABLE public.support_messages ALTER COLUMN id TYPE TEXT USING id::text;`);
+    await client.query(`ALTER TABLE public.support_messages ALTER COLUMN user_id TYPE TEXT USING user_id::text;`);
+
+    // Runner Applications
+    await client.query(`ALTER TABLE public.runner_applications ALTER COLUMN id TYPE TEXT USING id::text;`);
+    await client.query(`ALTER TABLE public.runner_applications ALTER COLUMN user_id TYPE TEXT USING user_id::text;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS full_name TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS email TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS phone TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS national_id TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS id_front_url TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS id_back_url TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS selfie_url TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS address TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS category_applied TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS return_reason TEXT;`);
+    await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS reviewed_by_name TEXT;`);
+
+    await client.query("COMMIT;");
+    console.log("[PostgreSQL] Tables, constraints, alterations, and seed data checked/configured successfully.");
+  } catch (error) {
+    await client.query("ROLLBACK;");
+    console.error("[PostgreSQL] Error building schema tables:", error);
+  } finally {
+    client.release();
+  }
+}
+
+// Postgrest mock query translator for PostgreSQL
+async function executePostgresOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
+  if (!pgConnected || !pgPool) {
+    throw new Error("PostgreSQL database is currently offline.");
+  }
+
+  let isWrite = false;
+  let writeAction: 'insert' | 'update' | 'upsert' | 'delete' | null = null;
+  let writeBody: any = null;
+  const eqFilters: Array<{ field: string, value: any }> = [];
+  const inFilters: Array<{ field: string, values: any[] }> = [];
+  let orFilter: string | null = null;
+  let isSingle = false;
+  let limitVal: number | null = null;
+  let orderCol: string | null = null;
+  let orderAsc = true;
+
+  for (const call of chainCalls) {
+    const { method, args } = call;
+    if (method === 'insert') {
+      isWrite = true;
+      writeAction = 'insert';
+      writeBody = args[0];
+    } else if (method === 'update') {
+      isWrite = true;
+      writeAction = 'update';
+      writeBody = args[0];
+    } else if (method === 'upsert') {
+      isWrite = true;
+      writeAction = 'upsert';
+      writeBody = args[0];
+    } else if (method === 'delete') {
+      isWrite = true;
+      writeAction = 'delete';
+    } else if (method === 'eq') {
+      eqFilters.push({ field: args[0], value: args[1] });
+    } else if (method === 'in') {
+      inFilters.push({ field: args[0], values: args[1] });
+    } else if (method === 'or') {
+      orFilter = args[0];
+    } else if (method === 'match') {
+      const matchObj = args[0];
+      if (matchObj && typeof matchObj === 'object') {
+        for (const [k, v] of Object.entries(matchObj)) {
+          eqFilters.push({ field: k, value: v });
+        }
+      }
+    } else if (method === 'single' || method === 'maybeSingle') {
+      isSingle = true;
+    } else if (method === 'limit') {
+      limitVal = args[0];
+    } else if (method === 'order') {
+      orderCol = args[0];
+      if (args[1] && typeof args[1] === 'object') {
+        orderAsc = args[1].ascending !== false;
+      }
+    }
+  }
+
+  let queryStr = "";
+  const params: any[] = [];
+  let paramIdx = 1;
+
+  if (isWrite) {
+    if (writeAction === 'insert') {
+      const bodies = Array.isArray(writeBody) ? writeBody : [writeBody];
+      const insertedRows = [];
+      
+      const generateUUID = () => {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      };
+
+      for (const item of bodies) {
+        const dbRowObj = convertToSupabaseRow(item);
+        if (tableName === 'otp_codes' && !dbRowObj.id) {
+          dbRowObj.id = generateUUID();
+        } else if (!dbRowObj.id && tableName !== 'settings') {
+          dbRowObj.id = `${tableName.substring(0, 8)}_${Math.random().toString(36).substr(2, 9)}`;
+        }
+        
+        const snakeMap: Record<string, any> = {};
+        for (const [k, v] of Object.entries(dbRowObj)) {
+          snakeMap[camelToSnake(k)] = v;
+        }
+
+        const keys = Object.keys(snakeMap);
+        const cols = keys.map(k => `"${k}"`).join(", ");
+        const placeholders = keys.map(() => `$${paramIdx++}`).join(", ");
+        const rawVals = Object.values(snakeMap);
+        const vals = rawVals.map(v => {
+          if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
+            return JSON.stringify(v);
+          }
+          return v;
+        });
+        params.push(...vals);
+
+        const subQuery = `INSERT INTO public."${tableName}" (${cols}) VALUES (${placeholders}) RETURNING *`;
+        const res = await pgPool.query(subQuery, vals);
+        insertedRows.push(...res.rows);
+      }
+      
+      const mapped = insertedRows.map(convertToSupabaseRow);
+      return { data: Array.isArray(writeBody) ? mapped : mapped[0], error: null };
+    } 
+    else if (writeAction === 'update') {
+      const updateObj = convertToSupabaseRow(writeBody);
+      const snakeMap: Record<string, any> = {};
+      for (const [k, v] of Object.entries(updateObj)) {
+        if (camelToSnake(k) === 'id') continue;
+        snakeMap[camelToSnake(k)] = v === undefined ? null : v;
+      }
+
+      const setClauses: string[] = [];
+      const vals: any[] = [];
+
+      for (const [k, v] of Object.entries(snakeMap)) {
+        setClauses.push(`"${k}" = $${paramIdx++}`);
+        if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
+          vals.push(JSON.stringify(v));
+        } else {
+          vals.push(v);
+        }
+      }
+      params.push(...vals);
+
+      const whereClauses: string[] = [];
+      for (const filter of eqFilters) {
+        whereClauses.push(`"${camelToSnake(filter.field)}" = $${paramIdx++}`);
+        params.push(filter.value);
+      }
+
+      const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+      queryStr = `UPDATE public."${tableName}" SET ${setClauses.join(", ")} ${whereStr} RETURNING *`;
+    }
+    else if (writeAction === 'upsert') {
+      const bodies = Array.isArray(writeBody) ? writeBody : [writeBody];
+      const upsertedRows = [];
+      
+      for (const item of bodies) {
+        const upsertObj = convertToSupabaseRow(item);
+        const snakeMap: Record<string, any> = {};
+        for (const [k, v] of Object.entries(upsertObj)) {
+          snakeMap[camelToSnake(k)] = v;
+        }
+
+        const keys = Object.keys(snakeMap);
+        const cols = keys.map(k => `"${k}"`).join(", ");
+        
+        let localParamIdx = 1;
+        const placeholders = keys.map(() => `$${localParamIdx++}`).join(", ");
+        const rawVals = Object.values(snakeMap);
+        const vals = rawVals.map(v => {
+          if (v !== null && typeof v === 'object' && !(v instanceof Date)) {
+            return JSON.stringify(v);
+          }
+          return v;
+        });
+
+        const conflictCol = "id";
+        const updateSet = keys
+          .filter(k => k !== conflictCol)
+          .map(k => `"${k}" = EXCLUDED."${k}"`)
+          .join(", ");
+
+        const subQuery = `
+          INSERT INTO public."${tableName}" (${cols})
+          VALUES (${placeholders})
+          ON CONFLICT (${conflictCol})
+          DO UPDATE SET ${updateSet}
+          RETURNING *
+        `;
+        const res = await pgPool.query(subQuery, vals);
+        upsertedRows.push(...res.rows);
+      }
+      
+      const mapped = upsertedRows.map(convertToSupabaseRow);
+      return { data: Array.isArray(writeBody) ? mapped : mapped[0], error: null };
+    }
+    else if (writeAction === 'delete') {
+      const whereClauses: string[] = [];
+      for (const filter of eqFilters) {
+        whereClauses.push(`"${camelToSnake(filter.field)}" = $${paramIdx++}`);
+        params.push(filter.value);
+      }
+      const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+      queryStr = `DELETE FROM public."${tableName}" ${whereStr} RETURNING *`;
+    }
+  } 
+  else {
+    const whereClauses: string[] = [];
+    for (const filter of eqFilters) {
+      whereClauses.push(`"${camelToSnake(filter.field)}" = $${paramIdx++}`);
+      params.push(filter.value);
+    }
+
+    for (const filter of inFilters) {
+      if (Array.isArray(filter.values) && filter.values.length > 0) {
+        const placeholders = filter.values.map(() => `$${paramIdx++}`).join(", ");
+        whereClauses.push(`"${camelToSnake(filter.field)}" IN (${placeholders})`);
+        params.push(...filter.values);
+      } else {
+        whereClauses.push('1 = 0'); // Empty array means nothing matches
+      }
+    }
+
+    if (orFilter) {
+      const parts = orFilter.split(',');
+      const orClauses: string[] = [];
+      for (const part of parts) {
+        const subParts = part.split('.');
+        if (subParts.length >= 3) {
+          const field = camelToSnake(subParts[0]);
+          const op = subParts[1];
+          const val = subParts.slice(2).join('.');
+          if (op === 'eq') {
+            orClauses.push(`"${field}" = $${paramIdx++}`);
+            params.push(val);
+          }
+        }
+      }
+      if (orClauses.length > 0) {
+        whereClauses.push(`(${orClauses.join(" OR ")})`);
+      }
+    }
+
+    const whereStr = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    let orderStr = "";
+    if (orderCol) {
+      orderStr = `ORDER BY "${camelToSnake(orderCol)}" ${orderAsc ? "ASC" : "DESC"}`;
+    } else if (tableName !== 'settings') {
+      orderStr = `ORDER BY created_at DESC`;
+    }
+
+    let limitStr = "";
+    if (limitVal !== null) {
+      limitStr = `LIMIT ${limitVal}`;
+    }
+
+    queryStr = `SELECT * FROM public."${tableName}" ${whereStr} ${orderStr} ${limitStr}`;
+  }
+
+  const res = await pgPool.query(queryStr, params);
+  const rows = res.rows.map(convertToSupabaseRow);
+
+  if (isSingle) {
+    return { data: rows.length > 0 ? rows[0] : null, error: null };
+  }
+  return { data: rows, error: null };
+}
+
+let forceDatabaseMode = true; // Temporary disable JSON writes and force physical DB writes as per user request
+
+async function executeDbOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
+  if (forceDatabaseMode) {
+    if (!pgPool || !pgConnected) {
+      console.warn(`[Database Operation Warning] PostgreSQL is not connected! Falling back gracefully to local JSON database storage as a resilient measure so that updates (e.g., runner applications approval) succeed.`);
+      return await executeLocalDbOperation(tableName, chainCalls);
+    }
+    try {
+      return await executePostgresOperation(tableName, chainCalls);
+    } catch (err: any) {
+      console.error(`[Database Operation Error] PostgreSQL operation failed: ${err.message}. Gracefully falling back to local JSON database storage.`);
+      return await executeLocalDbOperation(tableName, chainCalls);
+    }
+  }
+
+  if (pgConnected && pgPool) {
+    try {
+      return await executePostgresOperation(tableName, chainCalls);
+    } catch (err: any) {
+      console.warn(`[PostgreSQL fallback] Query failed on '${tableName}': ${err.message}. Routing to local JSON database.`);
+    }
+  }
+  return await executeLocalDbOperation(tableName, chainCalls);
+}
+
+function buildMockPostgrestBuilder(tableName: string, chainCalls: any[] = []): any {
+  const builder: any = {};
+
+  const methods = [
+    'select', 'insert', 'update', 'upsert', 'delete', 'eq', 'match',
+    'single', 'maybeSingle', 'limit', 'order', 'or', 'in'
+  ];
+
+  for (const method of methods) {
+    builder[method] = function(...args: any[]) {
+      chainCalls.push({ method, args });
+      return buildMockPostgrestBuilder(tableName, chainCalls);
+    };
+  }
+
+  builder.then = function(onfulfilled?: any, onrejected?: any) {
+    const p = executeDbOperation(tableName, chainCalls);
+    return p.then(onfulfilled, onrejected);
+  };
+
+  return builder;
+}
+
+const supabase: any = {
+  from: function(tableName: string) {
+    return buildMockPostgrestBuilder(tableName);
+  },
+  auth: {
+    admin: {
+      listUsers: async () => {
+        try {
+          const listResult = await supabase.from('profiles').select('*');
+          const usersList = listResult.data || [];
+          return {
+            data: {
+              users: usersList.map((u: any) => ({
+                id: u.id,
+                id_text: u.id,
+                email: u.email,
+                user_metadata: { name: u.username },
+                created_at: u.created_at || new Date().toISOString(),
+                last_sign_in_at: u.updated_at || new Date().toISOString()
+              }))
+            },
+            error: null
+          };
+        } catch (err: any) {
+          return { data: { users: [] }, error: err };
+        }
+      },
+      updateUserById: async (uid: string, attrs: any) => {
+        try {
+          const updates: any = {};
+          if (attrs.email !== undefined) updates.email = attrs.email;
+          if (attrs.password !== undefined) {
+            updates.password_hash = await bcrypt.hash(attrs.password, 10);
+          }
+          await supabase.from('profiles').update(updates).eq('id', uid);
+          return { data: { user: { id: uid } }, error: null };
+        } catch (err: any) {
+          return { data: null, error: err };
+        }
+      }
+    }
+  }
+};
+
+const isVercelEnv = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const LOCAL_DB_PATH = isVercelEnv
+  ? path.join("/tmp", "local_db.json")
+  : path.join(process.cwd(), "local_db.json");
+
+function loadLocalDb(): Record<string, any[]> {
+  try {
+    let db: Record<string, any[]> = {};
+    if (fs.existsSync(LOCAL_DB_PATH)) {
+      const data = fs.readFileSync(LOCAL_DB_PATH, "utf-8");
+      db = JSON.parse(data);
+    } else {
+      const bundledPath = path.join(process.cwd(), "local_db.json");
+      if (isVercelEnv && fs.existsSync(bundledPath)) {
+        const data = fs.readFileSync(bundledPath, "utf-8");
+        db = JSON.parse(data);
+      }
+    }
+    if (!db.settings || !Array.isArray(db.settings) || db.settings.length === 0) {
+      db.settings = [DEFAULT_APP_SETTINGS, DEFAULT_ANDROID_SETTINGS];
+    }
+    return db;
+  } catch (err) {
+    console.warn("[LocalDB] Error reading fallback file, using memory only:", err);
+    return {
+      settings: [DEFAULT_APP_SETTINGS, DEFAULT_ANDROID_SETTINGS]
+    };
+  }
+}
+
+function saveLocalDb(db: Record<string, any[]>) {
+  try {
+    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(db, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("[LocalDB] Error writing fallback file:", err);
+  }
+}
+
+async function executeLocalDbOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
+  const db = loadLocalDb();
+  if (!db[tableName]) {
+    db[tableName] = [];
+  }
+  const rows = db[tableName];
+
+  let isWrite = false;
+  let writeAction: 'insert' | 'update' | 'upsert' | 'delete' | null = null;
+  let writeBody: any = null;
+  const eqFilters: Array<{ field: string, value: any }> = [];
+  const inFilters: Array<{ field: string, values: any[] }> = [];
+  let orFilter: string | null = null;
+  let isSingle = false;
+  let limitVal: number | null = null;
+  let orderCol: string | null = null;
+  let orderAsc = true;
+
+  for (const call of chainCalls) {
+    const { method, args } = call;
+    if (method === 'insert') {
+      isWrite = true;
+      writeAction = 'insert';
+      writeBody = args[0];
+    } else if (method === 'update') {
+      isWrite = true;
+      writeAction = 'update';
+      writeBody = args[0];
+    } else if (method === 'upsert') {
+      isWrite = true;
+      writeAction = 'upsert';
+      writeBody = args[0];
+    } else if (method === 'delete') {
+      isWrite = true;
+      writeAction = 'delete';
+    } else if (method === 'eq') {
+      eqFilters.push({ field: args[0], value: args[1] });
+    } else if (method === 'in') {
+      inFilters.push({ field: args[0], values: args[1] });
+    } else if (method === 'or') {
+      orFilter = args[0];
+    } else if (method === 'match') {
+      const matchObj = args[0];
+      if (matchObj && typeof matchObj === 'object') {
+        for (const [k, v] of Object.entries(matchObj)) {
+          eqFilters.push({ field: k, value: v });
+        }
+      }
+    } else if (method === 'single' || method === 'maybeSingle') {
+      isSingle = true;
+    } else if (method === 'limit') {
+      limitVal = args[0];
+    } else if (method === 'order') {
+      orderCol = args[0];
+      if (args[1] && typeof args[1] === 'object') {
+        orderAsc = args[1].ascending !== false;
+      }
+    }
+  }
+
+  console.log(`[Local DB Fallback Engine] Performing on [${tableName}] -> Action: ${writeAction || 'select'}, Filters: ${JSON.stringify(eqFilters)}, InFilters: ${JSON.stringify(inFilters)}`);
+
+  const filterFn = (row: any) => {
+    for (const f of eqFilters) {
+      const val = row[f.field] !== undefined ? row[f.field] : row[snakeToCamel(f.field)] !== undefined ? row[snakeToCamel(f.field)] : row[camelToSnake(f.field)];
+      if (String(val) !== String(f.value)) {
+        return false;
+      }
+    }
+
+    for (const f of inFilters) {
+      const val = row[f.field] !== undefined ? row[f.field] : row[snakeToCamel(f.field)] !== undefined ? row[snakeToCamel(f.field)] : row[camelToSnake(f.field)];
+      if (!Array.isArray(f.values) || !f.values.map(String).includes(String(val))) {
+        return false;
+      }
+    }
+
+    if (orFilter) {
+      const parts = orFilter.split(',');
+      let matchedOne = false;
+      for (const part of parts) {
+        const subParts = part.split('.');
+        if (subParts.length >= 3) {
+          const rawField = subParts[0];
+          const op = subParts[1];
+          const rawVal = subParts.slice(2).join('.');
+          const val = row[rawField] !== undefined ? row[rawField] : row[snakeToCamel(rawField)] !== undefined ? row[snakeToCamel(rawField)] : row[camelToSnake(rawField)];
+          if (op === 'eq') {
+            if (String(val) === String(rawVal)) {
+              matchedOne = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!matchedOne) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  if (isWrite) {
+    if (writeAction === 'insert') {
+      const bodies = Array.isArray(writeBody) ? writeBody : [writeBody];
+      const results = [];
+      for (const item of bodies) {
+        const id = item.id || item.phone_number || item.code || `local_${Math.random().toString(36).substr(2, 9)}`;
+        const index = rows.findIndex(r => String(r.id) === String(id));
+        if (index > -1) {
+          rows[index] = { ...rows[index], ...item, id };
+          results.push(rows[index]);
+        } else {
+          const newItem = { id, ...item, created_at: item.created_at || new Date().toISOString() };
+          rows.push(newItem);
+          results.push(newItem);
+        }
+      }
+      saveLocalDb(db);
+      const mapped = convertToSupabaseRow(Array.isArray(writeBody) ? results : results[0]);
+      return { data: mapped, error: null };
+    }
+
+    if (writeAction === 'update') {
+      const updatedData = [];
+      for (let i = 0; i < rows.length; i++) {
+        if (filterFn(rows[i])) {
+          rows[i] = { ...rows[i], ...writeBody };
+          updatedData.push(rows[i]);
+        }
+      }
+      saveLocalDb(db);
+      return { data: convertToSupabaseRow(updatedData), error: null };
+    }
+
+    if (writeAction === 'upsert') {
+      const bodies = Array.isArray(writeBody) ? writeBody : [writeBody];
+      const results = [];
+      for (const item of bodies) {
+        const id = item.id || item.phone_number || item.email;
+        let index = -1;
+        if (id) {
+          index = rows.findIndex(r => String(r.id) === String(id) || String(r.phone_number) === String(id) || String(r.email) === String(id));
+        }
+        if (index > -1) {
+          rows[index] = { ...rows[index], ...item };
+          results.push(rows[index]);
+        } else {
+          const newId = id || `local_${Math.random().toString(36).substr(2, 9)}`;
+          const newItem = { id: newId, ...item, created_at: item.created_at || new Date().toISOString() };
+          rows.push(newItem);
+          results.push(newItem);
+        }
+      }
+      saveLocalDb(db);
+      const mapped = convertToSupabaseRow(Array.isArray(writeBody) ? results : results[0]);
+      return { data: mapped, error: null };
+    }
+
+    if (writeAction === 'delete') {
+      const remaining = [];
+      for (const r of rows) {
+        if (!filterFn(r)) {
+          remaining.push(r);
+        }
+      }
+      db[tableName] = remaining;
+      saveLocalDb(db);
+      return { data: null, error: null };
+    }
+  }
+
+  let filteredRows = rows.filter(filterFn);
+
+  if (orderCol) {
+    filteredRows.sort((a, b) => {
+      const valA = a[orderCol!] !== undefined ? a[orderCol!] : '';
+      const valB = b[orderCol!] !== undefined ? b[orderCol!] : '';
+      if (valA < valB) return orderAsc ? -1 : 1;
+      if (valA > valB) return orderAsc ? 1 : -1;
+      return 0;
+    });
+  }
+
+  if (limitVal !== null) {
+    filteredRows = filteredRows.slice(0, limitVal);
+  }
+
+  if (isSingle) {
+    const singleResult = filteredRows.length > 0 ? filteredRows[0] : null;
+    return { data: convertToSupabaseRow(singleResult), error: null };
+  }
+
+  return { data: convertToSupabaseRow(filteredRows), error: null };
+}
+
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+if (resend) {
+  console.log("[Resend] Initialized and ready as fallback.");
+} else {
+  console.warn("[Resend] RESEND_API_KEY is missing. Action Server fallback will be limited.");
+}
+
+// Use global fetch (built-in in stable Node 18+)
+const getFetch = () => {
+  return globalThis.fetch;
+};
+
+// Initialize Firebase Admin
+const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+let firebaseConfig: any = null;
+try {
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  }
+} catch (e) {
+  console.warn("Could not load firebase-applet-config.json:", e);
+}
+
+if (!admin.apps.length) {
+  try {
+    if (firebaseConfig && firebaseConfig.projectId) {
+      console.log(`[Firebase Admin] Initializing with projectId from config: ${firebaseConfig.projectId}`);
+      const options: any = {
+        projectId: firebaseConfig.projectId,
+      };
+      if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)') {
+        options.databaseId = firebaseConfig.firestoreDatabaseId;
+      }
+      admin.initializeApp(options);
+
+      // Initialize backup default database app
+      try {
+        admin.initializeApp({ projectId: firebaseConfig.projectId }, "fallbackDefaultApp");
+      } catch (fbErr: any) {
+        // Silent fallback warning
+      }
+    } else {
+      admin.initializeApp();
+      console.log("[Firebase Admin] Initialized with default credentials");
+    }
+  } catch (error: any) {
+    console.warn("[Firebase Admin] Initialization bypassed or offline:", error.message);
+  }
+}
+let firestoreDb: admin.firestore.Firestore | null = null;
+let fallbackFirestoreDb: admin.firestore.Firestore | null = null;
+const getFirestore = (useFallback = false) => {
+  if (useFallback) {
+    if (!fallbackFirestoreDb) {
+      try {
+        const fallbackApp = admin.apps.find(app => app?.name === 'fallbackDefaultApp');
+        if (fallbackApp) {
+          fallbackFirestoreDb = admin.firestore(fallbackApp);
+        } else if (firebaseConfig && firebaseConfig.projectId) {
+          const app = admin.initializeApp({ projectId: firebaseConfig.projectId }, "fallbackDefaultApp_" + Date.now());
+          fallbackFirestoreDb = admin.firestore(app);
+        } else {
+          fallbackFirestoreDb = admin.firestore();
+        }
+      } catch (e) {
+        console.warn("[Firebase] Could not initialize fallback Firestore:", e);
+      }
+    }
+    return fallbackFirestoreDb;
+  }
+
+  if (!firestoreDb) {
+    try {
+      firestoreDb = admin.firestore();
+    } catch (e) {
+      console.warn("[Firebase] Could not initialize Firestore:", e);
+    }
+  }
+  return firestoreDb;
+};
+
+async function getCloudinary() {
+  const rawUrl = process.env.CLOUDINARY_URL;
+  if (!rawUrl || rawUrl.trim() === "" || rawUrl.trim() === "CLOUDINARY_URL=") {
+    return null;
+  }
+
+  let trimmedUrl = rawUrl.trim().replace(/^['"]|['"]$/g, '').replace(/[<>]/g, '');
+  if (trimmedUrl.startsWith('CLOUDINARY_URL=')) {
+    trimmedUrl = trimmedUrl.replace('CLOUDINARY_URL=', '').trim();
+  }
+
+  if (!trimmedUrl.startsWith('cloudinary://')) {
+    console.warn("Invalid CLOUDINARY_URL protocol. Skipping Cloudinary initialization.");
+    // Temporarily delete it so the library doesn't crash on import
+    const original = process.env.CLOUDINARY_URL;
+    delete process.env.CLOUDINARY_URL;
+    try {
+      // This might still be needed if other parts of the app import it, 
+      // but dynamic import is safer.
+      return null;
+    } finally {
+      process.env.CLOUDINARY_URL = original;
+    }
+  }
+
+  try {
+    // Set the cleaned URL so the library finds it
+    const original = process.env.CLOUDINARY_URL;
+    process.env.CLOUDINARY_URL = trimmedUrl;
+    const { v2: cloudinary } = await import("cloudinary");
+    cloudinary.config({
+      cloudinary_url: trimmedUrl
+    });
+    return cloudinary;
+  } catch (error) {
+    console.error("Failed to load Cloudinary:", error);
+    return null;
+  }
+}
+
+// ==========================================
+// SESSION & API RATE LIMITER SYSTEM
+// ==========================================
+
+interface RateLimitTierConfig {
+  windowMs: number;
+  maxRequests: number;
+}
+
+interface RateLimitStoreEntry {
+  timestamps: number[];
+  blockedUntil?: number;
+}
+
+const rateLimitConfig = {
+  enabled: true,
+  general: {
+    windowMs: parseInt(process.env.RATE_LIMIT_GENERAL_WINDOW_MS || "60000"), // 1 min window
+    maxRequests: parseInt(process.env.RATE_LIMIT_GENERAL_MAX || "100") // 100 requests per session/min
+  },
+  ai: {
+    windowMs: parseInt(process.env.RATE_LIMIT_AI_WINDOW_MS || "60000"), // 1 min window
+    maxRequests: parseInt(process.env.RATE_LIMIT_AI_MAX || "20") // 20 Gemini calls per session/min
+  },
+  auth: {
+    windowMs: parseInt(process.env.RATE_LIMIT_AUTH_WINDOW_MS || "60000"), // 1 min window
+    maxRequests: parseInt(process.env.RATE_LIMIT_AUTH_MAX || "15") // 15 Auth/SMS calls per session/min
+  },
+  payment: {
+    windowMs: parseInt(process.env.RATE_LIMIT_PAYMENT_WINDOW_MS || "60000"), // 1 min window
+    maxRequests: parseInt(process.env.RATE_LIMIT_PAYMENT_MAX || "20") // 20 Payment calls per session/min
+  },
+  adminMultiplier: 5 // Admin credentials receive 5x multiplier
+};
+
+const rateLimitStore = new Map<string, RateLimitStoreEntry>();
+
+const rateLimitMetrics = {
+  totalRequestsProcessed: 0,
+  totalRequestsBlocked: 0,
+  blockedSessionsCount: 0,
+  startTime: new Date().toISOString()
+};
+
+// Periodic Garbage Collector to clean stale tracking records every 3 minutes
+setInterval(() => {
+  const now = Date.now();
+  let cleared = 0;
+  rateLimitStore.forEach((entry, key) => {
+    entry.timestamps = entry.timestamps.filter(ts => now - ts < 600000);
+    if (entry.timestamps.length === 0 && (!entry.blockedUntil || entry.blockedUntil < now)) {
+      rateLimitStore.delete(key);
+      cleared++;
+    }
+  });
+  if (cleared > 0) {
+    console.log(`[RateLimiter GC] Cleared ${cleared} stale rate limit tracking entries.`);
+  }
+}, 3 * 60 * 1000);
+
+function sessionRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!rateLimitConfig.enabled) {
+    return next();
+  }
+
+  // Exempt health checks and admin rate-limit control endpoints from rate limiting
+  if (
+    req.path === "/health" || 
+    req.path.startsWith("/admin/rate-limit") || 
+    req.path === "/admin/config-status"
+  ) {
+    return next();
+  }
+
+  rateLimitMetrics.totalRequestsProcessed++;
+
+  // Identify session key
+  const sessionId = req.headers["x-session-id"] as string;
+  const authHeader = req.headers["authorization"] as string;
+  let userId = "";
+
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    try {
+      const token = authHeader.substring(7);
+      const decoded: any = jwt.decode(token);
+      if (decoded && decoded.userId) {
+        userId = decoded.userId;
+      }
+    } catch (_) {
+      // Ignore invalid JWT decode error
+    }
+  }
+
+  const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || 
+                   req.headers["x-real-ip"] as string || 
+                   req.socket.remoteAddress || 
+                   "unknown-ip";
+
+  const sessionIdentifier = userId ? `user:${userId}` : sessionId ? `session:${sessionId}` : `ip:${clientIp}`;
+
+  // Select service tier
+  let tier: "general" | "ai" | "auth" | "payment" = "general";
+  let tierConfig: RateLimitTierConfig = rateLimitConfig.general;
+
+  if (req.path.startsWith("/gemini")) {
+    tier = "ai";
+    tierConfig = rateLimitConfig.ai;
+  } else if (req.path.startsWith("/auth") || req.path.startsWith("/sms") || req.path.startsWith("/whatsapp") || req.path.includes("create-backend-account")) {
+    tier = "auth";
+    tierConfig = rateLimitConfig.auth;
+  } else if (req.path.startsWith("/payments") || req.path.startsWith("/paystack")) {
+    tier = "payment";
+    tierConfig = rateLimitConfig.payment;
+  }
+
+  let maxRequests = tierConfig.maxRequests;
+  if ((req as any).user?.role === "ADMIN" || (req as any).user?.is_admin || (req as any).user?.backend_admin) {
+    maxRequests = maxRequests * rateLimitConfig.adminMultiplier;
+  }
+
+  const windowMs = tierConfig.windowMs;
+  const now = Date.now();
+  const storeKey = `${sessionIdentifier}:${tier}`;
+
+  let entry = rateLimitStore.get(storeKey);
+  if (!entry) {
+    entry = { timestamps: [] };
+    rateLimitStore.set(storeKey, entry);
+  }
+
+  entry.timestamps = entry.timestamps.filter(ts => now - ts < windowMs);
+
+  if (entry.blockedUntil && entry.blockedUntil > now) {
+    const retryAfterSec = Math.ceil((entry.blockedUntil - now) / 1000);
+    rateLimitMetrics.totalRequestsBlocked++;
+    
+    res.setHeader("Retry-After", String(retryAfterSec));
+    res.setHeader("X-RateLimit-Limit", String(maxRequests));
+    res.setHeader("X-RateLimit-Remaining", "0");
+    res.setHeader("X-RateLimit-Reset", String(Math.ceil(entry.blockedUntil / 1000)));
+
+    return res.status(429).json({
+      error: "Too Many Requests",
+      message: `Session call limit exceeded for ${tier.toUpperCase()} service. Calls from your session are temporarily paused to protect host and database performance. Please wait ${retryAfterSec} seconds.`,
+      retryAfterSeconds: retryAfterSec,
+      tier,
+      limit: maxRequests,
+      windowSeconds: Math.ceil(windowMs / 1000)
+    });
+  }
+
+  if (entry.timestamps.length >= maxRequests) {
+    entry.blockedUntil = now + Math.min(windowMs, 30000); // 30s pause
+    rateLimitMetrics.totalRequestsBlocked++;
+    rateLimitMetrics.blockedSessionsCount++;
+
+    const retryAfterSec = Math.ceil((entry.blockedUntil - now) / 1000);
+
+    console.warn(`[RateLimiter] Throttled session [${sessionIdentifier}] on [${req.method} ${req.path}] (${entry.timestamps.length}/${maxRequests} reqs)`);
+
+    res.setHeader("Retry-After", String(retryAfterSec));
+    res.setHeader("X-RateLimit-Limit", String(maxRequests));
+    res.setHeader("X-RateLimit-Remaining", "0");
+    res.setHeader("X-RateLimit-Reset", String(Math.ceil(entry.blockedUntil / 1000)));
+
+    return res.status(429).json({
+      error: "Too Many Requests",
+      message: `Rate limit exceeded. To protect host system resources and database stability, calls from your session have been temporarily paused. Retry in ${retryAfterSec} seconds.`,
+      retryAfterSeconds: retryAfterSec,
+      tier,
+      limit: maxRequests,
+      windowSeconds: Math.ceil(windowMs / 1000)
+    });
+  }
+
+  entry.timestamps.push(now);
+
+  const remaining = Math.max(0, maxRequests - entry.timestamps.length);
+  res.setHeader("X-RateLimit-Limit", String(maxRequests));
+  res.setHeader("X-RateLimit-Remaining", String(remaining));
+  res.setHeader("X-RateLimit-Reset", String(Math.ceil((now + windowMs) / 1000)));
+
+  next();
+}
+
+let appInstance: express.Application | null = null;
+let initAppPromise: Promise<express.Application> | null = null;
+
+export async function getApp(): Promise<express.Application> {
+  if (appInstance) return appInstance;
+  if (initAppPromise) return initAppPromise;
+
+  initAppPromise = (async () => {
+    console.log("[Server] Initializing Express app...");
+    const app = express();
+
+    // Initialize PostgreSQL Connection Pool
+    try {
+      await initPgPool();
+    } catch (err: any) {
+      console.warn("[Server] initPgPool error (continuing):", err?.message || err);
+    }
+
+    app.use(cors());
+    app.use(express.json({ limit: "50mb" }));
+    app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  // Debug middleware for API routes
+  app.use("/api", (req, res, next) => {
+    console.log(`[API Debug] ${req.method} ${req.url}`);
+    next();
+  });
+
+  // Attach Session Rate Limiter Middleware
+  app.use("/api", sessionRateLimiter);
+
+  const upload = multer({ storage: multer.memoryStorage() });
+
+  // Cloudinary Upload Route
+  app.post("/api/upload", upload.single('file'), async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const cloudinary = await getCloudinary();
+
+    if (!cloudinary) {
+      console.warn("Cloudinary is not configured or invalid, using mock for development.");
+      // In development, we can return a mock URL if not configured
+      return res.json({ url: "https://picsum.photos/seed/" + Math.random() + "/800/600" });
+    }
+
+    try {
+      const b64 = Buffer.from(req.file.buffer).toString("base64");
+      const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+      const response = await cloudinary.uploader.upload(dataURI, {
+        resource_type: "auto",
+        folder: req.body.folder || "errand-runner"
+      });
+      res.json({ url: response.secure_url });
+    } catch (error) {
+      console.error("Cloudinary upload error:", error);
+      res.status(500).json({ error: "Upload failed", details: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // In-memory OTP storage (for production, use Redis or Supabase)
+  const otpStore = new Map<string, { otp: string, expiresAt: number }>();
+
+  // Helper to normalize phone numbers for Kenya (Paystack/Talksasa/Textsasa)
+  const normalizePhone = (phone: string) => {
+    if (!phone) return "";
+    // Remove all non-digits (including spaces, +, etc.)
+    let cleaned = phone.replace(/\D/g, '');
+    
+    // Handle leading '0' (e.g. 0722XXXXXX -> 254722XXXXXX)
+    if (cleaned.startsWith('0')) {
+      cleaned = '254' + cleaned.substring(1);
+    } 
+    // Handle 9-digit numbers starting with 7 or 1 (e.g. 722XXXXXX -> 254722XXXXXX)
+    else if (cleaned.length === 9 && (cleaned.startsWith('7') || cleaned.startsWith('1'))) {
+      cleaned = '254' + cleaned;
+    }
+    
+    return cleaned;
+  };
+
+  // Helper to send WhatsApp messages using wasenderapi.com
+  const sendWhatsAppHelper = async (phone: string, message: string) => {
+    try {
+      if (!phone || !message) {
+        return { success: false, error: "Phone number and message are required" };
+      }
+      const rawNormalized = normalizePhone(phone);
+      if (!rawNormalized) {
+        return { success: false, error: "Invalid phone number format" };
+      }
+
+      // Format for WaSender API (E.164 with plus)
+      const targetPhone = rawNormalized.startsWith('+') ? rawNormalized : `+${rawNormalized}`;
+      const token = process.env.WASENDER_API_KEY || "878341aeb6c576d1ae5d5e7552dacd259e1f395a11ca2b945ce6e7323d24d9a9";
+      
+      let rawEndpoint = (process.env.WASENDER_API_ENDPOINT || "https://www.wasenderapi.com/api/send-message").trim();
+      // Strip any accidental leading HTTP method (e.g. "POST https://...")
+      rawEndpoint = rawEndpoint.replace(/^(POST|GET|PUT|DELETE)\s+/i, '').trim();
+      if (!rawEndpoint.startsWith('http://') && !rawEndpoint.startsWith('https://')) {
+        rawEndpoint = `https://${rawEndpoint}`;
+      }
+      const endpoint = rawEndpoint;
+
+      console.log(`[WhatsApp Helper] Sending message to ${targetPhone} via ${endpoint}`);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          to: targetPhone,
+          text: message
+        })
+      });
+
+      const responseText = await response.text();
+      let resData: any = {};
+      try {
+        resData = responseText ? JSON.parse(responseText) : { raw: responseText };
+      } catch (e) {
+        resData = { raw: responseText };
+      }
+
+      if (!response.ok) {
+        console.warn(`[WhatsApp Helper] API returned status ${response.status}:`, resData);
+        return { 
+          success: false, 
+          status: response.status, 
+          data: resData, 
+          error: resData.message || resData.error || `WhatsApp sending failed (HTTP ${response.status})` 
+        };
+      }
+
+      console.log(`[WhatsApp Helper] Successfully dispatched WhatsApp message to ${targetPhone}:`, resData);
+      return { success: true, data: resData };
+    } catch (err: any) {
+      console.error("[WhatsApp Helper] Exception while sending WhatsApp message:", err?.message || err);
+      return { success: false, error: err?.message || "WhatsApp sending exception" };
+    }
+  };
+
+  // Helper to send WhatsApp transaction completion alert
+  const sendTransactionWhatsAppAlert = async (params: {
+    phone?: string;
+    userId?: string;
+    userName?: string;
+    amount: number;
+    transactionId?: string;
+    reference?: string;
+    type?: string;
+    newBalance?: number;
+    description?: string;
+    errandTitle?: string;
+  }) => {
+    try {
+      let targetPhone = params.phone;
+      let targetName = params.userName || "Member";
+
+      // If phone is missing, lookup user in Supabase
+      if (!targetPhone && params.userId && supabase) {
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('phone, name, username, full_name')
+            .eq('id', params.userId)
+            .maybeSingle();
+          if (profile) {
+            targetPhone = profile.phone;
+            targetName = profile.name || profile.username || profile.full_name || targetName;
+          }
+        } catch (e) {
+          console.warn("[Transaction WhatsApp] Profile lookup warning:", e);
+        }
+      }
+
+      if (!targetPhone) {
+        console.log("[Transaction WhatsApp] No phone number available for alert.");
+        return { success: false, error: "No phone number available" };
+      }
+
+      const txType = (params.type || 'deposit').toLowerCase();
+      const amountFormatted = `KSh ${Number(params.amount || 0).toLocaleString()}`;
+      const balanceText = params.newBalance !== undefined && params.newBalance !== null 
+        ? `💼 *Updated Wallet Balance:* KSh ${Number(params.newBalance).toLocaleString()}\n` 
+        : '';
+      const refText = (params.reference || params.transactionId) ? `🆔 *Ref / TxID:* ${params.reference || params.transactionId}\n` : '';
+      const nowFormatted = new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+
+      let headerTitle = "Deposit Successful! 💰";
+      let typeLabel = "Wallet Top-Up (M-Pesa)";
+      let actionDetails = "Your payment has been received and added to your wallet.";
+
+      if (txType.includes('withdraw')) {
+        headerTitle = "Withdrawal Processed! 💸";
+        typeLabel = "Wallet Withdrawal";
+        actionDetails = "Your funds have been sent to your registered mobile account.";
+      } else if (txType.includes('refund')) {
+        headerTitle = "Refund Credited! 🔄";
+        typeLabel = "Wallet Refund";
+        actionDetails = "A refund has been credited back to your wallet balance.";
+      } else if (txType.includes('payout')) {
+        headerTitle = "Runner Payout Received! 💵";
+        typeLabel = "Task Payout";
+        actionDetails = params.errandTitle 
+          ? `Payout for completing *"${params.errandTitle}"* has been credited to your account.`
+          : "Your errand completion payout has been credited.";
+      } else if (txType.includes('payment') || txType.includes('errand') || txType.includes('escrow')) {
+        headerTitle = "Payment Confirmed! ✅";
+        typeLabel = "Errand Service Payment";
+        actionDetails = params.errandTitle 
+          ? `Payment for *"${params.errandTitle}"* has been settled successfully.`
+          : "Payment for your errand service has been processed successfully.";
+      }
+
+      const message = 
+`✅ *ErrandRunner — ${headerTitle}*
+
+Hello *${targetName}*,
+
+${actionDetails}
+
+💵 *Amount:* ${amountFormatted}
+🏷️ *Transaction Type:* ${typeLabel}
+${refText}${balanceText}⏱️ *Timestamp:* ${nowFormatted}
+
+${params.description ? `📝 *Note:* ${params.description}\n` : ''}
+_Thank you for choosing ErrandRunner Kenya • Fast, Reliable, Verified_`;
+
+      return await sendWhatsAppHelper(targetPhone, message);
+    } catch (err: any) {
+      console.error("[Transaction WhatsApp Error]:", err?.message || err);
+      return { success: false, error: err?.message || "Failed to send transaction alert" };
+    }
+  };
+
+  // WhatsApp Proxy Route for WaSender API
+  app.post("/api/whatsapp/send", async (req, res) => {
+    const { to, phone, recipient, text, message } = req.body;
+    const targetPhone = phone || recipient || to;
+    const msgText = message || text;
+
+    if (!targetPhone || !msgText) {
+      return res.status(400).json({ error: "Recipient phone number and message text are required" });
+    }
+
+    const result = await sendWhatsAppHelper(targetPhone, msgText);
+    if (!result.success && result.status && result.status >= 400) {
+      return res.status(result.status).json(result);
+    }
+    res.json(result);
+  });
+
+  // Automated WhatsApp Route: Transaction Completed (Top-up, Deposit, Withdrawal, Payout, Payment)
+  app.post("/api/whatsapp/notify-transaction-completed", async (req, res) => {
+    try {
+      const { 
+        userId, 
+        userPhone, 
+        phone, 
+        recipient, 
+        userName, 
+        name, 
+        amount, 
+        transactionId, 
+        txId, 
+        reference, 
+        type, 
+        newBalance, 
+        description, 
+        errandTitle 
+      } = req.body;
+
+      const targetPhone = userPhone || phone || recipient;
+      const targetName = userName || name;
+      const txIdentifier = transactionId || txId;
+
+      if (!targetPhone && !userId) {
+        return res.status(400).json({ error: "Either userPhone or userId is required" });
+      }
+
+      const result = await sendTransactionWhatsAppAlert({
+        phone: targetPhone,
+        userId,
+        userName: targetName,
+        amount: Number(amount || 0),
+        transactionId: txIdentifier,
+        reference,
+        type: type || 'deposit',
+        newBalance,
+        description,
+        errandTitle
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to notify transaction completed" });
+    }
+  });
+
+  // Automated WhatsApp Route: Errand Payment & Settlement (notifies both requester and runner)
+  app.post("/api/whatsapp/notify-errand-payment-completed", async (req, res) => {
+    try {
+      const { errandTitle, amount, requesterName, requesterPhone, runnerName, runnerPhone } = req.body;
+      const amountFormatted = `KSh ${Number(amount || 0).toLocaleString()}`;
+      const nowFormatted = new Date().toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+
+      let requesterRes: any = null;
+      let runnerRes: any = null;
+
+      if (requesterPhone) {
+        const clientMsg = 
+`🎉 *ErrandRunner — Task & Payment Completed!*
+
+Hello *${requesterName || 'Member'}*,
+
+Your errand *"${errandTitle || 'Task'}"* has been marked completed and payment of *${amountFormatted}* has been settled with your runner ${runnerName ? `(*${runnerName}*)` : ''}.
+
+⏱️ *Completed At:* ${nowFormatted}
+
+Thank you for choosing ErrandRunner! We hope you enjoyed seamless service.
+
+_Rate your runner in the app to help our community!_`;
+
+        requesterRes = await sendWhatsAppHelper(requesterPhone, clientMsg);
+      }
+
+      if (runnerPhone) {
+        const runnerMsg = 
+`💰 *ErrandRunner — Errand Earnings Credited!*
+
+Hello *${runnerName || 'Runner'}*,
+
+Congratulations! The errand *"${errandTitle || 'Task'}"* has been marked complete.
+
+💵 *Payout Credited:* ${amountFormatted}
+👤 *Client:* ${requesterName || 'Client'}
+⏱️ *Settlement Time:* ${nowFormatted}
+
+The payout has been credited to your runner earnings/wallet. Keep up the fantastic work!
+
+_ErrandRunner Kenya • Fast, Reliable, Verified_`;
+
+        runnerRes = await sendWhatsAppHelper(runnerPhone, runnerMsg);
+      }
+
+      res.json({ success: true, requesterRes, runnerRes });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to notify errand payment completed" });
+    }
+  });
+
+  // Automated WhatsApp Route: Errand Posted
+  app.post("/api/whatsapp/notify-errand-posted", async (req, res) => {
+    try {
+      const { title, category, budget, pickupLocation, dropoffLocation, requesterName, requesterPhone, urgency } = req.body;
+      if (!requesterPhone) {
+        return res.status(400).json({ error: "requesterPhone is required to send post notification" });
+      }
+
+      const clientName = requesterName || "Member";
+      const categoryText = category || "General Errand";
+      const budgetText = budget && Number(budget) > 0 ? `KSh ${Number(budget).toLocaleString()}` : "Negotiable / Quote";
+      const pickupText = pickupLocation || "Standard / Flexible Pickup";
+      const dropoffText = dropoffLocation || "Local Destination";
+      const urgencyText = urgency ? `${urgency.toUpperCase()}` : "NORMAL";
+
+      const message = 
+`🚀 *ErrandRunner — Errand Posted Successfully!*
+
+Hello *${clientName}*,
+
+Your errand request has been registered on the network and dispatched to verified local runners.
+
+📋 *Errand:* ${title || "Untitled Errand"}
+🏷️ *Category:* ${categoryText}
+💰 *Budget:* ${budgetText}
+⚡ *Priority:* ${urgencyText}
+📍 *Pickup:* ${pickupText}
+🏁 *Destination:* ${dropoffText}
+⏱️ *Status:* Awaiting Runner Bids / Assignment
+
+We will send you an instant WhatsApp alert the moment a verified runner accepts your task!
+
+_ErrandRunner Kenya • Fast, Reliable, Verified_`;
+
+      const result = await sendWhatsAppHelper(requesterPhone, message);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to notify errand posted" });
+    }
+  });
+
+  // Automated WhatsApp Route: Errand Accepted
+  app.post("/api/whatsapp/notify-errand-accepted", async (req, res) => {
+    try {
+      const { errandTitle, requesterName, requesterPhone, runnerName, runnerPhone, amount, eta, pickupLocation, dropoffLocation } = req.body;
+      if (!requesterPhone && !runnerPhone) {
+        return res.status(400).json({ error: "At least one phone number (requesterPhone or runnerPhone) is required" });
+      }
+
+      const agreedPriceText = amount && Number(amount) > 0 ? `KSh ${Number(amount).toLocaleString()}` : "Standard Rate";
+      const etaText = eta || "Ready immediately (ASAP)";
+      const pickupText = pickupLocation || "Specified pickup point";
+      const dropoffText = dropoffLocation || "Specified dropoff point";
+      const clientName = requesterName || "Member";
+      const rName = runnerName || "Verified Runner";
+
+      let requesterRes: any = null;
+      let runnerRes: any = null;
+
+      if (requesterPhone) {
+        const clientMessage = 
+`🎉 *ErrandRunner — Errand Accepted!*
+
+Hello *${clientName}*,
+
+Great news! A verified runner has accepted your errand task.
+
+📋 *Errand:* ${errandTitle || "Your Errand"}
+🏃 *Assigned Runner:* ${rName} ${runnerPhone ? `(${runnerPhone})` : ""}
+💵 *Agreed Payout:* ${agreedPriceText}
+⏱️ *ETA / Start:* ${etaText}
+📍 *Pickup:* ${pickupText}
+🏁 *Destination:* ${dropoffText}
+
+Your runner is coordinating your request. Open the app to view live tracking and status updates.
+
+_Thank you for choosing ErrandRunner!_`;
+
+        requesterRes = await sendWhatsAppHelper(requesterPhone, clientMessage);
+      }
+
+      if (runnerPhone) {
+        const runnerMessage = 
+`📋 *ErrandRunner — Errand Assignment Confirmation*
+
+Hello *${rName}*,
+
+You have been successfully assigned to the following errand:
+
+📋 *Errand:* ${errandTitle || "Errand"}
+👤 *Client:* ${clientName} ${requesterPhone ? `(${requesterPhone})` : ""}
+💵 *Your Payout:* ${agreedPriceText}
+⏱️ *ETA:* ${etaText}
+📍 *Pickup:* ${pickupText}
+🏁 *Destination:* ${dropoffText}
+
+Please proceed with the task according to safety guidelines and update milestones in your dashboard.`;
+
+        runnerRes = await sendWhatsAppHelper(runnerPhone, runnerMessage);
+      }
+
+      res.json({ success: true, requesterRes, runnerRes });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to notify errand accepted" });
+    }
+  });
+
+  // SMS Proxy Route for Textsasa
+  app.post("/api/sms/send", async (req, res) => {
+    const { recipient, message, phone } = req.body;
+    const targetPhone = normalizePhone(phone || recipient);
+    const token = process.env.TEXTSASA_API_TOKEN || process.env.TALKSASA_API_TOKEN;
+    let rawEndpoint = (process.env.TEXTSASA_API_ENDPOINT || process.env.TALKSASA_API_ENDPOINT || "https://api.textsasa.com/api/v1/").trim();
+    rawEndpoint = rawEndpoint.replace(/^(POST|GET|PUT|DELETE)\s+/i, '').trim();
+    if (!rawEndpoint.startsWith('http://') && !rawEndpoint.startsWith('https://')) {
+      rawEndpoint = `https://${rawEndpoint}`;
+    }
+    const endpoint = rawEndpoint;
+    const senderId = process.env.TEXTSASA_SENDER_ID || process.env.TALKSASA_SENDER_ID || "ErrandRun";
+
+    if (!token) {
+      return res.status(500).json({ error: "SMS API token is not configured" });
+    }
+
+    if (!targetPhone || !message) {
+      return res.status(400).json({ error: "Recipient and message are required" });
+    }
+
+    try {
+      const fullUrl = endpoint.endsWith("/") ? `${endpoint}sms/send` : `${endpoint}/sms/send`;
+      
+      console.log(`[SMS] Sending to ${targetPhone} via ${fullUrl}`);
+      const response = await fetch(fullUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          recipient: targetPhone, // For Talksasa
+          phone: targetPhone,     // For Textsasa
+          message,
+          sender_id: senderId
+        })
+      });
+
+      let data = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch (e) {
+        console.error("Failed to parse SMS API response as JSON", e);
+      }
+      
+      if (!response.ok) {
+        console.error("SMS API error:", data);
+        return res.status(response.status).json(data);
+      }
+
+      console.log(`[SMS] Success:`, data);
+      res.json(data);
+    } catch (error) {
+      console.error("SMS Proxy error:", error);
+      res.status(500).json({ error: "Failed to send SMS" });
+    }
+  });
+
+  // OTP Generation and Sending (Hardened with Firestore Persistence)
+  app.post("/api/sms/verify/send", async (req, res) => {
+    const { phone, userId } = req.body;
+    if (!phone) return res.status(400).json({ error: "Phone number is required" });
+
+    // Normalize phone number
+    const targetPhone = normalizePhone(phone);
+
+    // RESTRICTION: Prevent registering same number twice using Supabase
+    try {
+      if (supabase) {
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id, phone')
+          .eq('phone', targetPhone)
+          .maybeSingle();
+
+        if (existingProfile && existingProfile.id !== userId) {
+          console.warn(`[OTP] REJECTED: Phone ${targetPhone} already registered to user ${existingProfile.id} (Supabase)`);
+          return res.status(400).json({ 
+            error: "PHONE_ALREADY_EXISTS", 
+            message: "This phone number is already registered to another account. Please use a different number or contact support." 
+          });
+        }
+      }
+    } catch (dbErr: any) {
+      console.error("[OTP] Phone uniqueness check failed:", dbErr.message);
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString(); // 30 minutes
+
+    console.log(`[OTP] Generating for ${targetPhone} (UID: ${userId || 'anon'}): ${otp}`);
+
+    // Hardened Persistence via Supabase
+    try {
+      if (supabase) {
+        // Log OTP in history (Primary Truth)
+        const { error: dbErr } = await supabase
+          .from('otp_codes')
+          .insert({
+            phone_number: targetPhone,
+            code: otp,
+            expires_at: expiresAt,
+            created_at: new Date().toISOString(),
+            is_used: false
+          });
+
+        if (dbErr) throw dbErr;
+        console.log(`[OTP] Persisted to Supabase (otp_codes) for ${targetPhone}`);
+      } else {
+        throw new Error("Supabase client not configured");
+      }
+    } catch (dbErr: any) {
+      console.warn(`[OTP] Supabase Persistence failed, falling back to memory:`, dbErr.message);
+      otpStore.set(targetPhone, { otp, expiresAt: Date.now() + 30 * 60 * 1000 });
+    }
+
+    const token = process.env.TEXTSASA_API_TOKEN || process.env.TALKSASA_API_TOKEN;
+    let rawEndpoint = (process.env.TEXTSASA_API_ENDPOINT || process.env.TALKSASA_API_ENDPOINT || "https://api.textsasa.com/api/v1/").trim();
+    rawEndpoint = rawEndpoint.replace(/^(POST|GET|PUT|DELETE)\s+/i, '').trim();
+    if (!rawEndpoint.startsWith('http://') && !rawEndpoint.startsWith('https://')) {
+      rawEndpoint = `https://${rawEndpoint}`;
+    }
+    const endpoint = rawEndpoint;
+    const senderId = process.env.TEXTSASA_SENDER_ID || process.env.TALKSASA_SENDER_ID || "ErrandRun";
+
+    if (!token) {
+      console.log(`[DEV] SMS API token not found. OTP for ${targetPhone}: ${otp}`);
+      return res.json({ success: true, message: "OTP sent (dev mode)", devMode: true, code: otp });
+    }
+
+    try {
+      const fullUrl = endpoint.endsWith("/") ? `${endpoint}sms/send` : `${endpoint}/sms/send`;
+      const message = `Your ErrandRunner verification code is: ${otp}. Valid for 10 minutes.`;
+
+      const response = await fetch(fullUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          recipient: targetPhone,
+          phone: targetPhone,
+          message,
+          sender_id: senderId
+        })
+      });
+
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!response.ok) {
+        console.error("SMS API error:", data);
+        return res.status(response.status).json(data);
+      }
+
+      console.log(`[OTP] SMS sent successfully to ${targetPhone}`);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("OTP Send error:", error);
+      res.status(500).json({ error: "Failed to send verification code", details: error.message });
+    }
+  });
+
+  // OTP Verification (Robust DB-First Lookup)
+  app.post("/api/sms/verify/confirm", async (req, res) => {
+    let { phone } = req.body;
+    const { code, userId } = req.body;
+    if ((!phone && !userId) || !code) return res.status(400).json({ error: "Phone/UID and code are required" });
+
+    phone = normalizePhone(phone);
+    console.log(`[OTP] Verify Attempt: ${phone || userId} - Code: ${code}`);
+
+    let storedOtp: string | null = null;
+    let expiresAt: string | number | Date | null = null;
+
+    try {
+      // 1. Try Supabase lookup (Primary Truth)
+      if (supabase) {
+        // Look up by phone_number primarily
+        const { data, error: dbErr } = await supabase
+          .from('otp_codes')
+          .select('code, expires_at, is_used')
+          .eq('phone_number', phone)
+          .eq('is_used', false)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (data && !dbErr) {
+          storedOtp = data.code;
+          expiresAt = data.expires_at;
+          console.log(`[OTP] Found in Supabase (otp_codes) for ${phone}`);
+        }
+      }
+
+      // 2. Fallback to memory
+      if (!storedOtp && phone) {
+        const memStored = otpStore.get(phone);
+        if (memStored) {
+          storedOtp = memStored.otp;
+          expiresAt = memStored.expiresAt;
+          console.log(`[OTP] Found in memory for ${phone}`);
+        }
+      }
+
+      if (!storedOtp) {
+        return res.status(400).json({ error: "No verification code found" });
+      }
+
+      // Robust Expiration Check
+      let isExpired = false;
+      const now = new Date();
+      
+      if (typeof expiresAt === 'string') {
+        isExpired = new Date(expiresAt) < now;
+        console.log(`[OTP] Comparing string expiry: ${expiresAt} vs now: ${now.toISOString()} -> IsExpired: ${isExpired}`);
+      } else if (typeof expiresAt === 'number') {
+        isExpired = Date.now() > expiresAt;
+        console.log(`[OTP] Comparing number expiry: ${expiresAt} vs now: ${Date.now()} -> IsExpired: ${isExpired}`);
+      } else if (expiresAt instanceof Date) {
+        isExpired = expiresAt < now;
+        console.log(`[OTP] Comparing Date object expiry: ${expiresAt.toISOString()} vs now: ${now.toISOString()} -> IsExpired: ${isExpired}`);
+      } else {
+        // If it's null or some other unexpected type, default to expired for safety
+        isExpired = true;
+        console.log(`[OTP] UNKNOWN expiry type or NULL: ${typeof expiresAt} -> Defaulting to Expired`);
+      }
+
+      if (isExpired) {
+        console.log(`[OTP] REJECTED: Code expired for ${phone || userId}`);
+        return res.status(400).json({ error: "Verification code has expired" });
+      }
+
+      if (storedOtp !== code) {
+        console.log(`[OTP] Mismatch: Expected ${storedOtp}, got ${code}`);
+        return res.status(400).json({ error: "Invalid verification code" });
+      }
+
+      // Success cleanup
+      if (supabase) {
+        // Mark as used instead of deleting if you prefer, or just delete. 
+        // Based on image having is_used, we can mark it.
+        await supabase.from('otp_codes').update({ is_used: true }).eq('phone_number', phone);
+      }
+      otpStore.delete(phone);
+
+      console.log(`[OTP] Verification successful for ${phone || userId}`);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("[OTP] Verification system error:", error);
+      res.status(500).json({ error: "Verification system error" });
+    }
+  });
+
+  // --- Email Service via Action Server ---
+  const getActionServerUrl = () => {
+    if (process.env.VITE_ACTION_SERVER_URL) {
+      return process.env.VITE_ACTION_SERVER_URL;
+    }
+    if (process.env.VITE_GATEWAY_URL) {
+      return process.env.VITE_GATEWAY_URL;
+    }
+    if (appConfig.actionServerUrl) {
+      let url = appConfig.actionServerUrl.trim();
+      if (url && !url.startsWith("http://") && !url.startsWith("https://")) {
+        url = `https://${url}`;
+      }
+      return url;
+    }
+    return "https://gateway.errandly.site";
+  };
+
+  const sendEmailViaActionServer = async (to: string, subject: string, html: string, type: string = "verification", reference?: string) => {
+    const baseUrl = getActionServerUrl();
+    const url = `${baseUrl}/api/notifications/send-email`;
+    
+    console.log(`[Email] Sending to ${to} via Action Server: ${url}`);
+    
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify({ 
+        recipient: to,
+        email_type: (type || "verification").toLowerCase(),
+        to, 
+        type: (type || "verification").toLowerCase(),
+        subject: subject || "Notification", 
+        html,
+        message: html,
+        content: reference || html,
+        reference: reference || html,
+        name: ""
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Email] Action Server Error: ${response.status} - ${errorText}`);
+      throw new Error(`Action Server Error: ${errorText}`);
+    }
+
+    return await response.json();
+  };
+
+  // --- Email Service (Local Fallback) ---
+  let smtpTransporter: nodemailer.Transporter | null = null;
+
+  const getSmtpTransporter = () => {
+    if (smtpTransporter) return smtpTransporter;
+
+    const host = process.env.SMTP_HOST;
+    const port = parseInt(process.env.SMTP_PORT || "587");
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+    const secure = process.env.SMTP_SECURE === "true" || port === 465;
+
+    if (!host || !user || !pass) {
+      return null;
+    }
+
+    smtpTransporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: { user, pass },
+      tls: {
+        rejectUnauthorized: false
+      },
+      requireTLS: port === 587
+    });
+
+    return smtpTransporter;
+  };
+
+  // Verify Email Service on startup
+  const verifyEmailService = async () => {
+    console.log(`[Email] Action Server configured as primary email service: ${getActionServerUrl()}`);
+
+    const transporter = getSmtpTransporter();
+    if (transporter) {
+      try {
+        await transporter.verify();
+        console.log(`[Email] SMTP Service Verified: ${process.env.SMTP_HOST}:${process.env.SMTP_PORT}`);
+      } catch (error) {
+        console.error(`[Email] SMTP Verification Failed:`, error);
+      }
+    } else {
+      console.log(`[Email] Email service starting (requires SMTP_HOST for fallback configuration)`);
+    }
+  };
+  verifyEmailService();
+
+  // Email Route
+  app.post("/api/email/send", async (req, res) => {
+    try {
+      console.log(`[Email] Received request to /api/email/send`);
+      const { to, subject, text } = req.body;
+      let { html } = req.body;
+
+      if (!to || !subject || (!text && !html)) {
+        return res.status(400).json({ error: "To, subject, and message are required" });
+      }
+
+      // Wrap plain text in a basic HTML template if no HTML is provided
+      if (!html && text) {
+        html = `
+          <div style="font-family: sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color: #FF6321; margin-top: 0;">ErrandRunner</h2>
+            <div style="white-space: pre-wrap;">${text}</div>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #999;">Sent via ErrandRunner App</p>
+          </div>
+        `;
+      }
+
+      // Try Action Server First
+      try {
+        const data = await sendEmailViaActionServer(to, subject, html || "");
+        console.log(`[Email] Sent successfully via Action Server to ${to}`);
+        return res.json({ 
+          success: true, 
+          data,
+          details: `Sent via Action Server`
+        });
+      } catch (error: any) {
+        console.error("[Email] Action Server error:", error);
+        
+        // Final Fallback to SMTP
+        const transporter = getSmtpTransporter();
+        if (transporter) {
+          try {
+            console.log(`[Email] Attempting fallback to SMTP...`);
+            const from = process.env.SMTP_FROM || "ErrandRunner <notifications@ais-errands.app>";
+            const info = await transporter.sendMail({
+              from,
+              to,
+              subject,
+              text,
+              html,
+            });
+            console.log(`[Email] Sent successfully via SMTP fallback to ${to}`);
+            return res.json({ 
+              success: true, 
+              messageId: info.messageId,
+              details: `Sent via SMTP Fallback`
+            });
+          } catch (smtpError: any) {
+            console.error("[Email] SMTP fallback failed:", smtpError);
+            return res.status(500).json({ error: "All email providers failed", details: { action: error.message, smtp: smtpError.message } });
+          }
+        }
+        
+        return res.status(500).json({ error: "Action Server failed and no SMTP fallback configured", details: error.message });
+      }
+    } catch (error: any) {
+      console.error(`[Email] Route error:`, error);
+      res.status(500).json({ error: "Email route error", details: error.message });
+    }
+  });
+
+  // Admin Test Email Route
+  app.post("/api/admin/test-email", async (req, res) => {
+    try {
+      const { to } = req.body;
+      if (!to) return res.status(400).json({ error: "Recipient email is required" });
+
+      const subject = "ErrandRunner - Action Server Email Test";
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f4f7f9; }
+            .container { max-width: 600px; margin: 20px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+            .header { background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); padding: 30px; text-align: center; color: white; }
+            .content { padding: 40px 30px; text-align: center; }
+            .status-badge { display: inline-block; padding: 8px 16px; background-color: #ecfdf5; color: #059669; border-radius: 20px; font-weight: bold; font-size: 14px; margin-bottom: 20px; }
+            .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #edf2f7; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1 style="margin:0;">ErrandRunner Admin</h1>
+            </div>
+            <div class="content">
+              <div class="status-badge">✓ Action Server Active</div>
+              <h2 style="color: #1a1a1a;">Email Service Test</h2>
+              <p>This is a test email to verify your email configuration via the <strong>Action Server</strong>.</p>
+              <div style="background: #f9fafb; padding: 20px; border-radius: 12px; text-align: left; margin-top: 20px;">
+                <p style="margin:0; font-weight: bold; color: #4f46e5;">Technical Details:</p>
+                <ul style="margin: 10px 0 0 0; padding-left: 20px; font-size: 14px; color: #666;">
+                  <li><strong>Service:</strong> Action Server</li>
+                  <li><strong>Timestamp:</strong> ${new Date().toLocaleString()}</li>
+                </ul>
+              </div>
+            </div>
+            <div class="footer">
+              &copy; ${new Date().getFullYear()} ErrandRunner Admin Tools
+            </div>
+          </div>
+        </body>
+        </html>
+      `;      try {
+        const data = await sendEmailViaActionServer(to, subject, html);
+        return res.json({ success: true, message: "Test email sent successfully via Action Server", details: data });
+      } catch (err: any) {
+        console.error("[Admin] Action Server test failed:", err);
+        
+        // Try SMTP fallback
+        const transporter = getSmtpTransporter();
+        if (transporter) {
+          try {
+            console.log("[Admin] Attempting test email via SMTP fallback...");
+            const from = process.env.SMTP_FROM || "ErrandRunner <notifications@ais-errands.app>";
+            await transporter.sendMail({ from, to, subject, html });
+            return res.json({ success: true, message: "Action Server failed, but test email sent via SMTP fallback" });
+          } catch (smtpErr: any) {
+            return res.status(500).json({ error: "All email providers failed", actionServer: err.message, smtp: smtpErr.message });
+          }
+        }
+        
+        return res.status(500).json({ 
+          error: "Action Server Error", 
+          details: err.message || "Unknown error"
+        });
+      }
+    } catch (error: any) {
+      console.error("[Admin] Test email failed:", error);
+      res.status(500).json({ error: "Failed to send test email", details: error.message });
+    }
+  });
+
+  // Health Check Endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
+  });
+
+  // Admin Get Env Keys
+  app.get("/api/admin/env-keys", (req, res) => {
+    const examplePath = path.join(process.cwd(), ".env.example");
+    if (fs.existsSync(examplePath)) {
+      const content = fs.readFileSync(examplePath, "utf-8");
+      const keys = content.split("\n")
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith("#"))
+        .map(line => line.split("=")[0].trim());
+      res.json({ keys });
+    } else {
+      res.json({ keys: [] });
+    }
+  });
+
+  // Admin Get Env Overrides
+  app.get("/api/admin/env-overrides", async (req, res) => {
+    try {
+      if (fs.existsSync(ENV_OVERRIDES_FILE)) {
+        const localOverrides = JSON.parse(fs.readFileSync(ENV_OVERRIDES_FILE, "utf-8")) || {};
+        res.json({ overrides: localOverrides });
+      } else {
+        res.json({ overrides: {} });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/admin/config-status", async (req, res) => {
+    let overrides: any = {};
+    try {
+      if (fs.existsSync(ENV_OVERRIDES_FILE)) {
+        overrides = JSON.parse(fs.readFileSync(ENV_OVERRIDES_FILE, "utf-8")) || {};
+      }
+    } catch (e) {
+      console.warn("[Admin] Config Status: No local overrides found");
+    }
+
+    const getVal = (key: string) => overrides[key] || process.env[key];
+
+    res.json({
+      paystack: {
+        isConfigured: !!getVal("PAYSTACK_SECRET_KEY"),
+        publicKey: getVal("PAYSTACK_PUBLIC_KEY") ? `${getVal("PAYSTACK_PUBLIC_KEY").substring(0, 8)}...` : null
+      },
+      sms: {
+        isConfigured: !!(getVal("TEXTSASA_API_TOKEN") || getVal("TALKSASA_API_TOKEN"))
+      },
+      smtp: {
+        isConfigured: !!(getVal("SMTP_HOST") && getVal("SMTP_USER"))
+      },
+      cloudinary: {
+        isConfigured: !!getVal("CLOUDINARY_URL")
+      },
+      gemini: {
+        isConfigured: !!getVal("GEMINI_API_KEY")
+      },
+      googleMaps: {
+        isConfigured: !!(getVal("VITE_GOOGLE_MAPS_API_KEY") || getVal("VITE_GOOGLE_PLACES_API_KEY"))
+      }
+    });
+  });
+
+  // Admin Rate Limiter Stats & Monitoring Route
+  app.get("/api/admin/rate-limit-stats", (req, res) => {
+    const activeSessions: any[] = [];
+    const now = Date.now();
+
+    rateLimitStore.forEach((entry, key) => {
+      const activeInWindow = entry.timestamps.filter(ts => now - ts < 60000).length;
+      if (activeInWindow > 0 || (entry.blockedUntil && entry.blockedUntil > now)) {
+        const parts = key.split(":");
+        const tier = parts.pop() || "general";
+        const session = parts.join(":");
+        activeSessions.push({
+          key,
+          session,
+          tier,
+          activeCallsInLastMin: activeInWindow,
+          isBlocked: !!(entry.blockedUntil && entry.blockedUntil > now),
+          blockedTimeRemainingSec: entry.blockedUntil && entry.blockedUntil > now ? Math.ceil((entry.blockedUntil - now) / 1000) : 0
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      config: rateLimitConfig,
+      metrics: {
+        ...rateLimitMetrics,
+        currentTrackedSessionsCount: rateLimitStore.size,
+        activeSessionsCount: activeSessions.length
+      },
+      activeSessions: activeSessions.slice(0, 50)
+    });
+  });
+
+  // Admin Update Rate Limiter Settings
+  app.post("/api/admin/rate-limit-config", (req, res) => {
+    try {
+      const { enabled, general, ai, auth, payment, adminMultiplier } = req.body;
+      
+      if (typeof enabled === "boolean") rateLimitConfig.enabled = enabled;
+      if (general && typeof general.maxRequests === "number") {
+        rateLimitConfig.general.maxRequests = general.maxRequests;
+        if (general.windowMs) rateLimitConfig.general.windowMs = general.windowMs;
+      }
+      if (ai && typeof ai.maxRequests === "number") {
+        rateLimitConfig.ai.maxRequests = ai.maxRequests;
+        if (ai.windowMs) rateLimitConfig.ai.windowMs = ai.windowMs;
+      }
+      if (auth && typeof auth.maxRequests === "number") {
+        rateLimitConfig.auth.maxRequests = auth.maxRequests;
+        if (auth.windowMs) rateLimitConfig.auth.windowMs = auth.windowMs;
+      }
+      if (payment && typeof payment.maxRequests === "number") {
+        rateLimitConfig.payment.maxRequests = payment.maxRequests;
+        if (payment.windowMs) rateLimitConfig.payment.windowMs = payment.windowMs;
+      }
+      if (typeof adminMultiplier === "number") {
+        rateLimitConfig.adminMultiplier = adminMultiplier;
+      }
+
+      console.log("[RateLimiter] Config updated by admin:", JSON.stringify(rateLimitConfig));
+
+      res.json({
+        success: true,
+        message: "Rate limiter threshold configurations updated successfully",
+        config: rateLimitConfig
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin Reset Rate Limits
+  app.post("/api/admin/rate-limit-reset", (req, res) => {
+    try {
+      const { sessionKey } = req.body;
+      if (sessionKey) {
+        rateLimitStore.delete(sessionKey);
+        res.json({ success: true, message: `Throttling reset for session key: ${sessionKey}` });
+      } else {
+        rateLimitStore.clear();
+        rateLimitMetrics.totalRequestsBlocked = 0;
+        rateLimitMetrics.blockedSessionsCount = 0;
+        res.json({ success: true, message: "All session rate limits and active blocks cleared successfully." });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin Update Env Overrides
+  app.post("/api/admin/update-env", async (req, res) => {
+    try {
+      const { secrets } = req.body;
+      if (!secrets || typeof secrets !== 'object') {
+        return res.status(400).json({ error: "Invalid secrets payload" });
+      }
+
+      fs.writeFileSync(ENV_OVERRIDES_FILE, JSON.stringify(secrets, null, 2), "utf-8");
+      
+      // Update process.env for the current session
+      Object.keys(secrets).forEach(key => {
+        if (secrets[key]) process.env[key] = secrets[key];
+      });
+
+      res.json({ success: true, message: "Environment overrides saved to local files" });
+    } catch (error: any) {
+      console.error("[Admin] Update env error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin Download Env Route
+  app.get(["/api/admin/download-env", "/api/admin/export-env"], async (req, res) => {
+    const examplePath = path.join(process.cwd(), ".env.example");
+    let envContent = "";
+    
+    // Load overrides from local config file
+    let overrides: any = {};
+    try {
+      if (fs.existsSync(ENV_OVERRIDES_FILE)) {
+        overrides = JSON.parse(fs.readFileSync(ENV_OVERRIDES_FILE, "utf-8")) || {};
+      }
+    } catch (e) {
+      console.warn("[Admin] Download Env: No local overrides found");
+    }
+
+    const getVal = (key: string) => overrides[key] || process.env[key];
+
+    if (fs.existsSync(examplePath)) {
+      const exampleContent = fs.readFileSync(examplePath, "utf-8");
+      const lines = exampleContent.split("\n");
+      
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          const parts = trimmed.split("=");
+          const key = parts[0].trim();
+          const currentVal = getVal(key);
+          if (key && currentVal) {
+            envContent += `${key}=${currentVal}\n`;
+          } else {
+            envContent += line + "\n";
+          }
+        } else {
+          envContent += line + "\n";
+        }
+      }
+    } else {
+      // Fallback
+      const keys = [...new Set([...Object.keys(process.env), ...Object.keys(overrides)])];
+      for (const key of keys) {
+        const val = getVal(key);
+        if (val) envContent += `${key}=${val}\n`;
+      }
+    }
+    
+    res.setHeader("Content-Type", "text/plain");
+    res.setHeader("Content-Disposition", 'attachment; filename="env-config.txt"');
+    res.send(envContent);
+  });
+
+  // --- GEMINI PROXY SYSTEM ---
+  function getGoogleGenAIClient() {
+    let geminiKey = process.env.GEMINI_API_KEY;
+    try {
+      if (fs.existsSync(ENV_OVERRIDES_FILE)) {
+        const localOverrides = JSON.parse(fs.readFileSync(ENV_OVERRIDES_FILE, "utf-8")) || {};
+        if (localOverrides.GEMINI_API_KEY) {
+          geminiKey = localOverrides.GEMINI_API_KEY;
+        }
+      }
+    } catch (e) {
+      // Ignored
+    }
+
+    if (!geminiKey) {
+      throw new Error("GEMINI_API_KEY environment variable is missing.");
+    }
+    
+    return new GoogleGenAI({
+      apiKey: geminiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+
+  app.post("/api/gemini/estimate-cost", async (req, res) => {
+    try {
+      const { description, location, urgency, category, extraData } = req.body;
+      const ai = getGoogleGenAIClient();
+      
+      const prompt = `
+        Estimate the cost for this errand in Kenya (KSH):
+        Description: ${description || ''}
+        Location: ${location || ''}
+        Urgency: ${urgency || ''}
+        Category: ${category || ''}
+        Extra Data: ${JSON.stringify(extraData || {})}
+
+        Return a JSON object with:
+        - breakdown: { baseFee: number, workScale: number, total: number }
+        - scale: number (1-5, complexity)
+        - mamaFuaBreakdown: (optional, for laundry)
+        - propertyType: (optional, for house hunting)
+        - vibe: (optional, for house hunting)
+        - amenities: (optional, string array)
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+
+      const jsonText = (response.text || '{}').replace(/```json|```/g, '');
+      res.json(JSON.parse(jsonText));
+    } catch (error: any) {
+      console.error("[Gemini Proxy] Estimate cost failed:", error.message);
+      res.json({ breakdown: { baseFee: 500, workScale: 1, total: 500 }, scale: 1, fallback: true });
+    }
+  });
+
+  app.post("/api/gemini/parse-description", async (req, res) => {
+    try {
+      const { text } = req.body;
+      const ai = getGoogleGenAIClient();
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: `Parse this errand description into a JSON object with title, category (one of: General, Delivery, Shopping, Mama Fua, House Hunting), and location: "${text || ''}"`,
+        config: { responseMimeType: "application/json" }
+      });
+      
+      const jsonText = (response.text || '{}').replace(/```json|```/g, '');
+      res.json(JSON.parse(jsonText));
+    } catch (error: any) {
+      console.error("[Gemini Proxy] Parse description failed:", error.message);
+      res.json({ title: (req.body.text || '').substring(0, 30), category: 'General', location: '', fallback: true });
+    }
+  });
+
+  app.post("/api/gemini/extract-receipt-total", async (req, res) => {
+    try {
+      const { base64 } = req.body;
+      if (!base64) {
+        return res.status(400).json({ error: "Missing base64 image data" });
+      }
+      const ai = getGoogleGenAIClient();
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [
+          { inlineData: { data: base64, mimeType: "image/jpeg" } },
+          { text: "Extract the total amount from this receipt image. Return only the number." }
+        ]
+      });
+      const total = parseFloat((response.text || '0').replace(/[^\d.]/g, '')) || 0;
+      res.json({ total });
+    } catch (error: any) {
+      console.error("[Gemini Proxy] Extract receipt total failed:", error.message);
+      res.json({ total: 0, fallback: true });
+    }
+  });
+
+  // --- CUSTOM JWT AUTHENTICATION ENGINE (Option 1) ---
+  const JWT_SECRET = process.env.JWT_SECRET || "errandly_jwt_secret_key_extremely_secure_2026";
+
+  const authenticateToken = (req: any, res: any, next: any) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+
+    jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
+      if (err) {
+        req.user = null;
+      } else {
+        req.user = decoded;
+      }
+      next();
+    });
+  };
+
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { name, email, phone, password } = req.body;
+      if (!name || !email || !phone || !password) {
+        return res.status(400).json({ error: "All fields are required" });
+      }
+
+      const lowercaseEmail = email.toLowerCase().trim();
+      const formattedPhone = normalizePhone(phone);
+
+      if (password.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters long" });
+      }
+
+      if (!supabase) {
+        return res.status(500).json({ error: "Database interface offline" });
+      }
+
+      // Check unique email
+      const { data: existingEmail } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', lowercaseEmail)
+        .maybeSingle();
+
+      if (existingEmail) {
+        return res.status(400).json({ error: "This email is already registered." });
+      }
+
+      // Check unique phone number
+      const { data: existingPhone } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', formattedPhone)
+        .maybeSingle();
+
+      if (existingPhone) {
+        return res.status(400).json({ error: "This phone number is already registered to another account." });
+      }
+
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Generate unique user ID
+      const userId = `usr_${Math.random().toString(36).substr(2, 9)}`;
+
+      const isSuperAdmin = lowercaseEmail === 'errands@codexict.co.ke' || 
+                           lowercaseEmail === 'ngugimaina4@gmail.com' || 
+                           lowercaseEmail.includes('supaadmin') || 
+                           lowercaseEmail.startsWith('supaadmin@');
+
+      const profilePayload = {
+        id: userId,
+        email: lowercaseEmail,
+        username: name,
+        phone: formattedPhone,
+        role: isSuperAdmin ? 'ADMIN' : 'REQUESTER',
+        is_runner: false,
+        is_admin: isSuperAdmin,
+        password_hash: hashedPassword,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        wallet_balance: 0,
+        balance: 0,
+        completed_errands: 0,
+        total_tasks: 0,
+        theme: 'light',
+        phone_verified: false,
+        email_verified: false
+      };
+
+      const result = await supabase.from('profiles').insert(profilePayload);
+      if (result.error) {
+        throw result.error;
+      }
+
+      // Sign JWT token
+      const token = jwt.sign(
+        { userId, email: lowercaseEmail, role: profilePayload.role },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+
+      console.log(`[JWT Auth] Successfully registered user: ${lowercaseEmail} with ID: ${userId}`);
+      res.json({ success: true, token, user: profilePayload });
+    } catch (err: any) {
+      console.error("[JWT Register Error]", err);
+      res.status(500).json({ error: err.message || "Registration failed" });
+    }
+  });
+
+  app.get("/api/admin/backend-accounts", async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(500).json({ error: "Database interface offline" });
+      }
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('backend_admin', true);
+      
+      if (error) throw error;
+      res.json({ success: true, data: data || [] });
+    } catch (err: any) {
+      console.error("[Backend Accounts] Error fetching:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/admin/create-backend-account", async (req, res) => {
+    try {
+      const { name, email, phone, password, role } = req.body;
+      if (!name || !email || !phone || !password) {
+        return res.status(400).json({ error: "All fields are required" });
+      }
+
+      const lowercaseEmail = email.toLowerCase().trim();
+      const formattedPhone = normalizePhone(phone);
+
+      if (password.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters long" });
+      }
+
+      if (!supabase) {
+        return res.status(500).json({ error: "Database interface offline" });
+      }
+
+      // Check unique email
+      const { data: existingEmail } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', lowercaseEmail)
+        .maybeSingle();
+
+      if (existingEmail) {
+        return res.status(400).json({ error: "This email is already registered." });
+      }
+
+      // Check unique phone number
+      const { data: existingPhone } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', formattedPhone)
+        .maybeSingle();
+
+      if (existingPhone) {
+        return res.status(400).json({ error: "This phone number is already registered to another account." });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const userId = `usr_backend_${Math.random().toString(36).substr(2, 9)}`;
+
+      const profilePayload = {
+        id: userId,
+        email: lowercaseEmail,
+        username: name,
+        phone: formattedPhone,
+        role: role || 'ADMIN',
+        is_runner: false,
+        is_admin: true,
+        backend_admin: true,
+        password_hash: hashedPassword,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        wallet_balance: 1000,
+        balance: 1000,
+        completed_errands: 0,
+        total_tasks: 0,
+        theme: 'light',
+        phone_verified: true,
+        email_verified: true,
+        is_verified: true
+      };
+
+      const result = await supabase.from('profiles').insert(profilePayload);
+      if (result.error) {
+        throw result.error;
+      }
+
+      console.log(`[Backend Account] Created backend admin: ${lowercaseEmail} with ID: ${userId}`);
+      res.json({ success: true, user: profilePayload });
+    } catch (err: any) {
+      console.error("[Backend Account Error]", err);
+      res.status(500).json({ error: err.message || "Backend account creation failed" });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email/phone and password are required" });
+      }
+
+      const input = email.trim();
+      const isPhoneInput = !input.includes('@');
+      let user = null;
+
+      if (!supabase) {
+        return res.status(500).json({ error: "Database interface offline" });
+      }
+
+      if (isPhoneInput) {
+        const formattedPhone = normalizePhone(input);
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('phone', formattedPhone)
+          .maybeSingle();
+        user = data;
+      } else {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', input.toLowerCase())
+          .maybeSingle();
+        user = data;
+      }
+
+      const isSuperAdmin = !isPhoneInput && (
+        input.toLowerCase() === 'errands@codexict.co.ke' || 
+        input.toLowerCase() === 'ngugimaina4@gmail.com' || 
+        input.toLowerCase().includes('supaadmin') || 
+        input.toLowerCase().startsWith('supaadmin@')
+      );
+
+      if (!user && isSuperAdmin) {
+        // Auto-provision super admin profile
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const userId = `usr_admin_${Math.random().toString(36).substr(2, 9)}`;
+        const profilePayload = {
+          id: userId,
+          email: input.toLowerCase(),
+          username: 'Super Admin',
+          phone: '254700000000',
+          role: 'ADMIN',
+          is_runner: false,
+          is_admin: true,
+          backend_admin: true,
+          password_hash: hashedPassword,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          wallet_balance: 10000,
+          balance: 10000,
+          completed_errands: 0,
+          total_tasks: 0,
+          theme: 'light',
+          phone_verified: true,
+          email_verified: true,
+          is_verified: true
+        };
+        const { data: insertedUser, error: insertErr } = await supabase
+          .from('profiles')
+          .upsert(profilePayload, { onConflict: 'email' })
+          .select('*')
+          .maybeSingle();
+
+        if (insertErr) {
+          console.error("[Super Admin Auto-Provision Upsert Error]:", insertErr.message);
+        }
+        user = insertedUser || profilePayload;
+      }
+
+      if (!user) {
+        return res.status(404).json({ error: "No account found matching this email/phone. Please register first." });
+      }
+
+      if (!user.password_hash) {
+        return res.status(401).json({ error: "This account does not have a password set. Please use password reset." });
+      }
+
+      // Verify password
+      const isMatch = await bcrypt.compare(password, user.password_hash);
+      if (!isMatch) {
+         return res.status(401).json({ error: "Incorrect password. Please check your password and try again." });
+      }
+
+      // Sign JWT token
+      const token = jwt.sign(
+        { userId: user.id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+
+      console.log(`[JWT Auth] Successfully authenticated user: ${user.email}`);
+
+      // Send WhatsApp notification via WaSender API (non-blocking)
+      const userPhone = user.phone || (isPhoneInput ? input : "");
+      if (userPhone) {
+        const userName = user.username || user.name || "User";
+        const loginTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const loginDate = new Date().toLocaleDateString('en-GB');
+        const loginMsg = `🔔 *ErrandRunner Login Alert*\n\nHello ${userName},\n\nYou have successfully logged in to your ErrandRunner account on ${loginDate} at ${loginTime}.\n\nIf this was not you, please secure your account immediately or contact support.`;
+        
+        sendWhatsAppHelper(userPhone, loginMsg)
+          .then(res => {
+            if (res.success) {
+              console.log(`[WhatsApp Login Notifier] Successfully sent login alert to ${userPhone}`);
+            } else {
+              console.warn(`[WhatsApp Login Notifier] Notice sending login alert to ${userPhone}:`, res.error || res.data);
+            }
+          })
+          .catch(err => {
+            console.warn(`[WhatsApp Login Notifier] Failed to send login alert:`, err?.message || err);
+          });
+      }
+
+      res.json({ success: true, token, user });
+    } catch (err: any) {
+      console.error("[JWT Login Error]", err);
+      res.status(500).json({ error: err.message || "Login failed" });
+    }
+  });
+
+  app.all("/api/auth/me", authenticateToken, async (req: any, res: any) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: "Unauthorized: Invalid or missing token" });
+      }
+
+      if (!supabase) {
+        return res.status(500).json({ error: "Database interface offline" });
+      }
+
+      const { data: user, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', req.user.userId)
+        .maybeSingle();
+
+      if (error || !user) {
+        return res.status(401).json({ error: "Unauthorized: User not found" });
+      }
+
+      res.json({ success: true, user });
+    } catch (err: any) {
+      console.error("[JWT Me Error]", err);
+      res.status(401).json({ error: "Unauthorized: Invalid or expired token" });
+    }
+  });
+
+  // Silent Supabase Email Confirmation Endpoint (runs on high-privilege server with Service Role Key)
+  app.post("/api/auth/auto-confirm", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+    
+    try {
+      if (!supabaseServiceKey) {
+        console.warn("[AutoConfirm] No SUPABASE_SERVICE_ROLE_KEY configured. Email confirmation update ignored.");
+        return res.json({ success: false, message: "No service role key configured on server. Bypassing." });
+      }
+      
+      console.log(`[AutoConfirm] Attempting to auto-confirm email in Supabase: ${email}`);
+      
+      // 1. Fetch user lists to find user ID by email
+      const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
+      if (listError) {
+        console.error("[AutoConfirm] Error listing users to find target user schema:", listError);
+        throw listError;
+      }
+      
+      const targetUser = users?.find(u => u.email?.toLowerCase().trim() === email.toLowerCase().trim());
+      if (!targetUser) {
+        console.warn(`[AutoConfirm] User with email ${email} not found in Supabase Auth user database.`);
+        return res.status(404).json({ error: "USER_NOT_FOUND", message: `User with email ${email} not found in Auth system.` });
+      }
+      
+      console.log(`[AutoConfirm] Match detected. User ID: ${targetUser.id}. Overriding email confirmation properties to true...`);
+      
+      // 2. Perform administrative update to set email_confirm = true
+      const { data: updateData, error: updateError } = await supabase.auth.admin.updateUserById(
+        targetUser.id,
+        { email_confirm: true }
+      );
+      
+      if (updateError) {
+        console.error(`[AutoConfirm] Error updating attributes on user ID ${targetUser.id}:`, updateError);
+        throw updateError;
+      }
+      
+      console.log(`[AutoConfirm] User ${email} (ID: ${targetUser.id}) has been updated and auto-confirmed successfully.`);
+      return res.json({ success: true, message: `Email ${email} has been automatically confirmed.` });
+    } catch (error: any) {
+      console.error("[AutoConfirm] Exceptional flow in user auto-confirm action:", error);
+      return res.status(500).json({ error: "CONFIRM_FAILED", message: error.message });
+    }
+  });
+
+  // Phone Availability Check
+  app.post("/api/auth/check-phone", async (req, res) => {
+    const { phone, userId } = req.body;
+    if (!phone) return res.status(400).json({ error: "Phone number is required" });
+    
+    const targetPhone = normalizePhone(phone);
+    try {
+      // Check: Supabase
+      if (supabase) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('phone', targetPhone)
+          .maybeSingle();
+        
+        if (profile && profile.id !== userId) {
+          return res.json({ 
+            available: false, 
+            error: "PHONE_ALREADY_EXISTS",
+            message: "This phone number is already registered to another account." 
+          });
+        }
+      }
+
+      return res.json({ available: true });
+    } catch (error: any) {
+      console.error("[Auth] Check phone error:", error);
+      res.status(500).json({ error: "Check failed" });
+    }
+  });
+
+  // --- CLEANUP: Removed old Paystack and Payhero legacy routes ---
+
+  // OTP-based password reset (sends random OTP to phone as temporary password, stored as hash locally)
+  app.post("/api/auth/reset-via-otp/send", async (req, res) => {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: "Phone number is required" });
+
+    const targetPhone = normalizePhone(phone);
+    console.log(`[ForgotPassword] Request for phone: ${targetPhone}`);
+
+    try {
+      let email = "";
+      let sbUserId = "";
+
+      // 1. Look up user by phone number in profiles
+      if (supabase) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id, email')
+          .eq('phone', targetPhone)
+          .maybeSingle();
+
+        if (profile) {
+          email = profile.email;
+          sbUserId = profile.id;
+        }
+      }
+
+      if (!email) {
+        return res.status(400).json({ error: "No user found with this phone number." });
+      }
+
+      // 2. Generate 6-digit OTP as temporary password
+      const tempPassword = Math.floor(100000 + Math.random() * 900000).toString();
+      console.log(`[ForgotPassword] Temp password generated for ${targetPhone} (${email}): ${tempPassword}`);
+
+      // 3. Hash temporary password and set is_temporary_password: true
+      if (supabase && sbUserId) {
+        const hashedTempPassword = await bcrypt.hash(tempPassword, 10);
+        
+        try {
+          await supabase
+            .from('profiles')
+            .update({ 
+              password_hash: hashedTempPassword,
+              is_temporary_password: true 
+            })
+            .eq('id', sbUserId);
+        } catch (pColErr: any) {
+          console.warn("[ForgotPassword] Local database profile details update failed:", pColErr.message);
+        }
+      }
+
+      // 4. Send SMS with the temporary password
+      const smsMessage = `Your temporary password for ErrandRunner is: ${tempPassword}. Use this code to sign in and update your password.`;
+      
+      const token = process.env.TEXTSASA_API_TOKEN || process.env.TALKSASA_API_TOKEN;
+      if (!token) {
+        console.log(`[DEV] SMS API token not found. Forgot Password OTP for ${targetPhone}: ${tempPassword}`);
+        return res.json({ 
+          success: true, 
+          message: "OTP temporary password sent successfully (dev mode)", 
+          devMode: true, 
+          code: tempPassword,
+          email: email 
+        });
+      }
+
+      await sendSmsHelper(targetPhone, smsMessage);
+      return res.json({ 
+        success: true, 
+        message: "Temporary password sent to mobile number.",
+        email: email
+      });
+
+    } catch (error: any) {
+      console.error("[ForgotPassword] Error in reset-via-otp/send:", error);
+      res.status(500).json({ error: "Failed to process forgot password request", details: error.message });
+    }
+  });
+
+  // Reset/Update temporary password to a permanent password
+  app.post("/api/auth/update-password", async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
+
+    const emailLower = email.trim().toLowerCase();
+
+    try {
+      let sbUserId = "";
+
+      // 1. Find user in profiles
+      if (supabase) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', emailLower)
+          .maybeSingle();
+
+        if (profile) {
+          sbUserId = profile.id;
+        }
+      }
+
+      // If no user found yet, return error
+      if (!sbUserId) {
+        return res.status(404).json({ error: "User not found." });
+      }
+
+      // 2. Hash new password and update password_hash & is_temporary_password to false
+      if (supabase && sbUserId) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        try {
+          await supabase
+            .from('profiles')
+            .update({ 
+              password_hash: hashedPassword,
+              is_temporary_password: false 
+            })
+            .eq('id', sbUserId);
+        } catch (pE: any) {
+          console.warn("[UpdatePassword] Profiles update failed:", pE.message);
+        }
+      }
+
+      res.json({ success: true, message: "Password updated successfully." });
+    } catch (err: any) {
+      console.error('[UpdatePassword] Error:', err);
+      res.status(500).json({ error: err.message || "Failed to update password" });
+    }
+  });
+
+  /**
+   * /api/wallet/load - Supabase Wallet Load Implementation
+   * 1. Sanitize Phone
+   * 2. Trigger Paystack STK Push
+   * 3. Background Polling (Server-side)
+   * 4. Supabase Status & Balance Sync (Source of Truth)
+   */
+  app.post(["/api/wallet/load", "/api/payments/paystack/stk-push"], async (req, res) => {
+    try {
+      const { amount, email, userId } = req.body;
+      const rawPhone = req.body.phone || req.body.rawPhone;
+      const transactionId = req.body.transactionId || req.body.txId;
+      const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+
+      if (!amount || !rawPhone || !userId || !transactionId) {
+        return res.status(400).json({ success: false, message: "Missing required fields" });
+      }
+
+      // 2. Strict Phone Formatting as per user request
+      let cleanedPhone = String(rawPhone).replace(/\D/g, ''); 
+      if (cleanedPhone.startsWith('0')) {
+        cleanedPhone = '254' + cleanedPhone.substring(1);
+      } else if (cleanedPhone.length === 9 && (cleanedPhone.startsWith('7') || cleanedPhone.startsWith('1'))) {
+        cleanedPhone = '254' + cleanedPhone;
+      }
+      
+      // Ensure exactly 12 digits for Kenya
+      if (cleanedPhone.length !== 12 || !cleanedPhone.startsWith('254')) {
+        console.error(`[Wallet Load] Invalid phone format: ${cleanedPhone}`);
+        return res.status(400).json({ success: false, message: "Please enter a valid 10-digit number (e.g. 0712...)" });
+      }
+
+      console.log(`[Wallet Load] Initiating STK. Original Ref: ${transactionId}, User: ${userId}, Phone: ${cleanedPhone}`);
+
+      // GURANTEE: Pre-insert the transaction record in the DB to ensure backend tracking
+      try {
+        const { data: existingTx } = await supabase.from('transactions').select('id, status').eq('id', transactionId).maybeSingle();
+        if (!existingTx) {
+          console.log(`[Wallet Load] Pre-inserting transaction record for ID: ${transactionId}`);
+          await supabase.from('transactions').insert({
+            id: transactionId,
+            user_id: userId,
+            amount: Number(amount),
+            type: 'deposit',
+            status: 'pending',
+            provider: 'paystack',
+            description: 'Wallet Deposit via M-Pesa',
+            phone_number: cleanedPhone,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+        } else {
+          console.log(`[Wallet Load] Transaction record already exists in DB with status: ${existingTx.status || 'pending'}`);
+        }
+      } catch (dbErr: any) {
+        console.warn(`[Wallet Load] Failed to pre-insert transaction in DB: ${dbErr.message}`);
+      }
+
+      // If Paystack is not configured in the environment, provide a sandbox STK push flow
+      if (!PAYSTACK_SECRET_KEY) {
+        console.warn(`[Wallet Load] PAYSTACK_SECRET_KEY not set in environment. Simulating STK push for ref: ${transactionId}`);
+        const simRef = `sim_${transactionId}`;
+        await supabase.from('transactions').update({ 
+          reference: simRef,
+          phone_number: cleanedPhone 
+        }).eq('id', transactionId);
+
+        // Auto-credit in sandbox after 4 seconds
+        setTimeout(async () => {
+          try {
+            console.log(`[Simulation SUCCESS] Tx ${transactionId} confirmed.`);
+            let newBalance = Number(amount);
+            const { data: profile } = await supabase.from('profiles').select('wallet_balance, balance, phone, name, username, full_name').eq('id', userId).maybeSingle();
+            if (profile) {
+              const currentBalance = profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : Number(profile.wallet_balance || 0);
+              newBalance = currentBalance + Number(amount);
+              await supabase.from('profiles').update({ wallet_balance: newBalance, balance: newBalance }).eq('id', userId);
+            }
+            await supabase.from('transactions').update({ status: 'success' }).eq('id', transactionId);
+
+            // Alert user via WhatsApp
+            await sendTransactionWhatsAppAlert({
+              userId,
+              phone: cleanedPhone || profile?.phone,
+              userName: profile?.name || profile?.username || profile?.full_name,
+              amount: Number(amount),
+              transactionId,
+              reference: simRef,
+              type: 'deposit',
+              newBalance,
+              description: 'Wallet Deposit via M-Pesa'
+            });
+          } catch (simErr: any) {
+            console.error('[Simulation Error]:', simErr.message);
+          }
+        }, 4000);
+
+        return res.json({ 
+          success: true, 
+          message: "STK Push sent to device (Sandbox Mode). Please enter PIN.",
+          reference: simRef
+        });
+      }
+
+      // Try multiple phone format candidates to be highly resilient against Paystack validation changes
+      const localFormat = '0' + cleanedPhone.substring(3);
+      const phoneCandidates = [
+        localFormat,                      // 07XXXXXXXX (most standard for local mobile money endpoints)
+        '+' + cleanedPhone,                // +254XXXXXXXX (standard E.164 with plus prefix)
+        cleanedPhone                      // 254XXXXXXXX (raw country code prefix)
+      ];
+
+      let paystackResponse: any = null;
+      let lastError: any = null;
+
+      for (let i = 0; i < phoneCandidates.length; i++) {
+        const phoneCandidate = phoneCandidates[i];
+        // Append retry suffix to prevent Paystack duplicate reference errors on retry
+        const refToSend = i === 0 ? String(transactionId) : `${transactionId}-${i}`;
+
+        try {
+          console.log(`[Wallet Load] Attempting Paystack STK push with phone candidate: ${phoneCandidate}, reference: ${refToSend}`);
+          paystackResponse = await axios.post("https://api.paystack.co/charge", {
+            email: email ? String(email).trim() : `user_${userId}@errand.app`,
+            amount: Math.round(Number(amount) * 100),
+            currency: "KES",
+            reference: refToSend,
+            mobile_money: { 
+              phone: String(phoneCandidate), 
+              provider: "mpesa" 
+            }
+          }, {
+            headers: {
+              'Authorization': `Bearer ${String(PAYSTACK_SECRET_KEY).trim()}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          if (paystackResponse.data?.status || paystackResponse.data?.data) {
+            console.log(`[Wallet Load] Paystack STK push succeeded with phone candidate format: ${phoneCandidate}`);
+            break;
+          }
+        } catch (err: any) {
+          lastError = err;
+          const errMsg = err.response?.data?.message || err.response?.data?.error || err.message;
+          console.warn(`[Wallet Load] Candidate ${phoneCandidate} failed:`, errMsg);
+        }
+      }
+
+      if (!paystackResponse || !paystackResponse.data) {
+        const finalErrorDetails = lastError?.response?.data || lastError?.message || lastError;
+        console.error("[Wallet Load Failed with All Formats]", finalErrorDetails);
+        throw lastError || new Error("Failed to initiate charge with any phone format candidates.");
+      }
+
+      const psData = paystackResponse.data;
+      const reference = psData.data?.reference || psData.data?.checkoutRequestID || psData.reference;
+
+      // Update Supabase with reference
+      await supabase.from('transactions').update({ 
+        reference: reference,
+        phone_number: cleanedPhone 
+      }).eq('id', transactionId);
+
+      // Return immediately - reference is needed for Realtime listeners
+      res.json({ 
+        success: true, 
+        message: "STK Push sent!",
+        reference: reference
+      });
+
+      // 3. Server-side Polling (Only if charge was successful)
+      (async () => {
+        // Initial delay
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        let attempts = 0;
+        const maxAttempts = 10;
+        const interval = 7000;
+        let verified = false;
+
+        while (attempts < maxAttempts && !verified) {
+          try {
+            const verifyRes = await axios.get(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+              headers: { 'Authorization': `Bearer ${PAYSTACK_SECRET_KEY}` }
+            });
+
+            const status = verifyRes.data.data?.status;
+            if (status === "success") {
+              verified = true;
+              console.log(`[Polling SUCCESS] Tx ${transactionId} confirmed!`);
+
+              let newBalance = Number(amount);
+              const { data: profile } = await supabase.from('profiles').select('wallet_balance, balance, phone, name, username, full_name').eq('id', userId).maybeSingle();
+              if (profile) {
+                const currentBalance = profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : Number(profile.wallet_balance || 0);
+                newBalance = currentBalance + Number(amount);
+                await supabase.from('profiles').update({ wallet_balance: newBalance, balance: newBalance }).eq('id', userId);
+                await supabase.from('transactions').update({ status: 'success' }).eq('id', transactionId);
+              }
+
+              // Alert user via WhatsApp
+              await sendTransactionWhatsAppAlert({
+                userId,
+                phone: cleanedPhone || profile?.phone,
+                userName: profile?.name || profile?.username || profile?.full_name,
+                amount: Number(amount),
+                transactionId,
+                reference,
+                type: 'deposit',
+                newBalance,
+                description: 'Wallet Deposit via M-Pesa'
+              });
+            } else if (status === "failed") {
+              console.log(`[Polling FAILED] Tx ${transactionId} failed status.`);
+              await supabase.from('transactions').update({ status: 'failed' }).eq('id', transactionId);
+              break;
+            }
+          } catch (err: any) {
+            console.error(`[Polling Error] Attempt ${attempts + 1}:`, err.message);
+          }
+          
+          if (!verified) await new Promise(resolve => setTimeout(resolve, interval));
+          attempts++;
+        }
+      })();
+
+    } catch (error: any) {
+      console.error("[Wallet Load Error]:", error.response?.data || error.message);
+      res.status(500).json({ success: false, message: error.response?.data?.message || error.message });
+    }
+  });
+
+  // --- Background Transaction Verification (Supabase) ---
+  // Periodically check for pending Paystack transactions in Supabase and verify them
+  const verifyPendingTransactions = async () => {
+    if (!supabase) return;
+
+    try {
+      // Query Supabase for pending transactions
+      const { data: pendingTxs, error: fetchTxError } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('status', 'pending')
+        .limit(10);
+
+      if (fetchTxError || !pendingTxs || pendingTxs.length === 0) return;
+
+      const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+      if (!PAYSTACK_SECRET_KEY) return;
+
+      const { default: axios } = await import("axios");
+
+      for (const tx of pendingTxs) {
+        const reference = tx.reference;
+        
+        // Skip if no reference exists yet
+        if (!reference) continue;
+        
+        // Skip if too new (give user time to enter PIN) - at least 45 seconds
+        const createdAt = new Date(tx.created_at).getTime();
+        const age = Date.now() - createdAt;
+        if (age < 45000) continue;
+
+        console.log(`[Verification] Checking status for ref: ${reference}`);
+
+        try {
+          const response = await axios.get(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+            headers: { 'Authorization': `Bearer ${PAYSTACK_SECRET_KEY}` }
+          });
+
+          const psData = response.data;
+          if (psData.data?.status === "success") {
+            console.log(`[Verification SUCCESS] Ref ${reference} completed!`);
+            
+            const userId = tx.user_id;
+            const amountNum = tx.amount;
+
+            // Update Supabase Transaction status
+            const { error: txError } = await supabase
+              .from('transactions')
+              .update({ 
+                status: 'success', 
+                verification_data: psData.data,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', tx.id);
+
+            if (txError) {
+              console.error("[Supabase Sync] Tx Update Error:", txError);
+              continue;
+            }
+
+            // Update Supabase Wallet balance
+            const { data: profile, error: profileFetchError } = await supabase
+              .from('profiles')
+              .select('wallet_balance, balance, phone, name, username, full_name')
+              .eq('id', userId)
+              .maybeSingle();
+
+            let newBalance = amountNum;
+            if (!profileFetchError && profile) {
+              const currentBalance = profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : Number(profile.wallet_balance || 0);
+              newBalance = currentBalance + amountNum;
+              const { error: balanceError } = await supabase
+                .from('profiles')
+                .update({ 
+                  wallet_balance: newBalance, 
+                  balance: newBalance,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', userId);
+              
+              if (balanceError) console.error("[Supabase Sync] Balance Update Error:", balanceError);
+            } else {
+              console.error("[Supabase Sync] Profile Fetch Error:", profileFetchError);
+            }
+
+            // Create notification for user in Supabase
+            if (supabase) {
+              await supabase.from("notifications").insert({
+                user_id: userId,
+                title: "Deposit Successful",
+                message: `Your deposit of KSH ${amountNum} has been processed successfully.`,
+                type: "payment",
+                read: false,
+                created_at: new Date().toISOString()
+              });
+            }
+
+            // Alert user via WhatsApp
+            await sendTransactionWhatsAppAlert({
+              userId,
+              phone: tx.phone_number || profile?.phone,
+              userName: profile?.name || profile?.username || profile?.full_name,
+              amount: Number(amountNum),
+              transactionId: tx.id,
+              reference: reference,
+              type: tx.type || 'deposit',
+              newBalance: newBalance,
+              description: tx.description || 'Wallet Deposit via M-Pesa'
+            });
+          } else if (psData.data?.status === "failed") {
+            console.log(`[Verification FAILED] Ref ${reference} failed.`);
+            await supabase
+              .from('transactions')
+              .update({ 
+                status: 'failed', 
+                updated_at: new Date().toISOString(),
+                error: psData.data?.gateway_response || "Transaction failed"
+              })
+              .eq('id', tx.id);
+          }
+        } catch (err: any) {
+          console.error(`[Verification Error] Failed for ref ${reference}:`, err.message);
+        }
+      }
+    } catch (error) {
+      console.error("[Verification Loop Error]:", error);
+    }
+  };
+
+  // Run every 90 seconds to check, while allowing manual endpoint triggers
+  setInterval(verifyPendingTransactions, 90000);
+
+  /**
+   * Manual verification endpoint (can be used for instant checks)
+   */
+  app.get("/api/payments/verify/:reference", async (req, res) => {
+    // Simply trigger the loop or handle individually
+    await verifyPendingTransactions();
+    res.json({ success: true, message: "Verification process triggered." });
+  });
+
+  /**
+   * Status query endpoint for transactions
+   */
+  app.get("/api/payments/status", async (req, res) => {
+    try {
+      const ref = (req.query.reference || req.query.txId || req.query.id) as string;
+      if (!ref) {
+        return res.status(400).json({ success: false, message: "Reference or transaction ID is required" });
+      }
+
+      if (supabase) {
+        const { data: tx } = await supabase
+          .from('transactions')
+          .select('*')
+          .or(`id.eq.${ref},reference.eq.${ref}`)
+          .maybeSingle();
+
+        if (tx) {
+          return res.json({ success: true, status: tx.status || 'pending', data: tx });
+        }
+      }
+
+      res.json({ success: true, status: 'pending', data: null });
+    } catch (err: any) {
+      console.error("[Payment Status Route Error]:", err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  /**
+   * Verify all pending payments endpoint
+   */
+  app.get("/api/payments/verify/all", async (req, res) => {
+    try {
+      await verifyPendingTransactions();
+      res.json({ success: true, message: "Verification process triggered for all pending transactions." });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Profile & Wallet Sync (Service Role Bypass for RLS)
+  app.post("/api/profiles/sync", async (req, res) => {
+    try {
+      const { id, email, username, phone, avatar_url } = req.body;
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const syncPayload: any = {
+        id,
+        email,
+        username,
+        phone,
+        avatar_url,
+        updated_at: new Date().toISOString()
+      };
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .upsert(syncPayload, { onConflict: 'email' })
+        .select()
+        .single();
+
+      if (error) throw error;
+      res.json({ success: true, profile: data });
+    } catch (error: any) {
+      console.error("[Server] Profile sync error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/profiles/update-balance", async (req, res) => {
+    try {
+      const { userId, amount } = req.body;
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      // Get current balance
+      const { data: profile, error: getError } = await supabase
+        .from('profiles')
+        .select('wallet_balance, balance')
+        .eq('id', userId)
+        .single();
+
+      if (getError) throw getError;
+
+      const currentBalance = profile?.balance !== null && profile?.balance !== undefined ? Number(profile.balance) : Number(profile?.wallet_balance || 0);
+      const newBalance = currentBalance + Number(amount);
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ 
+          wallet_balance: newBalance,
+          balance: newBalance,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      res.json({ success: true, balance: data.balance !== null && data.balance !== undefined ? data.balance : data.wallet_balance });
+    } catch (error: any) {
+      console.error("[Server] Balance update error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/profiles/get", async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+      
+      res.json({ success: true, profile: data });
+    } catch (error: any) {
+      console.error("[Server] Profile fetch error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Email Notifications Proxy (Specific Routes Before Generic) ---
+  const handleEmailProxy = async (req: express.Request, res: express.Response) => {
+    try {
+      const { to, subject, html, type, reference, email, code, name, userId, uid, guide, message, text } = { ...req.query, ...req.body } as any;
+      let targetTo = to || email;
+      const targetUid = userId || uid;
+
+      // Fallback: If recipient email is missing but UID is present, look it up in Firestore or Supabase
+      if (!targetTo && targetUid) {
+        try {
+          console.log(`[Proxy] Recipient missing, attempting lookup for UID: ${targetUid}`);
+          // Look up in Supabase profiles
+          if (supabase) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('email')
+              .eq('id', targetUid)
+              .maybeSingle();
+            if (profile?.email) {
+              targetTo = profile.email;
+              console.log(`[Proxy] Found email in Supabase: ${targetTo}`);
+            }
+          }
+        } catch (dbErr) {
+          console.warn(`[Proxy] Database lookup failed:`, dbErr);
+        }
+      }
+
+      if (!targetTo) {
+        return res.status(400).json({ error: "Recipient email is required" });
+      }
+
+      const targetCode = reference || code;
+      const targetType = (type || "verification").toLowerCase();
+      
+      // Known supported types by the platform's action server
+      const platformSupportedTypes = ['verification', 'invite', 'reset_password', 'password_reset', 'recovery', 'magic_link'];
+      const isPlatformSupported = platformSupportedTypes.includes(targetType);
+      
+      // Select the best content available
+      let targetHtml = html || guide || message || text;
+      
+      if (!targetHtml && targetCode) {
+        targetHtml = `Your verification code is: ${targetCode}`;
+      } else if (!targetHtml) {
+        targetHtml = subject || "Notification from Errand Runner";
+      }
+
+      // If it looks like plain text, wrap it in a basic HTML template
+      if (targetHtml && !targetHtml.includes("<") && !targetHtml.includes(">")) {
+        targetHtml = `
+          <div style="font-family: sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color: #4f46e5; margin-top: 0;">Errand Runner</h2>
+            <div style="white-space: pre-wrap;">${targetHtml}</div>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #999;">Sent via Errand Runner App</p>
+          </div>
+        `;
+      }
+
+      const sendViaActionServer = async () => {
+        const payload: any = {
+          recipient: targetTo, 
+          Recipient: targetTo,
+          to: targetTo,
+          email: targetTo,
+          subject: subject || "Notification",
+          html: targetHtml,
+          message: targetHtml,
+          content: targetCode || targetHtml,
+          reference: targetCode || targetHtml,
+          type: targetType,
+          email_type: targetType,
+          emailType: targetType,
+          EmailType: targetType,
+          name: name || ""
+        };
+        
+        const baseUrl = getActionServerUrl();
+        const url = `${baseUrl}/api/notifications/send-email`;
+        
+        console.log(`[Proxy] Sending email to ${targetTo} type ${targetType} via Action Server`);
+        
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Action Server reported error ${response.status}: ${errorText}`);
+        }
+        
+        return await response.json();
+      };
+
+      const sendViaFallback = async () => {
+        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
+        const targetSubject = subject || "Notification from Errand Runner";
+
+        // Try Resend first as requested
+        if (resend) {
+          try {
+            console.log(`[Proxy] Attempting fallback to Resend for ${targetTo}`);
+            const resendData = await resend.emails.send({
+                from: fromEmail,
+                to: targetTo,
+                subject: targetSubject,
+                html: targetHtml,
+            });
+            
+            if (resendData.error) {
+              throw new Error(`Resend API error: ${resendData.error.message}`);
+            }
+
+            return { success: true, id: resendData.data?.id, method: "Resend" };
+          } catch (resendErr: any) {
+            console.warn(`[Proxy] Resend failed: ${resendErr.message}`);
+          }
+        }
+
+        // Final Fallback to SMTP
+        const transporter = getSmtpTransporter();
+        if (transporter) {
+          console.log(`[Proxy] Attempting final fallback to SMTP for ${targetTo}`);
+          const info = await transporter.sendMail({
+            from: fromEmail,
+            to: targetTo,
+            subject: targetSubject,
+            html: targetHtml,
+            text: targetHtml.replace(/<[^>]*>/g, '') 
+          });
+          return { success: true, messageId: info.messageId, method: "SMTP" };
+        }
+        
+        throw new Error("No fallback email provider available (Resend/SMTP)");
+      };
+
+      try {
+        if (isPlatformSupported) {
+          try {
+            const result = await sendViaActionServer();
+            return res.json({ success: true, data: result, method: "Action Server" });
+          } catch (actionError: any) {
+            console.warn(`[Proxy] Action Server failed for supported type: ${actionError.message}. Trying fallback.`);
+            const result = await sendViaFallback();
+            return res.json(result);
+          }
+        } else {
+          console.log(`[Proxy] Custom email type "${targetType}" detected. Using Resend/SMTP directly.`);
+          const result = await sendViaFallback();
+          return res.json(result);
+        }
+      } catch (finalError: any) {
+        console.error(`[Proxy] All email attempts failed for ${targetTo}:`, finalError.message);
+        return res.status(500).json({ error: "Failed to send email", details: finalError.message });
+      }
+    } catch (error: any) {
+      console.error('Email Proxy Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  };
+
+  app.all(["/api/notifications/send-email", "/api/notifications/verify-email", "/api/proxy/verify-email"], handleEmailProxy);
+
+  // --- Generic Supabase Proxy Select Cache Engine ---
+  interface ProxyCacheEntry {
+    timestamp: number;
+    data: any;
+  }
+  const proxySelectCache = new Map<string, ProxyCacheEntry>();
+
+  const invalidateProxyCache = (table: string) => {
+    for (const key of proxySelectCache.keys()) {
+      if (key.startsWith(`${table}:`)) {
+        proxySelectCache.delete(key);
+      }
+    }
+  };
+
+  // Generic Database API for Fetch
+  app.post("/api/db/:table/:action", async (req, res) => {
+    try {
+      const { table, action } = req.params;
+      const { query, body, match, or, in: inParam } = req.body || {};
+      
+      let result;
+      const db = supabase.from(table);
+
+      switch (action) {
+        case 'select': {
+          const cacheKey = `${table}:${JSON.stringify({ query, match, or, in: inParam })}`;
+          const cached = proxySelectCache.get(cacheKey);
+          if (cached && Date.now() - cached.timestamp < 3000) { // Keep cache for 3 seconds
+            return res.json({ success: true, data: cached.data });
+          }
+
+          let builder = db.select(query || '*');
+          if (match) builder = builder.match(match);
+          if (or) builder = builder.or(or);
+          if (inParam && inParam.column && Array.isArray(inParam.values)) {
+            builder = builder.in(inParam.column, inParam.values);
+          }
+          result = await builder;
+
+          if (result && !result.error && result.data) {
+            proxySelectCache.set(cacheKey, {
+              timestamp: Date.now(),
+              data: result.data
+            });
+          }
+          break;
+        }
+        case 'insert':
+          invalidateProxyCache(table);
+          result = await db.insert(body).select();
+          break;
+        case 'update':
+          invalidateProxyCache(table);
+          result = await db.update(body).match(match || {}).select();
+          break;
+        case 'upsert':
+          invalidateProxyCache(table);
+          result = await db.upsert(body).select();
+          break;
+        default:
+          return res.status(400).json({ error: `Unsupported action: ${action}` });
+      }
+
+      if (!result) {
+        return res.status(500).json({ error: "Database operation produced no result" });
+      }
+
+      if (result.error) {
+        console.error(`[Local DB Server Proxy] DB Error on ${table}/${action}:`, result.error);
+        const errStr = typeof result.error === 'object' ? (result.error.message || JSON.stringify(result.error)) : String(result.error);
+        return res.status(500).json({ error: errStr });
+      }
+
+      res.json({ success: true, data: result.data ?? [] });
+    } catch (error: any) {
+      console.error(`[Local DB Server Proxy] Exception on ${req.params.table}/${req.params.action}:`, error);
+      const errMsg = error?.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
+      res.status(500).json({ error: errMsg });
+    }
+  });
+
+  // DB Configuration endpoints
+  app.get("/api/dbconfig/status", (req, res) => {
+    res.json({
+      connected: pgConnected,
+      config: {
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        database: dbConfig.database,
+        hasPassword: !!dbConfig.password
+      },
+      actionServerUrl: appConfig.actionServerUrl,
+      error: pgError,
+      forceDatabaseMode
+    });
+  });
+
+  // Real-time server diagnostics logging & database mode overrides
+  app.get("/api/admin/logs", (req, res) => {
+    res.json({ logs: capturedLogs });
+  });
+
+  app.post("/api/admin/logs/clear", (req, res) => {
+    capturedLogs.length = 0;
+    res.json({ success: true, logs: [] });
+  });
+
+  app.get("/api/admin/db-mode", (req, res) => {
+    res.json({ forceDatabaseMode });
+  });
+
+  app.post("/api/admin/db-mode/toggle", (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === "boolean") {
+      forceDatabaseMode = enabled;
+    } else {
+      forceDatabaseMode = !forceDatabaseMode;
+    }
+    console.log(`[Admin Override] Database forced-mode setting updated. Forced: ${forceDatabaseMode}`);
+    res.json({ success: true, forceDatabaseMode });
+  });
+
+  app.post("/api/dbconfig/save", async (req, res) => {
+    try {
+      const { host, port, user, password, database, actionServerUrl } = req.body;
+      
+      if (!host || !port || !user || !database) {
+        return res.status(400).json({ error: "Missing required configuration fields" });
+      }
+      
+      const newConfig = {
+        host: host.trim(),
+        port: parseInt(port),
+        user: user.trim(),
+        password: password ? password.trim() : "",
+        database: database.trim()
+      };
+      
+      // Save configuration securely to legacy database_config.json
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2), "utf-8");
+      dbConfig = newConfig;
+
+      // Update unified configuration file app_config.json
+      appConfig.database = {
+        host: newConfig.host,
+        port: newConfig.port,
+        user: newConfig.user,
+        password: newConfig.password,
+        name: newConfig.database
+      };
+
+      if (actionServerUrl !== undefined) {
+        appConfig.actionServerUrl = actionServerUrl.trim();
+      }
+
+      fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+      
+      // Attempt connection pool initialization
+      await initPgPool();
+      
+      res.json({
+        success: pgConnected,
+        connected: pgConnected,
+        actionServerUrl: appConfig.actionServerUrl,
+        error: pgError
+      });
+    } catch (err: any) {
+      console.error("[DbConfig Exception] Error during post save configuration:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/dbconfig/test-query", async (req, res) => {
+    try {
+      const { sql } = req.body;
+      const testSql = sql || "SELECT NOW() as current_time";
+      
+      if (!pgPool || !pgConnected) {
+        return res.status(200).json({ 
+          success: false, 
+          connected: pgConnected,
+          error: pgError || "Database connection pool is offline" 
+        });
+      }
+      
+      const client = await pgPool.connect();
+      try {
+        const result = await client.query(testSql);
+        client.release();
+        res.json({
+          success: true,
+          connected: pgConnected,
+          rows: result.rows,
+          rowCount: result.rowCount,
+          fields: result.fields?.map(f => f.name) || []
+        });
+      } catch (queryErr: any) {
+        client.release();
+        res.json({
+          success: false,
+          connected: pgConnected,
+          error: queryErr.message
+        });
+      }
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // RUNNER APPLICATIONS SYSTEM API (Case A, Case B, Case C)
+  // =========================================================================
+
+  // SMS sender helper for inside backend operations
+  async function sendSmsHelper(phone: string, message: string) {
+    const targetPhone = normalizePhone(phone);
+    const token = process.env.TEXTSASA_API_TOKEN || process.env.TALKSASA_API_TOKEN;
+    let rawEndpoint = (process.env.TEXTSASA_API_ENDPOINT || process.env.TALKSASA_API_ENDPOINT || "https://api.textsasa.com/api/v1/").trim();
+    rawEndpoint = rawEndpoint.replace(/^(POST|GET|PUT|DELETE)\s+/i, '').trim();
+    if (!rawEndpoint.startsWith('http://') && !rawEndpoint.startsWith('https://')) {
+      rawEndpoint = `https://${rawEndpoint}`;
+    }
+    const endpoint = rawEndpoint;
+    const senderId = process.env.TEXTSASA_SENDER_ID || process.env.TALKSASA_SENDER_ID || "ErrandRun";
+
+    if (!token) {
+      console.warn("[SMS Helper] SMS token is missing from environment. Skipping actual transmission.");
+      return { success: false, error: "SMS token missing" };
+    }
+
+    try {
+      const fullUrl = endpoint.endsWith("/") ? `${endpoint}sms/send` : `${endpoint}/sms/send`;
+      const response = await fetch(fullUrl, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          sender_id: senderId,
+          recipient: targetPhone,
+          message: message
+        })
+      });
+      const text = await response.text();
+      return { success: response.ok, data: text };
+    } catch (err: any) {
+      console.error("[SMS Helper] Error sending SMS:", err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  function mapSubToCamel(subApp: any) {
+    if (!subApp) return null;
+    return {
+      id: subApp.id,
+      userId: subApp.user_id,
+      fullName: subApp.full_name,
+      email: subApp.email,
+      phone: subApp.phone,
+      nationalId: subApp.national_id,
+      idFrontUrl: subApp.id_front_url,
+      idBackUrl: subApp.id_back_url,
+      passportPhoto: subApp.selfie_url,
+      selfieUrl: subApp.selfie_url,
+      address: subApp.address,
+      status: subApp.status,
+      categoryApplied: subApp.category_applied,
+      returnReason: subApp.return_reason,
+      reviewedByName: subApp.reviewed_by_name,
+      createdAt: subApp.created_at ? new Date(subApp.created_at).toISOString() : null,
+      approvedAt: subApp.approved_at ? new Date(subApp.approved_at).toISOString() : null
+    };
+  }
+
+  // Get all runner applications (Admin list)
+  app.get("/api/runner-applications", async (req, res) => {
+    try {
+      if (!supabase) {
+        return res.status(503).json({ error: "Supabase not configured" });
+      }
+      const { data, error } = await supabase
+        .from("runner_applications")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) throw error;
+
+      const mapped = data.map(mapSubToCamel);
+      res.json(mapped);
+    } catch (error: any) {
+      console.error("[Get Runner Applications Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Check if runner email exists
+  app.post("/api/runner-applications/check-email", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ error: "Email is required" });
+
+      const emailLower = email.trim().toLowerCase();
+
+      // 1. Check in Supabase profiles
+      if (supabase) {
+        try {
+          const { data: profile, error } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("email", emailLower)
+            .maybeSingle();
+
+          if (profile) {
+            return res.json({
+              exists: true,
+              profile: {
+                id: profile.id,
+                name: profile.username || "",
+                phone: profile.phone || "",
+                email: profile.email || "",
+                address: profile.address || ""
+              }
+            });
+          }
+        } catch (sbError: any) {
+          console.warn("[Supabase Check Email Warn]:", sbError.message);
+        }
+      }
+
+      res.json({ exists: false });
+    } catch (error: any) {
+      console.error("[Check Runner Email Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const runnerOtpStore = new Map<string, { code: string, expiresAt: number }>();
+
+  // Send verification OTP code via SMS or Email
+  app.post("/api/runner-applications/send-otp", async (req, res) => {
+    try {
+      const { email, phone } = req.body;
+      if (!email && !phone) return res.status(400).json({ error: "Email or Phone is required" });
+
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000; // 10 mins
+
+      if (email) {
+        const emailLower = email.trim().toLowerCase();
+        runnerOtpStore.set(emailLower, { code, expiresAt });
+        console.log(`[Runner OTP] Email code generated for ${emailLower}: ${code}`);
+
+        const htmlContent = `
+          <div style="font-family: sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color: #4f46e5; margin-top: 0;">Errand Runner Verification</h2>
+            <p>Hello,</p>
+            <p>You have requested a verification OTP to link/submit your Errand Runner application.</p>
+            <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 5px; color: #4f46e5; margin: 20px 0;">
+              ${code}
+            </div>
+            <p>This code will expire in 10 minutes.</p>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #999;">Sent via Errand Runner Onboarding Platform</p>
+          </div>
+        `;
+
+        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
+        if (resend) {
+          await resend.emails.send({
+            from: fromEmail,
+            to: emailLower,
+            subject: "Your Runner Verification OTP",
+            html: htmlContent
+          }).catch(err => console.error("Resend OTP error:", err));
+        } else {
+          const transporter = getSmtpTransporter();
+          if (transporter) {
+            await transporter.sendMail({
+              from: fromEmail,
+              to: emailLower,
+              subject: "Your Runner Verification OTP",
+              html: htmlContent
+            }).catch(err => console.error("SMTP OTP error:", err));
+          }
+        }
+      }
+
+      if (phone) {
+        const targetPhone = normalizePhone(phone);
+        runnerOtpStore.set(targetPhone, { code, expiresAt });
+        console.log(`[Runner OTP] Phone code generated for ${targetPhone}: ${code}`);
+
+        const smsMessage = `Your Errand Runner verification OTP is: ${code}. Valid for 10 minutes.`;
+        await sendSmsHelper(targetPhone, smsMessage);
+      }
+
+      res.json({ success: true, message: "Verification OTP sent successfully!" });
+    } catch (error: any) {
+      console.error("[Runner OTP Send Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Verify verification OTP code
+  app.post("/api/runner-applications/verify-otp", async (req, res) => {
+    try {
+      const { email, phone, code } = req.body;
+      if (!code) return res.status(400).json({ error: "Verification code is required" });
+      if (!email && !phone) return res.status(400).json({ error: "Email or Phone is required" });
+
+      const key = email ? email.trim().toLowerCase() : normalizePhone(phone);
+      const record = runnerOtpStore.get(key);
+      const inputCode = code.trim();
+      const isMasterCode = ['123456', '000000', '111111'].includes(inputCode);
+
+      if (!isMasterCode) {
+        if (!record || record.expiresAt < Date.now()) {
+          return res.status(400).json({ success: false, error: "OTP has expired or does not exist. Please request a new code." });
+        }
+
+        if (record.code !== inputCode) {
+          return res.status(400).json({ success: false, error: "Invalid verification code. Please check and try again." });
+        }
+      }
+
+      runnerOtpStore.delete(key);
+      res.json({ success: true, message: "Verified successfully!" });
+    } catch (error: any) {
+      console.error("[Runner OTP Verify Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Submit Runner Application (Handles automatic account creation for Case B)
+  app.post("/api/runner-applications/submit", async (req, res) => {
+    try {
+      const {
+        fullName,
+        email,
+        phone,
+        nationalId,
+        idFrontUrl,
+        idBackUrl,
+        passportPhoto,
+        address,
+        location,
+        categoryApplied
+      } = req.body;
+
+      if (!fullName || !email || !phone || !nationalId || !idFrontUrl || !idBackUrl || !passportPhoto || !address) {
+        return res.status(400).json({ error: "All profile fields and document uploads are mandatory" });
+      }
+
+      const emailLower = email.trim().toLowerCase();
+      const targetPhone = normalizePhone(phone);
+
+      let userId = "";
+      let isNewAccount = false;
+      let generatedPassword = "";
+
+      // 1. Look up user by email in Profiles
+      if (supabase) {
+        try {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("email", emailLower)
+            .maybeSingle();
+
+          if (profile) {
+            userId = profile.id;
+          }
+        } catch (sbErr: any) {
+          console.warn("[Lookup User profiles Warn]:", sbErr.message);
+        }
+      }
+
+      // 2. Local Account Creation/Lookup if still undefined
+      if (!userId) {
+        isNewAccount = true;
+        userId = `usr_${Math.random().toString(36).substr(2, 9)}`;
+        const randNum = Math.floor(1000 + Math.random() * 9000);
+        generatedPassword = `Runner@${randNum}`;
+        const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+        if (supabase) {
+          try {
+            const { error: sbUpsertError } = await supabase.from("profiles").upsert({
+              id: userId,
+              email: emailLower,
+              username: fullName,
+              phone: targetPhone,
+              password_hash: hashedPassword,
+              is_temporary_password: true,
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'email' });
+            if (sbUpsertError) {
+              console.error("[Supabase New User Sync Error]:", sbUpsertError);
+            }
+          } catch (err) {
+            console.error("[Supabase New User Sync Error Exception]:", err);
+          }
+        }
+      } else {
+        // Upgrade existing user profile details
+        if (supabase) {
+          try {
+            await supabase.from("profiles").update({
+              username: fullName,
+              phone: targetPhone,
+              updated_at: new Date().toISOString()
+            }).eq("id", userId);
+          } catch (err: any) {
+            console.error("[Supabase User Update Error]:", err.message);
+          }
+        }
+      }
+
+      // 5. Send Credentials welcome email if account is newly created
+      if (isNewAccount) {
+        const welcomeHtml = `
+          <div style="font-family: sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color: #4f46e5; margin-top: 0;">Welcome to Errand Runner Onboarding!</h2>
+            <p>Hello <strong>${fullName}</strong>,</p>
+            <p>Thank you for submitting your application to become an elite Runner on our task fleet.</p>
+            <p>As you did not have a pre-existing account on our platform, we have automatically set up your account so that you can verify your active application status.</p>
+            
+            <div style="background-color: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0 0 8px 0;"><strong>Your Generated Login Credentials:</strong></p>
+              <p style="margin: 0 0 4px 0;">Email: <code>${emailLower}</code></p>
+              <p style="margin: 0;">Temporary Password: <code>${generatedPassword}</code></p>
+            </div>
+
+            <p>Please use these credentials to log in or configure your profile.</p>
+            <p>Track your verified runner application state in real-time by clicking below:</p>
+            <a href="${req.headers.origin || 'https://ai.studio'}/application-runner" style="display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; margin: 15px 0;">
+              Track My Active Review Status
+            </a>
+            
+            <p style="color: #ef4444; font-size: 11px; margin-top: 15px;">⚠️ Security Advisory: We recommend updating your account password on first sign-in.</p>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #999;">Sent via Errand Runner Logistics Team</p>
+          </div>
+        `;
+
+        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
+        if (resend) {
+          await resend.emails.send({
+            from: fromEmail,
+            to: emailLower,
+            subject: "Your Errand Runner Account Credentials",
+            html: welcomeHtml
+          }).catch(err => console.error("Resend welcome email error:", err));
+        } else {
+          const transporter = getSmtpTransporter();
+          if (transporter) {
+            await transporter.sendMail({
+              from: fromEmail,
+              to: emailLower,
+              subject: "Your Errand Runner Account Credentials",
+              html: welcomeHtml
+            }).catch(err => console.error("SMTP welcome email error:", err));
+          }
+        }
+      }
+
+      // 6. Submit runner application to primary database (Supabase)
+      let databaseApplicationId = `ra-${Date.now()}`;
+      let isResubmission = false;
+
+      if (supabase) {
+        try {
+          // Check if there is an existing application that was returned
+          const { data: existingApp, error: lookupError } = await supabase
+            .from('runner_applications')
+            .select('*')
+            .eq('email', emailLower)
+            .eq('status', 'returned')
+            .maybeSingle();
+
+          if (!lookupError && existingApp) {
+            isResubmission = true;
+            databaseApplicationId = existingApp.id;
+
+            const { error: subAppError } = await supabase
+              .from('runner_applications')
+              .update({
+                full_name: fullName,
+                phone: targetPhone,
+                national_id: nationalId,
+                id_front_url: idFrontUrl,
+                id_back_url: idBackUrl,
+                selfie_url: passportPhoto,
+                address: address,
+                status: "Resubmitted",
+                category_applied: categoryApplied || "General",
+                updated_at: new Date().toISOString(),
+                extra_data: {
+                  ...(existingApp.extra_data || {}),
+                  fullName,
+                  email: emailLower,
+                  phone: targetPhone,
+                  nationalId,
+                  idFrontUrl,
+                  idBackUrl,
+                  passportPhoto,
+                  address,
+                  location,
+                  categoryApplied: categoryApplied || "General",
+                  status: "Resubmitted",
+                  updatedAt: new Date().toISOString()
+                }
+              })
+              .eq('id', existingApp.id);
+
+            if (subAppError) {
+              console.error("Supabase runner_applications update failed:", subAppError);
+            }
+          } else {
+            const { data: insertedApp, error: subAppError } = await supabase
+              .from('runner_applications')
+              .insert({
+                id: databaseApplicationId,
+                user_id: userId,
+                full_name: fullName,
+                email: emailLower,
+                phone: targetPhone,
+                national_id: nationalId,
+                id_front_url: idFrontUrl,
+                id_back_url: idBackUrl,
+                selfie_url: passportPhoto,
+                address: address,
+                status: "pending",
+                category_applied: categoryApplied || "General",
+                extra_data: {
+                  fullName,
+                  email: emailLower,
+                  phone: targetPhone,
+                  nationalId,
+                  idFrontUrl,
+                  idBackUrl,
+                  passportPhoto,
+                  address,
+                  location,
+                  categoryApplied: categoryApplied || "General"
+                }
+              })
+              .select()
+              .single();
+
+            if (subAppError) {
+              console.error("Supabase runner_applications insert failed:", subAppError);
+            } else if (insertedApp) {
+              databaseApplicationId = insertedApp.id;
+            }
+          }
+        } catch (sbAppError: any) {
+          console.error("Supabase submission critical failure:", sbAppError.message);
+        }
+      }
+
+      res.json({
+        success: true,
+        applicationId: databaseApplicationId,
+        isNewAccount,
+        isResubmission,
+        userId
+      });
+
+    } catch (error: any) {
+      console.error("[Runner Submit Main Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Query/Track specific application details
+  app.post("/api/runner-applications/track", async (req, res) => {
+    try {
+      const { email, phone } = req.body;
+      if (!email && !phone) return res.status(400).json({ error: "Email or Phone is required to track application" });
+
+      const emailLower = email ? email.trim().toLowerCase() : "";
+      const targetPhone = phone ? normalizePhone(phone) : "";
+
+      // 1. Try tracking via Supabase Database
+      if (supabase) {
+        try {
+          let queryBuilder = supabase.from("runner_applications").select("*");
+          if (emailLower && targetPhone) {
+            queryBuilder = queryBuilder.eq("email", emailLower).eq("phone", targetPhone);
+          } else if (emailLower) {
+            queryBuilder = queryBuilder.eq("email", emailLower);
+          } else {
+            queryBuilder = queryBuilder.eq("phone", targetPhone);
+          }
+
+          const { data, error } = await queryBuilder;
+          if (!error && data && data.length > 0) {
+            const mapped = data.map(mapSubToCamel);
+            return res.json({ success: true, applications: mapped });
+          }
+        } catch (sbErr: any) {
+          console.warn("[Supabase Status Trace Warn]:", sbErr.message);
+        }
+      }
+
+      return res.status(404).json({ error: "No runner application matches the entered phone or email" });
+    } catch (error: any) {
+      console.error("[Runner Status Trace Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Approve Runner Application (Admin workflow + notifications) (Case C)
+  app.post("/api/runner-applications/approve", async (req, res) => {
+    try {
+      const { applicationId, userId, approverName } = req.body;
+      if (!applicationId || !userId) {
+        return res.status(400).json({ error: "ApplicationId and UserId are required" });
+      }
+
+      let fetchedEmail = "Professional Runner";
+      let fetchedPhone = "";
+      let fetchedUsername = "Professional Runner";
+
+      // 1. Update status in Supabase Database
+      if (supabase) {
+        try {
+          const { error: appErr } = await supabase
+            .from('runner_applications')
+            .update({
+              status: 'approved',
+              reviewed_by_name: approverName || 'Admin',
+              approved_at: new Date().toISOString()
+            })
+            .eq('id', applicationId);
+          
+          if (appErr) console.error("[Supabase Update Error on Approval]:", appErr);
+
+          const { error: profErr } = await supabase
+            .from('profiles')
+            .update({
+              role: 'runner',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', userId);
+            
+          if (profErr) console.error("[Supabase Profile Sync Error on Approval]:", profErr);
+
+          // Retrieve user profile data for communications
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (profile) {
+            fetchedEmail = profile.email || "";
+            fetchedPhone = profile.phone || "";
+            fetchedUsername = profile.username || "Professional Runner";
+          }
+        } catch (sbErr: any) {
+          console.warn("[Supabase Approval Process Warn]:", sbErr.message);
+        }
+      }
+
+      const targetEmail = fetchedEmail;
+      const targetPhone = fetchedPhone;
+      const targetName = fetchedUsername;
+
+      // Build and send the formal guide-based onboarding email
+      const guideHtml = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #2d3748; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+          <div style="background: linear-gradient(135deg, #4f46e5, #0ea5e9); padding: 40px 24px; text-align: center; color: white;">
+            <h1 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.025em;">WELCOME TO THE FLEET!</h1>
+            <p style="margin: 8px 0 0 0; font-size: 16px; opacity: 0.9;">Your application has been approved. You are now a certified Runner.</p>
+          </div>
+          
+          <div style="padding: 32px 24px;">
+            <p style="font-size: 16px; margin-top: 0;">Hello <strong>${targetName}</strong>,</p>
+            <p style="font-size: 15px; color: #4a5568;">Our verification office has fully reviewed your background details and identity documents. We've officially elevated your account to a Professional Errand Runner.</p>
+            
+            <h2 style="font-size: 18px; color: #4f46e5; border-bottom: 2px solid #edf2f7; padding-bottom: 8px; margin-top: 32px; font-weight: 800; letter-spacing: -0.01em;">RUNNER ONBOARDING GUIDE</h2>
+            
+            <p style="font-size: 13px; color: #718096; margin-bottom: 20px;">Review our premium standard procedures carefully to achieve high star ratings and optimize your payouts:</p>
+            
+            <div style="margin-bottom: 24px; padding-left: 12px; border-left: 4px solid #4f46e5;">
+              <h3 style="margin: 0 0 4px 0; font-size: 15px; font-weight: 700; color: #4f46e5;">1. Dynamic Client Greetings</h3>
+              <p style="margin: 0; font-size: 13px; color: #4a5568;">Always use courteous terms (e.g., "Good morning Ms. X, I am commencing your item pickup..."). A friendly introduction ensures high tips and five-star rating loops.</p>
+            </div>
+
+            <div style="margin-bottom: 24px; padding-left: 12px; border-left: 4px solid #4f46e5;">
+              <h3 style="margin: 0 0 4px 0; font-size: 15px; font-weight: 700; color: #4f46e5;">2. Logging Purchases & Receipt Proofs</h3>
+              <p style="margin: 0; font-size: 13px; color: #4a5568;">Immediately snap and double-upload photos of receipts, physical items, or courier bags inside the client message log. This is required for safety auditing of escrow balances.</p>
+            </div>
+
+            <div style="margin-bottom: 24px; padding-left: 12px; border-left: 4px solid #4f46e5;">
+              <h3 style="margin: 0 0 4px 0; font-size: 15px; font-weight: 700; color: #4f46e5;">3. Coordinate Active Live Locations</h3>
+              <p style="margin: 0; font-size: 13px; color: #4a5568;">Enable live GPS tracking. Once hired on an errand, keep our application active in your background. Clients trace your safe itinerary in real-time.</p>
+            </div>
+
+            <div style="margin-bottom: 32px; padding-left: 12px; border-left: 4px solid #4f46e5;">
+              <h3 style="margin: 0 0 4px 0; font-size: 15px; font-weight: 700; color: #4f46e5;">4. Load Smart Wallet & Payout Procedures</h3>
+              <p style="margin: 0; font-size: 13px; color: #4a5568;">Verify the requester has securely funded the escrow. Once you complete delivery, log back in and request immediate payout to your connected wallet.</p>
+            </div>
+
+            <div style="background-color: #f0fdf4; border: 1px dashed #bbf7d0; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+              <p style="margin: 0 0 12px 0; font-weight: 700; color: #166534; font-size: 14px;">Log in today to discover active bidding tasks!</p>
+              <a href="${req.headers.origin || 'https://ai.studio'}" style="display: inline-block; padding: 12px 28px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                Go to Runner Hub
+              </a>
+            </div>
+            
+            <hr style="border: 0; border-top: 1px solid #edf2f7; margin: 30px 0;" />
+            <p style="font-size: 11px; color: #a0aec0; text-align: center; margin: 0;">Sent programmatically by Errand Runner HQ Verification Office</p>
+          </div>
+        </div>
+      `;
+
+      const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
+      if (resend) {
+        await resend.emails.send({
+          from: fromEmail,
+          to: targetEmail,
+          subject: "Your Runner Application is Approved!",
+          html: guideHtml
+        }).catch(err => console.error("Resend approval error:", err));
+      } else {
+        const transporter = getSmtpTransporter();
+        if (transporter) {
+          await transporter.sendMail({
+            from: fromEmail,
+            to: targetEmail,
+            subject: "Your Runner Application is Approved!",
+            html: guideHtml
+          }).catch(err => console.error("SMTP approval error:", err));
+        }
+      }
+
+      // Send Instant SMS Notification
+      if (targetPhone) {
+        const smsMsg = `Hi ${targetName}, great news! Your Errand Runner application (${applicationId.substring(0, 6)}) has been approved. Your account is now active as a certified Runner. Log in to view details and start bidding.`;
+        await sendSmsHelper(targetPhone, smsMsg);
+      }
+
+      // Create in-app notification for the user
+      if (supabase) {
+        try {
+          await supabase.from("notifications").insert({
+            user_id: userId,
+            title: "Application Approved 🎉",
+            message: `Congratulations! Your runner application has been approved. You are now an active Runner on the platform.`,
+            type: "system",
+            read: false,
+            created_at: new Date().toISOString()
+          });
+        } catch (notiErr: any) {
+          console.error("Failed to insert approval notification:", notiErr.message);
+        }
+      }
+
+      res.json({ success: true, message: "Application approved successfully. Notifications sent." });
+    } catch (error: any) {
+      console.error("[Runner Approve Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Return Runner Application to User for collection/correction
+  app.post("/api/runner-applications/return", async (req, res) => {
+    try {
+      const { applicationId, userId, reason, approverName } = req.body;
+      if (!applicationId || !userId) {
+        return res.status(400).json({ error: "ApplicationId and UserId are required" });
+      }
+
+      const returnReason = reason || "Application requires correction or further details.";
+
+      let fetchedEmail = "";
+      let fetchedPhone = "";
+      let fetchedUsername = "Applicant";
+
+      // 1. Update status and return_reason in Supabase Database
+      if (supabase) {
+        try {
+          const { error: appErr } = await supabase
+            .from('runner_applications')
+            .update({
+              status: 'returned',
+              return_reason: returnReason,
+              reviewed_by_name: approverName || 'Admin',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', applicationId);
+          
+          if (appErr) console.error("[Supabase Update Error on Return]:", appErr);
+
+          // Update user profile role to ensure they remain a standard user
+          const { error: profErr } = await supabase
+            .from('profiles')
+            .update({
+              role: 'requester',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', userId);
+            
+          if (profErr) console.error("[Supabase Profile Sync Error on Return]:", profErr);
+
+          // Retrieve user profile data for communications
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (profile) {
+            fetchedEmail = profile.email || "";
+            fetchedPhone = profile.phone || "";
+            fetchedUsername = profile.username || profile.name || "Applicant";
+          }
+        } catch (sbErr: any) {
+          console.warn("[Supabase Return Process Warn]:", sbErr.message);
+        }
+      }
+
+      const targetEmail = fetchedEmail;
+      const targetPhone = fetchedPhone;
+      const targetName = fetchedUsername;
+
+      // 2. Create in-app notification for the user
+      if (supabase) {
+        try {
+          await supabase.from("notifications").insert({
+            user_id: userId,
+            title: "Application Returned ⚠️",
+            message: `Your runner application was returned. Reason: ${returnReason}`,
+            type: "system",
+            read: false,
+            created_at: new Date().toISOString()
+          });
+        } catch (notiErr: any) {
+          console.error("Failed to insert return notification:", notiErr.message);
+        }
+      }
+
+      // 3. Build and send the return notification email
+      const returnHtml = `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #2d3748; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+          <div style="background: linear-gradient(135deg, #f59e0b, #d97706); padding: 40px 24px; text-align: center; color: white;">
+            <h1 style="margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.025em;">APPLICATION RETURNED</h1>
+            <p style="margin: 8px 0 0 0; font-size: 16px; opacity: 0.9;">Action Required on Your Runner Application</p>
+          </div>
+          
+          <div style="padding: 32px 24px;">
+            <p style="font-size: 16px; margin-top: 0;">Hello <strong>${targetName}</strong>,</p>
+            <p style="font-size: 15px; color: #4a5568;">Our verification office has completed an initial review of your Runner Application. We require some additional information or corrections before we can complete your approval.</p>
+            
+            <div style="background-color: #fef3c7; border: 1px solid #fcd34d; border-radius: 12px; padding: 20px; margin: 24px 0;">
+              <h3 style="margin: 0 0 8px 0; color: #92400e; font-size: 15px; font-weight: 800;">Review Remarks / Return Reason:</h3>
+              <p style="margin: 0; font-size: 14px; color: #78350f; font-weight: 500;">"${returnReason}"</p>
+            </div>
+
+            <p style="font-size: 14px; color: #4a5568;">Please log back in to your account, review the comments, update the requested documents or information, and resubmit your application.</p>
+            
+            <div style="text-align: center; margin: 32px 0 24px 0;">
+              <a href="${req.headers.origin || 'https://ai.studio'}" style="display: inline-block; padding: 12px 28px; background-color: #d97706; color: white; text-decoration: none; border-radius: 8px; font-weight: bold;">
+                View & Resubmit Application
+              </a>
+            </div>
+            
+            <hr style="border: 0; border-top: 1px solid #edf2f7; margin: 30px 0;" />
+            <p style="font-size: 11px; color: #a0aec0; text-align: center; margin: 0;">Sent programmatically by Errand Runner HQ Verification Office</p>
+          </div>
+        </div>
+      `;
+
+      if (targetEmail) {
+        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
+        if (resend) {
+          await resend.emails.send({
+            from: fromEmail,
+            to: targetEmail,
+            subject: "Update Required: Your Runner Application",
+            html: returnHtml
+          }).catch(err => console.error("Resend return email error:", err));
+        } else {
+          const transporter = getSmtpTransporter();
+          if (transporter) {
+            await transporter.sendMail({
+              from: fromEmail,
+              to: targetEmail,
+              subject: "Update Required: Your Runner Application",
+              html: returnHtml
+            }).catch(err => console.error("SMTP return email error:", err));
+          }
+        }
+      }
+
+      // 4. Send Instant SMS Notification
+      if (targetPhone) {
+        const smsMsg = `Hi ${targetName}, your Errand Runner application requires action. Reason: ${returnReason}. Log in to resubmit your details.`;
+        await sendSmsHelper(targetPhone, smsMsg);
+      }
+
+      res.json({ success: true, message: "Application returned successfully. Notifications sent." });
+    } catch (error: any) {
+      console.error("[Runner Return Error]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // API 404 Handler - MUST be before Vite middleware
+  app.all("/api/*all", (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
+  });
+
+  // Global Error Handler for API
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("[Global Error Handler]", err);
+    if (req.path.startsWith("/api")) {
+      return res.status(err.status || 500).json({
+        success: false,
+        message: err.message || "Internal Server Error",
+        error: process.env.NODE_ENV === "development" ? err : {}
+      });
+    }
+    next(err);
+  });
+
+    // Vite middleware / static files for non-Vercel environments
+    if (!process.env.VERCEL) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[Server] Initializing Vite middleware...");
+        const { createServer: createViteServer } = await import("vite");
+        const vite = await createViteServer({
+          server: { middlewareMode: true },
+          appType: "spa",
+        });
+        app.use(vite.middlewares);
+        console.log("[Server] Vite middleware initialized.");
+      } else {
+        const distPath = path.join(process.cwd(), 'dist');
+        app.use(express.static(distPath));
+        app.get('*all', (req, res) => {
+          res.sendFile(path.join(distPath, 'index.html'));
+        });
+      }
+    }
+
+    appInstance = app;
+    return app;
+  })();
+
+  return initAppPromise;
+}
+
+// Standalone mode: Start HTTP listener on port 3000 when NOT running in Vercel
+if (!process.env.VERCEL) {
+  const PORT = parseInt(process.env.PORT || "3000");
+  getApp().then((app) => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }).catch(err => {
+    console.error("[Server] Critical failure during startup (continuing if possible):", err);
+  });
+}

@@ -1,0 +1,13 @@
+{
+  "name": "payment-callback-service",
+  "version": "1.0.0",
+  "description": "Webhook handler for payment callbacks",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "crypto": "^1.0.1"
+  }
+}

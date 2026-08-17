@@ -1,0 +1,227 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", sans-serif;
+  --font-serif: "Playfair Display", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  
+  --radius-xl: 1.5rem;
+  --radius-lg: 1.2rem;
+  --radius-md: 0.8rem;
+  --radius-sm: 0.4rem;
+  
+  --shadow-soft: 0 2px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
+  --shadow-strong: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.03);
+  --shadow-glow: 0 0 20px -5px var(--primary);
+}
+
+@layer base {
+  :root {
+    --background: hsl(210 40% 98%);
+    --foreground: hsl(222 47% 11%); /* Deep Navy */
+    --card: hsl(0 0% 100%);
+    --card-foreground: hsl(222 47% 11%);
+    --popover: hsl(0 0% 100%);
+    --popover-foreground: hsl(222 47% 11%);
+    --primary: hsl(186 63% 34%); /* Brand Teal */
+    --primary-foreground: hsl(210 40% 98%);
+    --secondary: hsl(22 90% 54%); /* Brand Orange */
+    --secondary-foreground: hsl(210 40% 98%);
+    --muted: hsl(210 30% 94%);
+    --muted-foreground: hsl(215 16% 47%);
+    --accent: hsl(186 63% 34% / 0.1);
+    --accent-foreground: hsl(186 63% 34%);
+    --destructive: hsl(0 84% 60%);
+    --destructive-foreground: hsl(210 40% 98%);
+    --border: hsl(214 32% 91%);
+    --input: hsl(214 32% 91%);
+    --ring: hsl(186 63% 34%);
+  }
+
+  .dark {
+    --background: hsl(222 47% 6%);
+    --foreground: hsl(210 40% 98%);
+    --card: hsl(222 47% 9%);
+    --card-foreground: hsl(210 40% 98%);
+    --popover: hsl(222 47% 9%);
+    --popover-foreground: hsl(210 40% 98%);
+    --primary: hsl(186 63% 44%);
+    --primary-foreground: hsl(210 40% 98%);
+    --secondary: hsl(22 90% 60%);
+    --secondary-foreground: hsl(210 40% 98%);
+    --muted: hsl(222 47% 15%);
+    --muted-foreground: hsl(215 20% 65%);
+    --accent: hsl(186 63% 44% / 0.1);
+    --accent-foreground: hsl(186 63% 44%);
+    --destructive: hsl(0 62.8% 30.6%);
+    --destructive-foreground: hsl(210 40% 98%);
+    --border: hsl(222 47% 15%);
+    --input: hsl(222 47% 15%);
+    --ring: hsl(186 63% 44%);
+  }
+
+  html {
+    font-size: calc(14px * var(--ui-scale, 1) * var(--zoom-scale, 1));
+    scroll-behavior: smooth;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-sans antialiased selection:bg-primary selection:text-white;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply tracking-tight font-black font-display leading-[1.1] mb-2;
+  }
+
+  p {
+    @apply leading-snug mb-3;
+  }
+
+  ul, ol {
+    @apply mb-3;
+  }
+
+  .mirror {
+    transform: scaleX(-1);
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-background/80 backdrop-blur-xl border border-border shadow-soft;
+  }
+  
+  .glass-dark {
+    @apply bg-foreground/80 backdrop-blur-xl border border-border shadow-strong;
+  }
+
+  .bento-card {
+    @apply bg-card rounded-xl border border-border shadow-soft hover:shadow-strong transition-all duration-300 hover:-translate-y-1;
+  }
+  
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .text-micro {
+    @apply text-[10px] font-black uppercase tracking-[0.15em];
+  }
+
+  .btn-primary {
+    @apply px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-black uppercase text-[10px] tracking-widest shadow-strong hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-secondary {
+    @apply px-3 py-1.5 bg-card text-foreground border border-border rounded-lg font-black uppercase text-[10px] tracking-widest shadow-soft hover:bg-muted active:scale-95 transition-all;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/30 rounded-full hover:bg-muted-foreground/50 transition-colors;
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite linear;
+}
+
+/* Markdown Styles */
+.markdown-body {
+  @apply text-slate-700 dark:text-slate-300;
+}
+
+.markdown-body h1 {
+  @apply text-3xl font-black mb-6 mt-8 text-slate-900 dark:text-white;
+}
+
+.markdown-body h2 {
+  @apply text-2xl font-black mb-4 mt-8 text-slate-900 dark:text-white;
+}
+
+.markdown-body h3 {
+  @apply text-xl font-bold mb-3 mt-6 text-slate-900 dark:text-white;
+}
+
+.markdown-body p {
+  @apply mb-4 leading-relaxed;
+}
+
+.markdown-body ul, .markdown-body ol {
+  @apply mb-4 pl-6;
+}
+
+.markdown-body ul {
+  @apply list-disc;
+}
+
+.markdown-body ol {
+  @apply list-decimal;
+}
+
+.markdown-body li {
+  @apply mb-2;
+}
+
+.markdown-body strong {
+  @apply font-black text-slate-900 dark:text-white;
+}

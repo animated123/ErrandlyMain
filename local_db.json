@@ -1,0 +1,189 @@
+{
+  "profiles": [
+    {
+      "id": "usr_j30errng5",
+      "email": "jmaina@codexict.co.ke",
+      "username": "Codexict",
+      "phone": "254752269300",
+      "role": "REQUESTER",
+      "is_runner": false,
+      "is_admin": false,
+      "password_hash": "$2b$10$uFO8068LMO3sIpxs3WDksu6Ysji8c1xIUEK74PmXf/TRyJAQac18O",
+      "created_at": "2026-05-30T08:18:55.314Z",
+      "updated_at": "2026-05-30T08:18:55.314Z",
+      "wallet_balance": 0,
+      "completed_errands": 0,
+      "total_tasks": 0,
+      "theme": "light",
+      "phone_verified": true,
+      "email_verified": true,
+      "is_online": true,
+      "last_known_location": {
+        "lat": -1.2863739859016394,
+        "lng": 36.952893351803276
+      },
+      "extra_data": {
+        "lastKnownLocation": {
+          "lat": -1.2863739859016394,
+          "lng": 36.952893351803276
+        },
+        "isOnline": true,
+        "phoneVerified": true,
+        "phone": "254752269300",
+        "emailVerificationCode": null,
+        "emailVerificationExpires": null,
+        "emailVerified": true,
+        "theme": "light"
+      }
+    }
+  ],
+  "transactions": [
+    {
+      "id": "b48b796e-1da3-42b3-b87e-50927d60286b",
+      "user_id": "usr_j30errng5",
+      "amount": 1,
+      "status": "failed",
+      "type": "deposit",
+      "provider": "paystack",
+      "description": "Wallet Deposit via M-Pesa",
+      "created_at": "2026-05-30T08:42:34.238Z",
+      "reference": "b48b796e-1da3-42b3-b87e-50927d60286b-1",
+      "phone_number": "254722603149"
+    }
+  ],
+  "otp_codes": [
+    {
+      "id": "254752269300",
+      "phone_number": "254752269300",
+      "code": "689609",
+      "expires_at": "2026-05-30T09:20:37.294Z",
+      "created_at": "2026-05-30T08:50:37.294Z",
+      "is_used": true
+    },
+    {
+      "id": "email:jmaina@codexict.co.ke",
+      "phone_number": "email:jmaina@codexict.co.ke",
+      "code": "598472",
+      "expires_at": "2026-05-30T09:50:58.423Z",
+      "created_at": "2026-05-30T08:50:58.423Z",
+      "is_used": true
+    }
+  ],
+  "errands": [
+    {
+      "id": "ee7af5fb-5486-448b-b04c-90e634b4f4df",
+      "title": "Mama Fua (Laundry) at PX73+C56, Nairobi, Kenya",
+      "description": "mamafua",
+      "category": "Mama Fua (Laundry)",
+      "status": "pending",
+      "budget": 250,
+      "requester_id": "usr_j30errng5",
+      "requester_name": "Codexict",
+      "requester_phone": "254752269300",
+      "pickup_location": "PX73+C56, Nairobi, Kenya",
+      "pickup_coordinates": {
+        "lat": -1.2864898733602677,
+        "lng": 36.9529306412931
+      },
+      "dropoff_location": "PX73+C56, Nairobi, Kenya",
+      "dropoff_coordinates": {
+        "lat": -1.2864898733602677,
+        "lng": 36.9529306412931
+      },
+      "updated_at": "2026-05-30T08:59:35.575Z",
+      "created_at": "2026-05-30T08:59:35.575Z",
+      "location": {
+        "lat": -1.2864898733602677,
+        "lng": 36.9529306412931
+      },
+      "bids": [],
+      "checklist": [],
+      "extra_data": {
+        "category": "Mama Fua (Laundry)",
+        "title": "Mama Fua (Laundry) at PX73+C56, Nairobi, Kenya",
+        "budget": 250,
+        "deadline": "",
+        "pickup": {
+          "name": "PX73+C56, Nairobi, Kenya",
+          "coords": {
+            "lat": -1.2864898733602677,
+            "lng": 36.9529306412931
+          },
+          "placeId": "ChIJw_rGCIQTLxgRoqciEnBC9lE"
+        },
+        "dropoff": {
+          "name": "PX73+C56, Nairobi, Kenya",
+          "coords": {
+            "lat": -1.2864898733602677,
+            "lng": 36.9529306412931
+          },
+          "placeId": "ChIJw_rGCIQTLxgRoqciEnBC9lE"
+        },
+        "laundryBaskets": 1,
+        "pricePerBasket": 250,
+        "houseType": "",
+        "minBudget": 0,
+        "maxBudget": 0,
+        "moveInDate": "",
+        "additionalRequirements": "",
+        "description": "mamafua",
+        "isInHouse": true,
+        "maxShoppingBudget": 0,
+        "urgency": "Urgent",
+        "packageDescription": "",
+        "packageCost": 0,
+        "shoppingList": "",
+        "marketSection": "",
+        "paymentMethod": "Cash on Delivery",
+        "mamaFuaBreakdown": null,
+        "targetEstates": [],
+        "amenities": [],
+        "calculatedPrice": 0,
+        "aiEstimatedScale": 1,
+        "aiEstimationBreakdown": null,
+        "propertyType": null,
+        "vibe": null,
+        "runnerTasks": [
+          "video",
+          "photos"
+        ],
+        "commuteDistance": 5,
+        "estimatedDistance": "0 km",
+        "estimatedDuration": "0 mins",
+        "distanceValue": 0,
+        "durationValue": 0,
+        "loadSize": "Large",
+        "serviceTypes": [
+          "Hand Wash Only"
+        ],
+        "detergentProvided": true,
+        "waterAvailability": "Constant",
+        "hangingPreference": "Outdoor",
+        "shoppingItems": [],
+        "requesterId": "usr_j30errng5",
+        "requesterName": "Codexict",
+        "requesterPhone": "254752269300",
+        "pickupLocation": "PX73+C56, Nairobi, Kenya",
+        "pickupCoordinates": {
+          "lat": -1.2864898733602677,
+          "lng": 36.9529306412931
+        },
+        "location": {
+          "lat": -1.2864898733602677,
+          "lng": 36.9529306412931
+        },
+        "dropoffLocation": "PX73+C56, Nairobi, Kenya",
+        "dropoffCoordinates": {
+          "lat": -1.2864898733602677,
+          "lng": 36.9529306412931
+        },
+        "id": "ee7af5fb-5486-448b-b04c-90e634b4f4df",
+        "status": "pending",
+        "createdAt": "2026-05-30T08:59:35.575Z",
+        "updatedAt": "2026-05-30T08:59:35.575Z",
+        "bids": [],
+        "checklist": []
+      }
+    }
+  ]
+}

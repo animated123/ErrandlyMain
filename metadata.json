@@ -1,0 +1,6 @@
+{
+  "name": "ErrandRunner",
+  "description": "Kenya's elite errand coordination network for premium laundry, shopping, and professional logistics.",
+  "requestFramePermissions": ["geolocation", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

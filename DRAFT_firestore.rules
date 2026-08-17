@@ -1,0 +1,163 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Global Safety Net (Default Deny)
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.email == "ngugimaina4@gmail.com");
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == "ngugimaina4@gmail.com" ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // ===============================================================
+    // Validation Blueprints
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'email', 'name']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.email is string && data.email.size() <= 256 &&
+             data.name is string && data.name.size() <= 128;
+    }
+
+    function isValidFeaturedService(data) {
+      return data.keys().hasAll(['title', 'description', 'price']) &&
+             data.title is string && data.title.size() <= 128 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.price is number;
+    }
+
+    function isValidErrand(data) {
+      return data.keys().hasAll(['title', 'requesterId', 'status']) &&
+             data.title is string && data.title.size() <= 255 &&
+             data.requesterId == request.auth.uid &&
+             data.status in ['pending', 'bidding', 'assigned', 'review', 'completed', 'disputed'];
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Users - Owner readable/writable, admin readable/writable
+    match /users/{userId} {
+      allow get, update, delete: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
+    }
+
+    // Featured Services - Publicly readable, admin writable
+    match /featured_services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Service Listings - Publicly readable, admin writable
+    match /service_listings/{listingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Errands - Requester/Runner readable, admin readable
+    match /errands/{errandId} {
+      allow list: if isSignedIn(); // Queries must be filtered by requesterId or runnerId in code
+      allow get: if isSignedIn() && (
+        resource.data.requesterId == request.auth.uid || 
+        resource.data.runnerId == request.auth.uid || 
+        isAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidErrand(incoming());
+      allow update: if isSignedIn() && (
+        (resource.data.requesterId == request.auth.uid && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'title', 'description', 'updatedAt', 'rating', 'bids', 'acceptedPrice', 'runnerId', 'runnerName'])) ||
+        (resource.data.runnerId == request.auth.uid && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'reviewComments', 'reviewPhoto', 'signature', 'checklist', 'proofs', 'bids'])) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Errand Chats
+    match /errand_chats/{errandId}/messages/{msgId} {
+      allow read, write: if isSignedIn() && (
+        get(/databases/$(database)/documents/errands/$(errandId)).data.requesterId == request.auth.uid ||
+        get(/databases/$(database)/documents/errands/$(errandId)).data.runnerId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+
+    // Support Chats
+    match /support_chats/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+    }
+
+    // Notifications
+    match /notifications/{notifId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isAdmin() || (isSignedIn() && incoming().userId == request.auth.uid);
+      allow update: if isOwner(resource.data.userId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isOwner(resource.data.userId);
+    }
+
+    // Transactions
+    match /transactions/{txId} {
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isOwner(resource.data.userId) || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Runner Applications
+    match /runner_applications/{appId} {
+      allow list: if isAdmin();
+      allow get: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isVerifiedUser() && incoming().userId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Settings
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    // Test collection
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}
