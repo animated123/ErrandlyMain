@@ -139,6 +139,23 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
+  const safeFetchJson = async (url: string, options?: RequestInit) => {
+    try {
+      const res = await fetch(url, options);
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Fallback for non-JSON or HTML responses
+        data = { error: text ? (text.length > 300 ? text.substring(0, 300) + '...' : text) : `HTTP ${res.status} ${res.statusText}` };
+      }
+      return { ok: res.ok, status: res.status, data };
+    } catch (netErr: any) {
+      return { ok: false, status: 0, data: { error: netErr.message || 'Network error communicating with server' } };
+    }
+  };
+
   const getAuthHeaders = (): Record<string, string> => {
     const token = sessionStorage.getItem('connectionadmin_token');
     return {
@@ -154,18 +171,18 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     setAuthError('');
 
     try {
-      const res = await fetch('/api/connectionadmin/auth', {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: passwordInput })
       });
-      const data = await res.json();
-      if (res.ok && data.success && data.token) {
+
+      if (ok && data.success && data.token) {
         sessionStorage.setItem('connectionadmin_token', data.token);
         setIsAuthenticated(true);
         setPasswordInput('');
       } else {
-        setAuthError(data.error || 'Authentication failed. Please verify password in .env (Connectionadmin).');
+        setAuthError(data.error || 'Authentication failed. Please verify password is Company1.');
       }
     } catch (err: any) {
       setAuthError('Connection error: ' + (err.message || 'Unable to contact backend server.'));
@@ -185,26 +202,30 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     setLoadingStatus(true);
     setStatusError(null);
     try {
-      const res = await fetch('/api/connectionadmin/status', {
+      const { ok, status: statusCode, data } = await safeFetchJson('/api/connectionadmin/status', {
         headers: getAuthHeaders()
       });
-      if (res.status === 401) {
+      if (statusCode === 401) {
         handleLogout();
         return;
       }
-      const data: ConnectionAdminStatus = await res.json();
-      setStatus(data);
+      if (!ok) {
+        setStatusError(data.error || `Failed to fetch status (HTTP ${statusCode})`);
+        return;
+      }
+      const statusData = data as ConnectionAdminStatus;
+      setStatus(statusData);
       setLastRefreshed(new Date());
 
       // Pre-fill edit forms
-      if (data.database?.config) {
-        setDbHost(data.database.config.host || '');
-        setDbPort(String(data.database.config.port || '5432'));
-        setDbUser(data.database.config.user || '');
-        setDbName(data.database.config.database || '');
+      if (statusData.database?.config) {
+        setDbHost(statusData.database.config.host || '');
+        setDbPort(String(statusData.database.config.port || '5432'));
+        setDbUser(statusData.database.config.user || '');
+        setDbName(statusData.database.config.database || '');
       }
-      if (data.actionServer?.url) {
-        setActionServerUrlInput(data.actionServer.url);
+      if (statusData.actionServer?.url) {
+        setActionServerUrlInput(statusData.actionServer.url);
       }
     } catch (err: any) {
       setStatusError(err.message || 'Failed to fetch status');
@@ -218,15 +239,14 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     if (!sessionStorage.getItem('connectionadmin_token')) return;
     setLogsLoading(true);
     try {
-      const res = await fetch('/api/connectionadmin/logs', {
+      const { ok, status: statusCode, data } = await safeFetchJson('/api/connectionadmin/logs', {
         headers: getAuthHeaders()
       });
-      if (res.status === 401) {
+      if (statusCode === 401) {
         handleLogout();
         return;
       }
-      const data = await res.json();
-      if (data.logs) {
+      if (ok && data.logs) {
         setLogs(data.logs);
       }
     } catch (err) {
@@ -243,7 +263,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     setDbUpdateMsg(null);
 
     try {
-      const res = await fetch('/api/connectionadmin/db/update', {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/db/update', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
@@ -254,8 +274,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
           database: dbName
         })
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data.success) {
         setDbUpdateMsg({
           type: 'success',
           text: `Configuration saved live to app_config.json & pool re-connected successfully! (${data.latencyMs}ms latency, ${data.tables?.length || 0} tables discovered)`
@@ -283,13 +302,12 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     setActionServerPingMsg(null);
 
     try {
-      const res = await fetch('/api/connectionadmin/action-server/update', {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/action-server/update', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({ actionServerUrl: actionServerUrlInput })
       });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (ok && data.success) {
         setActionServerPingMsg({
           type: data.pingResult?.online ? 'success' : 'error',
           text: data.pingResult?.online 
@@ -312,7 +330,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const handleClearLogs = async () => {
     if (!confirm('Are you sure you want to clear the captured diagnostic logs?')) return;
     try {
-      await fetch('/api/connectionadmin/logs/clear', {
+      await safeFetchJson('/api/connectionadmin/logs/clear', {
         method: 'POST',
         headers: getAuthHeaders()
       });
@@ -328,12 +346,11 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     setQueryLoading(true);
     setQueryResult(null);
     try {
-      const res = await fetch('/api/connectionadmin/db/execute-query', {
+      const { data } = await safeFetchJson('/api/connectionadmin/db/execute-query', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({ sql: sqlQuery })
       });
-      const data = await res.json();
       setQueryResult(data);
     } catch (err: any) {
       setQueryResult({ success: false, error: err.message || 'Query execution network error' });
@@ -372,7 +389,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     }
 
     try {
-      const res = await fetch('/api/connectionadmin/action-server/execute-call', {
+      const { data } = await safeFetchJson('/api/connectionadmin/action-server/execute-call', {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
@@ -382,7 +399,6 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
           body: parsedBody
         })
       });
-      const data = await res.json();
       setApiCallResult(data);
     } catch (err: any) {
       setApiCallResult({ error: err.message || 'API call execution failed' });
