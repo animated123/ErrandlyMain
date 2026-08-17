@@ -5472,7 +5472,17 @@ Please proceed with the task according to safety guidelines and update milestone
         console.log("[Server] Initializing Vite middleware...");
         const { createServer: createViteServer } = await import("vite");
         const vite = await createViteServer({
-          server: { middlewareMode: true },
+          server: {
+            middlewareMode: true,
+            allowedHosts: [
+              'errandlymain.onrender.com',
+              '.onrender.com',
+              'errandly.site',
+              '.errandly.site',
+              'localhost',
+              '127.0.0.1'
+            ]
+          },
           appType: "spa",
         });
         app.use(vite.middlewares);
