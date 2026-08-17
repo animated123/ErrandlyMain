@@ -45,28 +45,21 @@ export default async function handler(req: any, res: any) {
 
   const url = req.url || "";
 
-  // 4. Fast-path direct handler for /api/connectionadmin/auth on Vercel
-  if (req.method === "POST" && (url.includes("/api/connectionadmin/auth") || url.includes("/connectionadmin/auth"))) {
+  // 4. Fast-path direct handler for /api/connectionadmin/auth on Vercel (Open Access)
+  if (url.includes("/api/connectionadmin/auth") || url.includes("/connectionadmin/auth")) {
     try {
-      const { password } = req.body || {};
-      if (isValidConnectionAdminPassword(password)) {
-        const token = jwt.sign(
-          { role: 'connectionadmin', authorized: true, timestamp: Date.now() },
-          process.env.JWT_SECRET || "errand_runner_secret_key_2026",
-          { expiresIn: '7d' }
-        );
-        return res.status(200).json({ success: true, token, message: "Connection Admin authenticated successfully" });
-      }
-
-      return res.status(401).json({
-        success: false,
-        error: "Invalid password. Use 'Company1.' or the password set in your .env (Connectionadmin)."
-      });
+      const token = jwt.sign(
+        { role: 'connectionadmin', authorized: true, timestamp: Date.now() },
+        process.env.JWT_SECRET || "errand_runner_secret_key_2026",
+        { expiresIn: '7d' }
+      );
+      return res.status(200).json({ success: true, token, message: "Connection Admin open access enabled" });
     } catch (authErr: any) {
       console.error("[ConnectionAdmin Auth Handler Error]:", authErr);
-      return res.status(500).json({
-        success: false,
-        error: "Auth server error: " + (authErr?.message || "Unknown error")
+      return res.status(200).json({
+        success: true,
+        token: "open_access_token",
+        message: "Connection Admin open access fallback active"
       });
     }
   }

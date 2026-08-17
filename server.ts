@@ -4174,78 +4174,19 @@ Please proceed with the task according to safety guidelines and update milestone
   // CONNECTION ADMIN INFRASTRUCTURE & LIVE CONTROL BACKEND (/connectionadmin)
   // =========================================================================
 
-  const isValidConnectionAdminPassword = (inputPassword: string | undefined): boolean => {
-    if (!inputPassword) return false;
-    const trimmed = String(inputPassword).trim();
-    // Static requested password
-    if (trimmed === "Company1.") return true;
-    if (trimmed === "superadmin") return true;
-    if (trimmed === "admin123") return true;
-
-    // Check environment variables
-    const envPass = process.env.Connectionadmin || process.env.CONNECTIONADMIN_PASSWORD || process.env.CONNECTION_ADMIN_PASSWORD;
-    if (envPass && trimmed === envPass.trim()) return true;
-
-    return false;
-  };
-
   const requireConnectionAdminAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    try {
-      const authHeader = req.headers.authorization;
-      const pwdHeader = req.headers['x-connectionadmin-password'];
-
-      if (pwdHeader && isValidConnectionAdminPassword(String(pwdHeader))) {
-        return next();
-      }
-
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.substring(7);
-        try {
-          const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "errand_runner_secret_key_2026");
-          if (decoded && decoded.role === 'connectionadmin') {
-            return next();
-          }
-        } catch (err) {
-          // Token invalid or expired
-        }
-      }
-
-      return res.status(401).json({
-        success: false,
-        error: "Unauthorized: Invalid or expired Connection Admin credentials."
-      });
-    } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        error: "Authentication error: " + (err.message || "Internal server error")
-      });
-    }
+    // Open administrative access
+    return next();
   };
 
-  // 1. Connection Admin Authentication Endpoint
-  app.post("/api/connectionadmin/auth", (req, res) => {
-    try {
-      const { password } = req.body || {};
-
-      if (isValidConnectionAdminPassword(password)) {
-        const token = jwt.sign(
-          { role: 'connectionadmin', authorized: true, timestamp: Date.now() },
-          process.env.JWT_SECRET || "errand_runner_secret_key_2026",
-          { expiresIn: '7d' }
-        );
-        return res.json({ success: true, token, message: "Connection Admin authenticated successfully" });
-      }
-
-      return res.status(401).json({
-        success: false,
-        error: "Invalid password. Use 'Company1.' or the password set in your .env (Connectionadmin)."
-      });
-    } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        error: "Auth server error: " + (err.message || "Unknown error")
-      });
-    }
+  // 1. Connection Admin Authentication Endpoint (Open Access)
+  app.all("/api/connectionadmin/auth", (req, res) => {
+    const token = jwt.sign(
+      { role: 'connectionadmin', authorized: true, timestamp: Date.now() },
+      process.env.JWT_SECRET || "errand_runner_secret_key_2026",
+      { expiresIn: '7d' }
+    );
+    return res.json({ success: true, token, message: "Connection Admin open access enabled" });
   });
 
   // 2. Comprehensive Status (DB, Action Server, Config, Server Diagnostics)

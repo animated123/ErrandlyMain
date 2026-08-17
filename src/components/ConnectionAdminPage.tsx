@@ -62,13 +62,8 @@ interface LogEntry {
 }
 
 export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: () => void }) {
-  // Auth state
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return !!sessionStorage.getItem('connectionadmin_token');
-  });
-  const [passwordInput, setPasswordInput] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
+  // Auth state (Open access)
+  const [isAuthenticated] = useState<boolean>(true);
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<'db' | 'actionserver' | 'logs' | 'query' | 'apicall'>('db');
@@ -157,45 +152,12 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   };
 
   const getAuthHeaders = (): Record<string, string> => {
-    const token = sessionStorage.getItem('connectionadmin_token');
+    const token = sessionStorage.getItem('connectionadmin_token') || 'open_access';
     return {
       'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      'Authorization': `Bearer ${token}`
     };
   };
-
-  // Auth Handler
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    setAuthError('');
-
-    try {
-      const { ok, data } = await safeFetchJson('/api/connectionadmin/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: passwordInput })
-      });
-
-      if (ok && data.success && data.token) {
-        sessionStorage.setItem('connectionadmin_token', data.token);
-        setIsAuthenticated(true);
-        setPasswordInput('');
-      } else {
-        setAuthError(data.error || 'Authentication failed. Please verify password is Company1.');
-      }
-    } catch (err: any) {
-      setAuthError('Connection error: ' + (err.message || 'Unable to contact backend server.'));
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogout = useCallback(() => {
-    sessionStorage.removeItem('connectionadmin_token');
-    setIsAuthenticated(false);
-    setStatus(null);
-  }, []);
 
   // Fetch complete status
   const fetchStatus = useCallback(async () => {
@@ -205,10 +167,6 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       const { ok, status: statusCode, data } = await safeFetchJson('/api/connectionadmin/status', {
         headers: getAuthHeaders()
       });
-      if (statusCode === 401) {
-        handleLogout();
-        return;
-      }
       if (!ok) {
         setStatusError(data.error || `Failed to fetch status (HTTP ${statusCode})`);
         return;
@@ -232,20 +190,15 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     } finally {
       setLoadingStatus(false);
     }
-  }, [handleLogout]);
+  }, []);
 
   // Fetch logs
   const fetchLogs = useCallback(async () => {
-    if (!sessionStorage.getItem('connectionadmin_token')) return;
     setLogsLoading(true);
     try {
-      const { ok, status: statusCode, data } = await safeFetchJson('/api/connectionadmin/logs', {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/logs', {
         headers: getAuthHeaders()
       });
-      if (statusCode === 401) {
-        handleLogout();
-        return;
-      }
       if (ok && data.logs) {
         setLogs(data.logs);
       }
@@ -254,7 +207,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     } finally {
       setLogsLoading(false);
     }
-  }, [handleLogout]);
+  }, []);
 
   // Save DB Config Live
   const handleSaveDbConfig = async (e: React.FormEvent) => {
@@ -417,12 +370,12 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
 
   // Periodic log streamer
   useEffect(() => {
-    if (!isAuthenticated || !autoRefreshLogs) return;
+    if (!autoRefreshLogs) return;
     const interval = setInterval(() => {
       fetchLogs();
     }, 3000);
     return () => clearInterval(interval);
-  }, [isAuthenticated, autoRefreshLogs, fetchLogs]);
+  }, [autoRefreshLogs, fetchLogs]);
 
   // Filtered Logs
   const filteredLogs = logs.filter(log => {
@@ -434,82 +387,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     return true;
   });
 
-  // Login Gate
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4 font-sans selection:bg-indigo-500 selection:text-white">
-        <div className="w-full max-w-md bg-slate-900/90 border border-indigo-900/40 rounded-3xl p-8 shadow-2xl backdrop-blur-xl space-y-6">
-          <div className="text-center space-y-3">
-            <div className="inline-flex p-3.5 bg-indigo-950/80 border border-indigo-700/50 rounded-2xl text-indigo-400 shadow-inner">
-              <Shield className="w-8 h-8" />
-            </div>
-            <h1 className="text-2xl font-black tracking-tight text-white">Connection Admin</h1>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Authenticate with your administrative password configured in <code className="px-1.5 py-0.5 bg-slate-800 rounded font-mono text-indigo-300">Connectionadmin</code> to access live database controls and action server pipelines.
-            </p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
-                Admin Password
-              </label>
-              <div className="relative">
-                <input
-                  type="password"
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  placeholder="Enter Connectionadmin password..."
-                  required
-                  className="w-full px-4 py-3 bg-slate-950 border border-slate-700 rounded-xl text-sm font-medium text-white placeholder-slate-500 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all font-mono"
-                />
-                <Lock className="w-4 h-4 text-slate-500 absolute right-3.5 top-3.5 pointer-events-none" />
-              </div>
-            </div>
-
-            {authError && (
-              <div className="p-3.5 bg-red-950/60 border border-red-800/60 rounded-xl text-xs text-red-300 flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                <span>{authError}</span>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={authLoading}
-              className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.99] text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {authLoading ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Verifying Credentials...
-                </>
-              ) : (
-                <>
-                  <Shield className="w-4 h-4" />
-                  Access Admin Console
-                </>
-              )}
-            </button>
-          </form>
-
-          <div className="text-center pt-2">
-            <button
-              type="button"
-              onClick={() => {
-                if (onBackToHome) onBackToHome();
-                else window.location.href = '/';
-              }}
-              className="text-xs text-slate-400 hover:text-white transition inline-flex items-center gap-1.5"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" /> Return to Main Application
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // Main Console View
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white pb-20">
       {/* Top Navigation Header */}
@@ -570,14 +448,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
               className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              App
-            </button>
-
-            <button
-              onClick={handleLogout}
-              className="px-3.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 border border-red-800/50 text-red-300 rounded-xl text-xs font-bold transition"
-            >
-              Logout
+              Return to App
             </button>
           </div>
         </div>
