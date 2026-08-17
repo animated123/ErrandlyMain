@@ -87,8 +87,16 @@ export default function DbConfigPage() {
             <a href="/" className="inline-flex items-center text-sm text-sky-600 hover:text-sky-700 transition">
               <ArrowLeft className="w-4 h-4 mr-1" /> Back to App
             </a>
-            <div className="flex items-center justify-center h-12 w-12 rounded-xl bg-sky-50 text-sky-600">
-              <Database className="h-6 w-6" />
+            <div className="flex items-center gap-2">
+              <a 
+                href="/connectionadmin" 
+                className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-bold transition flex items-center gap-1"
+              >
+                <Server className="w-3.5 h-3.5" /> /connectionadmin
+              </a>
+              <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-sky-50 text-sky-600">
+                <Database className="h-5 w-5" />
+              </div>
             </div>
           </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-slate-900 tracking-tight">

@@ -591,28 +591,38 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
           <h2 className="text-3xl font-black text-foreground tracking-tight">Admin Control</h2>
           <p className="text-xs text-muted-foreground mt-1">System Management & Oversight</p>
         </div>
-        <div className="bg-secondary/50 p-1 rounded-2xl flex items-center gap-1">
-          {[
-            { id: 'overview', label: 'Overview' },
-            { id: 'support', label: 'Support', badge: supportChats.some(c => c.unreadByAdmin) },
-            { id: 'system', label: 'System' }
-          ].map(tab => (
-            <button 
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)} 
-              className={`relative px-4 py-2 rounded-xl text-xs font-black tracking-normal font-medium transition-all ${activeTab === tab.id ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              {activeTab === tab.id && (
-                <motion.div 
-                  layoutId="admin-top-tab"
-                  className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-border/50"
-                  transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                />
-              )}
-              <span className="relative z-10">{tab.label}</span>
-              {tab.badge && <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-900 z-20" />}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <a
+            href="/connectionadmin"
+            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black tracking-wider uppercase transition shadow-sm flex items-center gap-1.5"
+            title="Open Live Database, Gateway & Diagnostics Panel"
+          >
+            <Server size={13} />
+            Connection Admin
+          </a>
+          <div className="bg-secondary/50 p-1 rounded-2xl flex items-center gap-1">
+            {[
+              { id: 'overview', label: 'Overview' },
+              { id: 'support', label: 'Support', badge: supportChats.some(c => c.unreadByAdmin) },
+              { id: 'system', label: 'System' }
+            ].map(tab => (
+              <button 
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)} 
+                className={`relative px-4 py-2 rounded-xl text-xs font-black tracking-normal font-medium transition-all ${activeTab === tab.id ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {activeTab === tab.id && (
+                  <motion.div 
+                    layoutId="admin-top-tab"
+                    className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-border/50"
+                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                  />
+                )}
+                <span className="relative z-10">{tab.label}</span>
+                {tab.badge && <div className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-900 z-20" />}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

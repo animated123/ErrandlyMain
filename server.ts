@@ -205,12 +205,16 @@ function convertToSupabaseRow(obj: any): any {
 let schemaInitialized = false;
 
 // Global Postgres connection pool initiator
-async function initPgPool() {
-  if (pgPool && pgConnected) {
+async function initPgPool(forceReconnect = false) {
+  if (pgPool && pgConnected && !forceReconnect) {
     if (!schemaInitialized) {
       await ensurePostgreSqlSchema();
     }
     return;
+  }
+
+  if (forceReconnect) {
+    schemaInitialized = false;
   }
 
   if (pgPool) {
@@ -4129,6 +4133,387 @@ Please proceed with the task according to safety guidelines and update milestone
       console.error(`[Local DB Server Proxy] Exception on ${req.params.table}/${req.params.action}:`, error);
       const errMsg = error?.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
       res.status(500).json({ error: errMsg });
+    }
+  });
+
+  // =========================================================================
+  // CONNECTION ADMIN INFRASTRUCTURE & LIVE CONTROL BACKEND (/connectionadmin)
+  // =========================================================================
+
+  const getConnectionAdminPassword = () => {
+    return process.env.Connectionadmin || process.env.CONNECTIONADMIN_PASSWORD || process.env.CONNECTION_ADMIN_PASSWORD || "admin123";
+  };
+
+  const requireConnectionAdminAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const expectedPassword = getConnectionAdminPassword();
+    const authHeader = req.headers.authorization;
+    const pwdHeader = req.headers['x-connectionadmin-password'];
+
+    if (pwdHeader && String(pwdHeader) === expectedPassword) {
+      return next();
+    }
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7);
+      try {
+        const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "errand_runner_secret_key_2026");
+        if (decoded && decoded.role === 'connectionadmin') {
+          return next();
+        }
+      } catch (err) {
+        // Token invalid or expired
+      }
+    }
+
+    return res.status(401).json({
+      success: false,
+      error: "Unauthorized: Invalid or missing Connection Admin credentials."
+    });
+  };
+
+  // 1. Connection Admin Authentication Endpoint
+  app.post("/api/connectionadmin/auth", (req, res) => {
+    const { password } = req.body;
+    const expectedPassword = getConnectionAdminPassword();
+
+    if (password && password.trim() === expectedPassword.trim()) {
+      const token = jwt.sign(
+        { role: 'connectionadmin', authorized: true, timestamp: Date.now() },
+        process.env.JWT_SECRET || "errand_runner_secret_key_2026",
+        { expiresIn: '7d' }
+      );
+      return res.json({ success: true, token, message: "Connection Admin authenticated successfully" });
+    }
+
+    return res.status(401).json({
+      success: false,
+      error: "Invalid password. Ensure the value in .env (Connectionadmin) matches."
+    });
+  });
+
+  // 2. Comprehensive Status (DB, Action Server, Config, Server Diagnostics)
+  app.get("/api/connectionadmin/status", requireConnectionAdminAuth, async (req, res) => {
+    const startTime = Date.now();
+    let dbLatencyMs: number | null = null;
+    let dbTables: string[] = [];
+    let dbVersion: string | undefined = undefined;
+    let dbServerTime: string | undefined = undefined;
+
+    // Check DB live connectivity
+    if (pgPool && pgConnected) {
+      try {
+        const t0 = Date.now();
+        const client = await pgPool.connect();
+        const pingRes = await client.query("SELECT NOW() as current_time, version() as version;");
+        dbLatencyMs = Date.now() - t0;
+        dbVersion = pingRes.rows[0]?.version;
+        dbServerTime = pingRes.rows[0]?.current_time;
+
+        const tablesRes = await client.query(
+          "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;"
+        );
+        client.release();
+        dbTables = tablesRes.rows.map(r => r.table_name);
+      } catch (err: any) {
+        pgConnected = false;
+        pgError = err.message;
+      }
+    }
+
+    // Check Action Server / Gateway live connectivity
+    const targetActionUrl = appConfig.actionServerUrl || process.env.VITE_ACTION_SERVER_URL || "https://gateway.errandly.site";
+    let actionServerOnline = false;
+    let actionServerLatencyMs: number | null = null;
+    let actionServerStatusCode: number | null = null;
+    let actionServerError: string | null = null;
+    let actionServerPreview: any = null;
+
+    try {
+      const t0 = Date.now();
+      const pingUrl = targetActionUrl.endsWith('/') ? `${targetActionUrl}api/health` : `${targetActionUrl}/api/health`;
+      const response = await axios.get(pingUrl, { timeout: 4000, validateStatus: () => true });
+      actionServerLatencyMs = Date.now() - t0;
+      actionServerStatusCode = response.status;
+      actionServerOnline = response.status >= 200 && response.status < 500;
+      actionServerPreview = response.data;
+    } catch (actErr: any) {
+      actionServerOnline = false;
+      actionServerError = actErr.message || "Failed to reach action server";
+    }
+
+    // Read live app_config.json
+    let rawConfig: any = {};
+    try {
+      if (fs.existsSync(APP_CONFIG_FILE)) {
+        rawConfig = JSON.parse(fs.readFileSync(APP_CONFIG_FILE, "utf-8"));
+      }
+    } catch (e) {
+      rawConfig = appConfig;
+    }
+
+    const mem = process.memoryUsage();
+
+    res.json({
+      database: {
+        connected: pgConnected,
+        error: pgError,
+        latencyMs: dbLatencyMs,
+        config: {
+          host: dbConfig.host,
+          port: dbConfig.port,
+          user: dbConfig.user,
+          database: dbConfig.database,
+          hasPassword: !!dbConfig.password
+        },
+        tables: dbTables,
+        tableCount: dbTables.length,
+        version: dbVersion,
+        serverTime: dbServerTime
+      },
+      actionServer: {
+        url: targetActionUrl,
+        online: actionServerOnline,
+        statusCode: actionServerStatusCode,
+        latencyMs: actionServerLatencyMs,
+        error: actionServerError,
+        responsePreview: actionServerPreview,
+        testedAt: new Date().toISOString()
+      },
+      appConfig: {
+        raw: rawConfig,
+        filePath: APP_CONFIG_FILE,
+        lastUpdated: new Date().toISOString()
+      },
+      server: {
+        uptimeSeconds: Math.floor(process.uptime()),
+        nodeVersion: process.version,
+        memoryUsage: {
+          rssMb: Math.round(mem.rss / 1024 / 1024),
+          heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+          heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024)
+        },
+        envStatus: {
+          hasConnectionAdminPwd: !!getConnectionAdminPassword(),
+          hasPgHost: !!process.env.PGHOST,
+          hasActionServerUrl: !!process.env.VITE_ACTION_SERVER_URL,
+          hasGeminiApiKey: !!process.env.GEMINI_API_KEY
+        }
+      }
+    });
+  });
+
+  // 3. Update Database Connection & Write Live Config
+  app.post("/api/connectionadmin/db/update", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const { host, port, user, password, database } = req.body;
+
+      if (!host || !port || !user || !database) {
+        return res.status(400).json({ success: false, error: "Host, port, user, and database name are required." });
+      }
+
+      const newConfig = {
+        host: host.trim(),
+        port: parseInt(String(port)) || 5432,
+        user: user.trim(),
+        password: password !== undefined && password !== "" ? String(password).trim() : dbConfig.password,
+        database: database.trim()
+      };
+
+      // Write to database_config.json
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2), "utf-8");
+      dbConfig = newConfig;
+
+      // Update app_config.json
+      appConfig.database = {
+        host: newConfig.host,
+        port: newConfig.port,
+        user: newConfig.user,
+        password: newConfig.password,
+        name: newConfig.database
+      };
+      fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+      console.log(`[ConnectionAdmin] Live DB credentials updated in ${APP_CONFIG_FILE}`);
+
+      // Re-initialize pool in memory immediately
+      await initPgPool(true);
+
+      let latencyMs: number | null = null;
+      let tables: string[] = [];
+
+      if (pgPool && pgConnected) {
+        try {
+          const t0 = Date.now();
+          const client = await pgPool.connect();
+          await client.query("SELECT NOW();");
+          latencyMs = Date.now() - t0;
+          const tblRes = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public';");
+          client.release();
+          tables = tblRes.rows.map(r => r.table_name);
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      res.json({
+        success: pgConnected,
+        connected: pgConnected,
+        latencyMs,
+        tables,
+        error: pgError,
+        config: {
+          host: dbConfig.host,
+          port: dbConfig.port,
+          user: dbConfig.user,
+          database: dbConfig.database,
+          hasPassword: !!dbConfig.password
+        }
+      });
+    } catch (err: any) {
+      console.error("[ConnectionAdmin DB Update Exception]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 4. Update Action Server & Write Live Config
+  app.post("/api/connectionadmin/action-server/update", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const { actionServerUrl } = req.body;
+      if (!actionServerUrl || typeof actionServerUrl !== 'string') {
+        return res.status(400).json({ success: false, error: "actionServerUrl string is required." });
+      }
+
+      const formattedUrl = actionServerUrl.trim().replace(/\/+$/, '');
+      appConfig.actionServerUrl = formattedUrl;
+      fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+      console.log(`[ConnectionAdmin] Action Server URL updated in ${APP_CONFIG_FILE} to: ${formattedUrl}`);
+
+      // Perform live ping
+      const pingResult = { online: false, statusCode: null as number | null, latencyMs: null as number | null, error: null as string | null, responsePreview: null as any };
+      try {
+        const t0 = Date.now();
+        const response = await axios.get(`${formattedUrl}/api/health`, { timeout: 4000, validateStatus: () => true });
+        pingResult.latencyMs = Date.now() - t0;
+        pingResult.statusCode = response.status;
+        pingResult.online = response.status >= 200 && response.status < 500;
+        pingResult.responsePreview = response.data;
+      } catch (err: any) {
+        pingResult.error = err.message;
+      }
+
+      res.json({
+        success: true,
+        actionServerUrl: formattedUrl,
+        pingResult
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 5. Get Real-Time Captured Logs
+  app.get("/api/connectionadmin/logs", requireConnectionAdminAuth, (req, res) => {
+    res.json({
+      logs: capturedLogs,
+      total: capturedLogs.length,
+      maxLogs: MAX_LOGS
+    });
+  });
+
+  // 6. Clear Logs
+  app.post("/api/connectionadmin/logs/clear", requireConnectionAdminAuth, (req, res) => {
+    capturedLogs.length = 0;
+    res.json({ success: true, logs: [] });
+  });
+
+  // 7. Execute Custom DB SQL Query Live
+  app.post("/api/connectionadmin/db/execute-query", requireConnectionAdminAuth, async (req, res) => {
+    const { sql } = req.body;
+    if (!sql || typeof sql !== 'string' || !sql.trim()) {
+      return res.status(400).json({ success: false, error: "SQL query statement is required." });
+    }
+
+    if (!pgPool || !pgConnected) {
+      return res.status(200).json({
+        success: false,
+        error: pgError || "Database connection pool is currently offline. Please configure credentials first."
+      });
+    }
+
+    const t0 = Date.now();
+    try {
+      const client = await pgPool.connect();
+      try {
+        const result = await client.query(sql);
+        const executionTimeMs = Date.now() - t0;
+        client.release();
+        return res.json({
+          success: true,
+          rows: result.rows,
+          rowCount: result.rowCount,
+          fields: result.fields?.map(f => f.name) || [],
+          executionTimeMs
+        });
+      } catch (queryErr: any) {
+        client.release();
+        const executionTimeMs = Date.now() - t0;
+        return res.json({
+          success: false,
+          error: queryErr.message,
+          executionTimeMs
+        });
+      }
+    } catch (connErr: any) {
+      return res.status(500).json({
+        success: false,
+        error: "Failed to obtain database client: " + connErr.message,
+        executionTimeMs: Date.now() - t0
+      });
+    }
+  });
+
+  // 8. Execute Live Action Server / Gateway API Call
+  app.post("/api/connectionadmin/action-server/execute-call", requireConnectionAdminAuth, async (req, res) => {
+    const { method = "GET", path: requestPath = "/api/health", headers = {}, body = undefined } = req.body;
+
+    const baseActionUrl = appConfig.actionServerUrl || process.env.VITE_ACTION_SERVER_URL || "https://gateway.errandly.site";
+    let targetUrl: string;
+
+    if (requestPath.startsWith("http://") || requestPath.startsWith("https://")) {
+      targetUrl = requestPath;
+    } else {
+      const cleanPath = requestPath.startsWith('/') ? requestPath : `/${requestPath}`;
+      targetUrl = `${baseActionUrl.replace(/\/+$/, '')}${cleanPath}`;
+    }
+
+    const t0 = Date.now();
+    try {
+      const response = await axios({
+        method: method.toUpperCase(),
+        url: targetUrl,
+        headers: headers,
+        data: body,
+        timeout: 8000,
+        validateStatus: () => true
+      });
+      const executionTimeMs = Date.now() - t0;
+
+      return res.json({
+        success: true,
+        targetUrl,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        data: response.data,
+        executionTimeMs
+      });
+    } catch (err: any) {
+      const executionTimeMs = Date.now() - t0;
+      return res.json({
+        success: false,
+        targetUrl,
+        error: err.message,
+        executionTimeMs
+      });
     }
   });
 

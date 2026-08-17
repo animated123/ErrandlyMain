@@ -62,6 +62,7 @@ import { FAQModal, PrivacyPolicyModal } from './src/components/LegalModals';
 import { LandingPage } from './src/components/LandingPage';
 import RunnerApplicationPage from './src/components/RunnerApplicationPage';
 import DbConfigPage from './src/components/DbConfigPage';
+import ConnectionAdminPage from './src/components/ConnectionAdminPage';
 
 // Mock Gemini call for static run
 const callGeminiWithRetry = async (prompt: string): Promise<string> => {
@@ -931,6 +932,14 @@ export default function App() {
       throw error;
     }
   };
+
+  if (currentPath === '/connectionadmin' || currentPath.startsWith('/connectionadmin')) {
+    return (
+      <ErrorBoundary>
+        <ConnectionAdminPage onBackToHome={() => navigateTo('/')} />
+      </ErrorBoundary>
+    );
+  }
 
   if (currentPath === '/dbconfig') {
     return (
