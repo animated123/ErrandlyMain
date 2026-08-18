@@ -4,8 +4,51 @@ import {
   RefreshCw, Play, Terminal, Activity, FileText, Download, 
   Trash2, Eye, EyeOff, Save, Globe, Cpu, AlertTriangle, 
   ArrowLeft, Send, Search, Copy, Check, ExternalLink, HardDrive, 
-  Layers, Clock, Filter, Radio
+  Layers, Clock, Filter, Radio, Mail, Zap, CheckCheck, Wifi, 
+  Gauge, ShieldCheck, HelpCircle, ChevronRight, Sparkles
 } from 'lucide-react';
+
+export interface CheckAllSystemsResult {
+  success: boolean;
+  overallStatus: 'all_systems_operational' | 'partially_degraded' | 'critical_issues';
+  timestamp: string;
+  totalDurationMs: number;
+  database: {
+    status: 'operational' | 'offline';
+    connected: boolean;
+    latencyMs: number | null;
+    host: string;
+    port: number;
+    database: string;
+    user: string;
+    tableCount: number;
+    version: string | null;
+    error: string | null;
+  };
+  actionServer: {
+    status: 'operational' | 'degraded' | 'unreachable';
+    online: boolean;
+    url: string;
+    statusCode: number | null;
+    latencyMs: number | null;
+    responsePreview: any;
+    error: string | null;
+  };
+  emailSmtp: {
+    status: 'operational' | 'not_configured' | 'error';
+    isConfigured: boolean;
+    host: string | null;
+    port: number;
+    user: string | null;
+    from: string;
+    secure: boolean;
+    resendConfigured: boolean;
+    verified: boolean;
+    latencyMs: number | null;
+    error: string | null;
+    note?: string;
+  };
+}
 
 interface ConnectionAdminStatus {
   database: {
@@ -66,13 +109,20 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [isAuthenticated] = useState<boolean>(true);
 
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'db' | 'actionserver' | 'logs' | 'query' | 'apicall'>('db');
+  const [activeTab, setActiveTab] = useState<'db' | 'actionserver' | 'logs' | 'query' | 'apicall'>('actionserver');
 
   // Overall status data
   const [status, setStatus] = useState<ConnectionAdminStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+
+  // Check All Systems Diagnostic State
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
+  const [diagnosticStep, setDiagnosticStep] = useState<'idle' | 'db' | 'actionserver' | 'smtp' | 'completed'>('idle');
+  const [diagnosticResults, setDiagnosticResults] = useState<CheckAllSystemsResult | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+  const [lastCheckTimestamp, setLastCheckTimestamp] = useState<Date | null>(null);
 
   // DB Config Form
   const [dbHost, setDbHost] = useState('');
@@ -191,6 +241,45 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       setLoadingStatus(false);
     }
   }, []);
+
+  // Sequence Diagnostic: Check All Systems (DB, Action Server, SMTP Gateway)
+  const handleCheckAllSystems = useCallback(async () => {
+    setDiagnosticLoading(true);
+    setDiagnosticError(null);
+    setDiagnosticStep('db');
+
+    try {
+      // Small visual stagger so the sequence animation displays clearly
+      await new Promise(r => setTimeout(r, 200));
+      setDiagnosticStep('actionserver');
+      await new Promise(r => setTimeout(r, 200));
+      setDiagnosticStep('smtp');
+
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/check-all', {
+        headers: getAuthHeaders()
+      });
+
+      if (ok && data.success) {
+        setDiagnosticResults(data as CheckAllSystemsResult);
+        setLastCheckTimestamp(new Date());
+        setDiagnosticStep('completed');
+        fetchStatus();
+      } else {
+        setDiagnosticError(data.error || 'Failed to complete full system diagnostic sequence.');
+        setDiagnosticStep('idle');
+      }
+    } catch (err: any) {
+      setDiagnosticError(err.message || 'Network error executing check sequence');
+      setDiagnosticStep('idle');
+    } finally {
+      setDiagnosticLoading(false);
+    }
+  }, [fetchStatus]);
+
+  // Initial diagnostics load
+  useEffect(() => {
+    handleCheckAllSystems();
+  }, [handleCheckAllSystems]);
 
   // Fetch logs
   const fetchLogs = useCallback(async () => {
@@ -477,8 +566,8 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                 : 'text-slate-400 hover:text-white hover:bg-slate-900'
             }`}
           >
-            <Globe className="w-4 h-4" />
-            2. Action Server & Gateway
+            <Zap className="w-4 h-4 text-amber-400" />
+            2. Action Server & DB Test
           </button>
 
           <button
@@ -750,10 +839,366 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
           </div>
         )}
 
-        {/* TAB 2: ACTION SERVER & GATEWAY */}
+        {/* TAB 2: ACTION SERVER & DB TEST */}
         {activeTab === 'actionserver' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-5 space-y-6">
+          <div className="space-y-6">
+            {/* 1. TOP DIAGNOSTIC HERO & "CHECK ALL SYSTEMS" TRIGGER */}
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 rounded-3xl p-6 sm:p-8 relative overflow-hidden shadow-2xl">
+              <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute bottom-0 left-1/3 -mb-10 w-48 h-48 bg-sky-500/10 rounded-full blur-2xl pointer-events-none" />
+
+              <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="space-y-2 max-w-2xl">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-400/40 text-[10px] font-black uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                      <Sparkles className="w-3 h-3 text-indigo-400" />
+                      Tri-Service Health Diagnostic Matrix
+                    </span>
+                    {lastCheckTimestamp && (
+                      <span className="text-[11px] font-mono text-slate-400 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-slate-500" />
+                        Checked {lastCheckTimestamp.toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">
+                    Action Server & DB Diagnostic Console
+                  </h2>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    Trigger an end-to-end status request sequence across the PostgreSQL Database, Action Server Gateway, and Email SMTP gateway to evaluate health, latency, and schema discovery.
+                  </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+                  <button
+                    onClick={handleCheckAllSystems}
+                    disabled={diagnosticLoading}
+                    className="px-6 py-3.5 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 active:scale-[0.98] text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-xl shadow-indigo-600/30 flex items-center justify-center gap-2.5 transition disabled:opacity-60 cursor-pointer"
+                  >
+                    {diagnosticLoading ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-sky-200" />
+                        <span>Running Diagnostics...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4 text-amber-300" />
+                        <span>Check All Systems</span>
+                      </>
+                    )}
+                  </button>
+
+                  {diagnosticResults && (
+                    <button
+                      onClick={() => copyToClipboard(JSON.stringify(diagnosticResults, null, 2), 'diag_json')}
+                      className="px-4 py-3.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-slate-200 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition"
+                      title="Copy diagnostic results as JSON"
+                    >
+                      {copiedKey === 'diag_json' ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-emerald-400">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Copy Report</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Real-time sequence indicator */}
+              {diagnosticLoading && (
+                <div className="mt-6 pt-6 border-t border-slate-800/80 space-y-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-300 flex items-center gap-2">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                      Sequence Step: {diagnosticStep === 'db' ? '1/3 - Testing PostgreSQL DB Connection & Latency' : diagnosticStep === 'actionserver' ? '2/3 - Pinging Action Server Gateway' : '3/3 - Verifying Email SMTP Gateway Transport'}
+                    </span>
+                    <span className="font-mono text-slate-400 text-[11px]">Executing socket checks...</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className={`h-1.5 rounded-full transition-all duration-300 ${diagnosticStep === 'db' || diagnosticStep === 'actionserver' || diagnosticStep === 'smtp' ? 'bg-indigo-500' : 'bg-slate-800'}`} />
+                    <div className={`h-1.5 rounded-full transition-all duration-300 ${diagnosticStep === 'actionserver' || diagnosticStep === 'smtp' ? 'bg-sky-500' : 'bg-slate-800'}`} />
+                    <div className={`h-1.5 rounded-full transition-all duration-300 ${diagnosticStep === 'smtp' ? 'bg-emerald-500' : 'bg-slate-800'}`} />
+                  </div>
+                </div>
+              )}
+
+              {diagnosticError && (
+                <div className="mt-6 p-4 bg-red-950/80 border border-red-800/80 rounded-2xl text-xs text-red-200 flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
+                  <div>
+                    <span className="font-bold block">Diagnostic Check Encountered an Issue</span>
+                    <p className="text-red-300 text-[11px] mt-0.5">{diagnosticError}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 2. SYSTEM STATUS DASHBOARD SECTION */}
+            {diagnosticResults && (
+              <div className="space-y-6">
+                {/* Overall Status Banner */}
+                <div className={`p-5 rounded-3xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
+                  diagnosticResults.overallStatus === 'all_systems_operational'
+                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-100 shadow-lg shadow-emerald-950/20'
+                    : diagnosticResults.overallStatus === 'partially_degraded'
+                    ? 'bg-amber-950/40 border-amber-500/40 text-amber-100 shadow-lg shadow-amber-950/20'
+                    : 'bg-rose-950/40 border-rose-500/40 text-rose-100 shadow-lg shadow-rose-950/20'
+                }`}>
+                  <div className="flex items-center gap-3.5">
+                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                      diagnosticResults.overallStatus === 'all_systems_operational'
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : diagnosticResults.overallStatus === 'partially_degraded'
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-rose-500/20 text-rose-400'
+                    }`}>
+                      {diagnosticResults.overallStatus === 'all_systems_operational' ? (
+                        <CheckCheck className="w-5 h-5" />
+                      ) : diagnosticResults.overallStatus === 'partially_degraded' ? (
+                        <AlertTriangle className="w-5 h-5" />
+                      ) : (
+                        <XCircle className="w-5 h-5" />
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm uppercase tracking-wider">
+                          {diagnosticResults.overallStatus === 'all_systems_operational'
+                            ? 'All Systems Operational'
+                            : diagnosticResults.overallStatus === 'partially_degraded'
+                            ? 'Partially Degraded Services'
+                            : 'Critical Issues Detected'}
+                        </span>
+                        <span className={`w-2.5 h-2.5 rounded-full ${
+                          diagnosticResults.overallStatus === 'all_systems_operational'
+                            ? 'bg-emerald-400 animate-pulse'
+                            : diagnosticResults.overallStatus === 'partially_degraded'
+                            ? 'bg-amber-400 animate-pulse'
+                            : 'bg-rose-500 animate-ping'
+                        }`} />
+                      </div>
+                      <p className="text-xs opacity-80 mt-0.5">
+                        Completed tri-system handshake & latency verification in{' '}
+                        <strong className="font-mono">{diagnosticResults.totalDurationMs} ms</strong>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-end sm:self-center text-xs font-mono">
+                    <span className="px-3 py-1 bg-slate-950/60 border border-slate-800 rounded-xl">
+                      DB: {diagnosticResults.database.connected ? `${diagnosticResults.database.latencyMs}ms` : 'FAIL'}
+                    </span>
+                    <span className="px-3 py-1 bg-slate-950/60 border border-slate-800 rounded-xl">
+                      Gateway: {diagnosticResults.actionServer.online ? `${diagnosticResults.actionServer.latencyMs}ms` : 'FAIL'}
+                    </span>
+                    <span className="px-3 py-1 bg-slate-950/60 border border-slate-800 rounded-xl">
+                      SMTP: {diagnosticResults.emailSmtp.status === 'operational' ? `${diagnosticResults.emailSmtp.latencyMs ?? 0}ms` : diagnosticResults.emailSmtp.resendConfigured ? 'Resend API' : 'Off'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3 Detailed Cards Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Card 1: Database Status */}
+                  <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 hover:border-slate-700 transition">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-400">
+                          <Database className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-wider text-slate-200">1. PostgreSQL DB</h3>
+                          <span className="text-[10px] text-slate-500 font-mono">Data Persistence Layer</span>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-full border ${
+                        diagnosticResults.database.connected
+                          ? 'bg-emerald-950 border-emerald-700 text-emerald-300'
+                          : 'bg-red-950 border-red-700 text-red-300'
+                      }`}>
+                        {diagnosticResults.database.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 pt-1 text-xs">
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">Socket Latency</span>
+                        <span className="font-mono font-bold text-white">
+                          {diagnosticResults.database.latencyMs !== null ? `${diagnosticResults.database.latencyMs} ms` : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">Discovered Tables</span>
+                        <span className="font-mono font-bold text-indigo-300">
+                          {diagnosticResults.database.tableCount} Tables
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">Host Address</span>
+                        <span className="font-mono text-[11px] text-slate-300 truncate max-w-[140px]" title={diagnosticResults.database.host}>
+                          {diagnosticResults.database.host || 'Not set'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-slate-400 font-medium">Database Name</span>
+                        <span className="font-mono text-slate-300">
+                          {diagnosticResults.database.database || 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {diagnosticResults.database.error ? (
+                      <div className="p-3 bg-red-950/60 border border-red-800/60 rounded-xl text-[11px] font-mono text-red-300 break-all">
+                        {diagnosticResults.database.error}
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-slate-950/60 border border-slate-800/80 rounded-xl flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Engine Version:</span>
+                        <span className="font-mono text-slate-300 truncate max-w-[150px]" title={diagnosticResults.database.version || 'PostgreSQL'}>
+                          {diagnosticResults.database.version ? diagnosticResults.database.version.split(' ')[0] + ' ' + diagnosticResults.database.version.split(' ')[1] : 'PostgreSQL'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card 2: Action Server Gateway */}
+                  <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 hover:border-slate-700 transition">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 bg-sky-500/10 rounded-xl text-sky-400">
+                          <Globe className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-wider text-slate-200">2. Action Server</h3>
+                          <span className="text-[10px] text-slate-500 font-mono">Gateway API & Webhooks</span>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-full border ${
+                        diagnosticResults.actionServer.online
+                          ? 'bg-emerald-950 border-emerald-700 text-emerald-300'
+                          : 'bg-amber-950 border-amber-700 text-amber-300'
+                      }`}>
+                        {diagnosticResults.actionServer.status.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 pt-1 text-xs">
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">Ping Latency</span>
+                        <span className="font-mono font-bold text-white">
+                          {diagnosticResults.actionServer.latencyMs !== null ? `${diagnosticResults.actionServer.latencyMs} ms` : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">HTTP Response</span>
+                        <span className={`font-mono font-bold ${diagnosticResults.actionServer.statusCode === 200 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          {diagnosticResults.actionServer.statusCode ? `HTTP ${diagnosticResults.actionServer.statusCode}` : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">Target URL</span>
+                        <span className="font-mono text-[11px] text-sky-300 truncate max-w-[140px]" title={diagnosticResults.actionServer.url}>
+                          {diagnosticResults.actionServer.url}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-slate-400 font-medium">Live State</span>
+                        <span className="font-mono text-slate-300">
+                          {diagnosticResults.actionServer.online ? 'Online & Responsive' : 'Unreachable'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {diagnosticResults.actionServer.error ? (
+                      <div className="p-3 bg-amber-950/60 border border-amber-800/60 rounded-xl text-[11px] font-mono text-amber-300 break-all">
+                        {diagnosticResults.actionServer.error}
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-slate-950/60 border border-slate-800/80 rounded-xl flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Payload Preview:</span>
+                        <span className="font-mono text-emerald-400 truncate max-w-[150px]">
+                          {diagnosticResults.actionServer.responsePreview?.status || 'Valid JSON'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card 3: Email SMTP Gateway */}
+                  <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4 hover:border-slate-700 transition">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-400">
+                          <Mail className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-xs font-black uppercase tracking-wider text-slate-200">3. Email SMTP</h3>
+                          <span className="text-[10px] text-slate-500 font-mono">Notifications & OTP</span>
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-full border ${
+                        diagnosticResults.emailSmtp.status === 'operational'
+                          ? 'bg-emerald-950 border-emerald-700 text-emerald-300'
+                          : diagnosticResults.emailSmtp.resendConfigured
+                          ? 'bg-sky-950 border-sky-700 text-sky-300'
+                          : 'bg-slate-800 border-slate-700 text-slate-400'
+                      }`}>
+                        {diagnosticResults.emailSmtp.status === 'operational' ? 'VERIFIED' : diagnosticResults.emailSmtp.resendConfigured ? 'RESEND API' : 'NOT CONFIGURED'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 pt-1 text-xs">
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">Transport Mode</span>
+                        <span className="font-mono font-bold text-white">
+                          {diagnosticResults.emailSmtp.isConfigured ? (diagnosticResults.emailSmtp.secure ? 'SSL (465)' : `STARTTLS (${diagnosticResults.emailSmtp.port})`) : (diagnosticResults.emailSmtp.resendConfigured ? 'Resend HTTPS API' : 'Fallback / Mock')}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">SMTP Host</span>
+                        <span className="font-mono text-[11px] text-slate-300 truncate max-w-[140px]" title={diagnosticResults.emailSmtp.host || 'Not set'}>
+                          {diagnosticResults.emailSmtp.host || 'None'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
+                        <span className="text-slate-400 font-medium">Sender From</span>
+                        <span className="font-mono text-[11px] text-emerald-300 truncate max-w-[140px]" title={diagnosticResults.emailSmtp.from}>
+                          {diagnosticResults.emailSmtp.from}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-slate-400 font-medium">Handshake Status</span>
+                        <span className="font-mono text-slate-300">
+                          {diagnosticResults.emailSmtp.verified ? 'Verified & Ready' : (diagnosticResults.emailSmtp.resendConfigured ? 'Resend Key Active' : 'Unconfigured')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {diagnosticResults.emailSmtp.error ? (
+                      <div className="p-3 bg-amber-950/60 border border-amber-800/60 rounded-xl text-[11px] font-mono text-amber-300 break-all">
+                        {diagnosticResults.emailSmtp.error}
+                      </div>
+                    ) : (
+                      <div className="p-2.5 bg-slate-950/60 border border-slate-800/80 rounded-xl flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Gateway Status:</span>
+                        <span className="font-mono text-emerald-400 truncate max-w-[150px]">
+                          {diagnosticResults.emailSmtp.verified ? 'Socket Ready' : (diagnosticResults.emailSmtp.resendConfigured ? 'Ready via Resend' : 'Development Mode')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 3. ACTION SERVER & GATEWAY CONFIGURATION */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
+              <div className="lg:col-span-5 space-y-6">
               <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
@@ -904,6 +1349,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
               </div>
             </div>
           </div>
+        </div>
         )}
 
         {/* TAB 3: LIVE DETAILED LOGS */}

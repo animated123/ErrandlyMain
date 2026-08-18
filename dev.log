@@ -1,0 +1,17 @@
+
+> errand-runner-app@0.0.0 dev
+> tsx server.ts
+
+[.env] Successfully loaded environment variables from .env file.
+[App Config] Loaded config file app_config.json successfully.
+[Resend] Initialized and ready as fallback.
+[Firebase Admin] Initializing with projectId from config: gen-lang-client-0499210555
+[Server] Initializing Express app...
+[Email] Action Server configured as primary email service: https://gateway.errandly.site
+[Server] Initializing Vite middleware...
+[PostgreSQL] Connection established successfully to 'postgres' on db.hvvhdfucejsuileacvjo.supabase.co:5432
+[Email] SMTP Service Verified: mail.codexict.co.ke:587
+WebSocket server error: Port is already in use
+[Server] Vite middleware initialized.
+Server running on http://localhost:3000
+[PostgreSQL] Tables, constraints, alterations, and seed data checked/configured successfully.

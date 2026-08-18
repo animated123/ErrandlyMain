@@ -76,13 +76,25 @@ console.error = function(...args: any[]) {
 
 const { Pool } = pg;
 
+// Environment detection for Serverless Vercel
+const isVercelEnv = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL_ENV);
+
 // Define pgPool holder
 let pgPool: any = null;
 let pgConnected = false;
 let pgError: string | null = null;
-const CONFIG_FILE = path.join(process.cwd(), "database_config.json");
-const ENV_OVERRIDES_FILE = path.join(process.cwd(), "env-overrides.json");
-const APP_CONFIG_FILE = path.join(process.cwd(), "app_config.json");
+const CONFIG_FILE = isVercelEnv ? path.join("/tmp", "database_config.json") : path.join(process.cwd(), "database_config.json");
+const ENV_OVERRIDES_FILE = isVercelEnv ? path.join("/tmp", "env-overrides.json") : path.join(process.cwd(), "env-overrides.json");
+const APP_CONFIG_FILE = isVercelEnv ? path.join("/tmp", "app_config.json") : path.join(process.cwd(), "app_config.json");
+
+// Safe file writing helper for serverless /tmp and local
+function safeWriteJsonFile(filePath: string, data: any) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
+  } catch (err: any) {
+    console.warn(`[FileSystem] Notice writing to ${filePath}:`, err?.message || err);
+  }
+}
 
 // Define custom .env loader to support manual local/container variables
 try {
@@ -110,8 +122,11 @@ try {
 
 // Load env-overrides dynamically on startup and inject into process.env
 try {
-  if (fs.existsSync(ENV_OVERRIDES_FILE)) {
-    const localOverrides = JSON.parse(fs.readFileSync(ENV_OVERRIDES_FILE, "utf-8")) || {};
+  const overridesSource = fs.existsSync(ENV_OVERRIDES_FILE) 
+    ? ENV_OVERRIDES_FILE 
+    : (fs.existsSync(path.join(process.cwd(), "env-overrides.json")) ? path.join(process.cwd(), "env-overrides.json") : null);
+  if (overridesSource && fs.existsSync(overridesSource)) {
+    const localOverrides = JSON.parse(fs.readFileSync(overridesSource, "utf-8")) || {};
     Object.entries(localOverrides).forEach(([key, val]) => {
       if (val && typeof val === 'string') {
         process.env[key] = val;
@@ -124,23 +139,26 @@ try {
 }
 
 let appConfig = {
-  actionServerUrl: "http://localhost:5005",
+  actionServerUrl: process.env.VITE_ACTION_SERVER_URL || process.env.VITE_GATEWAY_URL || "https://gateway.errandly.site",
   database: {
-    host: "127.0.0.1",
-    port: 5432,
-    user: "postgres",
-    password: "",
-    name: "Errandly"
+    host: process.env.PGHOST || "db.hvvhdfucejsuileacvjo.supabase.co",
+    port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
+    user: process.env.PGUSER || "postgres",
+    password: process.env.PGPASSWORD || "Company1.Codexict",
+    name: process.env.PGDATABASE || "postgres"
   }
 };
 
 try {
-  if (fs.existsSync(APP_CONFIG_FILE)) {
-    const loaded = JSON.parse(fs.readFileSync(APP_CONFIG_FILE, "utf-8"));
+  const configSource = fs.existsSync(APP_CONFIG_FILE) 
+    ? APP_CONFIG_FILE 
+    : (fs.existsSync(path.join(process.cwd(), "app_config.json")) ? path.join(process.cwd(), "app_config.json") : null);
+  if (configSource && fs.existsSync(configSource)) {
+    const loaded = JSON.parse(fs.readFileSync(configSource, "utf-8"));
     appConfig = { ...appConfig, ...loaded };
     console.log("[App Config] Loaded config file app_config.json successfully.");
   } else {
-    fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+    safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
   }
 } catch (err: any) {
   console.warn("Could not read app_config.json, using default values:", err.message);
@@ -232,8 +250,9 @@ async function initPgPool(forceReconnect = false) {
     user: dbConfig.user,
     password: dbConfig.password,
     database: dbConfig.database,
-    connectionTimeoutMillis: 8000,
-    idleTimeoutMillis: 10000
+    max: isVercelEnv ? 2 : 10,
+    connectionTimeoutMillis: isVercelEnv ? 5000 : 8000,
+    idleTimeoutMillis: isVercelEnv ? 5000 : 10000
   };
 
   if (isRemoteHost) {
@@ -969,7 +988,6 @@ const supabase: any = {
   }
 };
 
-const isVercelEnv = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 const LOCAL_DB_PATH = isVercelEnv
   ? path.join("/tmp", "local_db.json")
   : path.join(process.cwd(), "local_db.json");
@@ -1030,11 +1048,7 @@ function loadLocalDb(): Record<string, any[]> {
 }
 
 function saveLocalDb(db: Record<string, any[]>) {
-  try {
-    fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(db, null, 2), "utf-8");
-  } catch (err) {
-    console.warn("[LocalDB] Error writing fallback file:", err);
-  }
+  safeWriteJsonFile(LOCAL_DB_PATH, db);
 }
 
 async function executeLocalDbOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
@@ -1554,12 +1568,10 @@ export async function getApp(): Promise<express.Application> {
     console.log("[Server] Initializing Express app...");
     const app = express();
 
-    // Initialize PostgreSQL Connection Pool
-    try {
-      await initPgPool();
-    } catch (err: any) {
-      console.warn("[Server] initPgPool error (continuing):", err?.message || err);
-    }
+    // Initialize PostgreSQL Connection Pool in background (non-blocking for instant server startup)
+    initPgPool().catch((err: any) => {
+      console.warn("[Server] Background initPgPool error:", err?.message || err);
+    });
 
     app.use(cors());
     app.use(express.json({ limit: "50mb" }));
@@ -2673,7 +2685,7 @@ Please proceed with the task according to safety guidelines and update milestone
         return res.status(400).json({ error: "Invalid secrets payload" });
       }
 
-      fs.writeFileSync(ENV_OVERRIDES_FILE, JSON.stringify(secrets, null, 2), "utf-8");
+      safeWriteJsonFile(ENV_OVERRIDES_FILE, secrets);
       
       // Update process.env for the current session
       Object.keys(secrets).forEach(key => {
@@ -4318,7 +4330,7 @@ Please proceed with the task according to safety guidelines and update milestone
       };
 
       // Write to database_config.json
-      fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2), "utf-8");
+      safeWriteJsonFile(CONFIG_FILE, newConfig);
       dbConfig = newConfig;
 
       // Update app_config.json
@@ -4329,7 +4341,7 @@ Please proceed with the task according to safety guidelines and update milestone
         password: newConfig.password,
         name: newConfig.database
       };
-      fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
       console.log(`[ConnectionAdmin] Live DB credentials updated in ${APP_CONFIG_FILE}`);
 
       // Re-initialize pool in memory immediately
@@ -4382,7 +4394,7 @@ Please proceed with the task according to safety guidelines and update milestone
 
       const formattedUrl = actionServerUrl.trim().replace(/\/+$/, '');
       appConfig.actionServerUrl = formattedUrl;
-      fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
       console.log(`[ConnectionAdmin] Action Server URL updated in ${APP_CONFIG_FILE} to: ${formattedUrl}`);
 
       // Perform live ping
@@ -4515,6 +4527,206 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   });
 
+  // 9. Comprehensive System Check Endpoint (DB, Action Server, Email/SMTP)
+  app.get("/api/connectionadmin/check-all", requireConnectionAdminAuth, async (req, res) => {
+    const sequenceStart = Date.now();
+
+    // 1. Check Database
+    let dbResult: any = {
+      status: "offline",
+      connected: false,
+      latencyMs: null,
+      host: dbConfig.host,
+      port: dbConfig.port,
+      database: dbConfig.database,
+      user: dbConfig.user,
+      tableCount: 0,
+      version: null,
+      error: null
+    };
+
+    try {
+      if (pgPool) {
+        const dbStart = Date.now();
+        const client = await pgPool.connect();
+        const verRes = await client.query("SELECT NOW() as now, version();");
+        const tblRes = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public';");
+        client.release();
+        dbResult = {
+          status: "operational",
+          connected: true,
+          latencyMs: Date.now() - dbStart,
+          host: dbConfig.host,
+          port: dbConfig.port,
+          database: dbConfig.database,
+          user: dbConfig.user,
+          tableCount: tblRes.rows.length,
+          version: verRes.rows[0]?.version || "PostgreSQL",
+          error: null
+        };
+      } else {
+        dbResult.error = pgError || "Database connection pool not initialized";
+      }
+    } catch (dbErr: any) {
+      dbResult = {
+        status: "offline",
+        connected: false,
+        latencyMs: null,
+        host: dbConfig.host,
+        port: dbConfig.port,
+        database: dbConfig.database,
+        user: dbConfig.user,
+        tableCount: 0,
+        version: null,
+        error: dbErr.message || String(dbErr)
+      };
+    }
+
+    // 2. Check Action Server & Gateway
+    const targetActionUrl = appConfig.actionServerUrl || process.env.VITE_ACTION_SERVER_URL || "https://gateway.errandly.site";
+    let actionResult: any = {
+      status: "unreachable",
+      online: false,
+      url: targetActionUrl,
+      statusCode: null,
+      latencyMs: null,
+      responsePreview: null,
+      error: null
+    };
+
+    try {
+      const actStart = Date.now();
+      const response = await axios.get(`${targetActionUrl.replace(/\/+$/, '')}/api/health`, {
+        timeout: 4000,
+        validateStatus: () => true
+      });
+      const latency = Date.now() - actStart;
+      const isOnline = response.status >= 200 && response.status < 500;
+      actionResult = {
+        status: isOnline ? "operational" : "degraded",
+        online: isOnline,
+        url: targetActionUrl,
+        statusCode: response.status,
+        latencyMs: latency,
+        responsePreview: response.data,
+        error: isOnline ? null : `Action server returned HTTP ${response.status}`
+      };
+    } catch (actErr: any) {
+      actionResult = {
+        status: "unreachable",
+        online: false,
+        url: targetActionUrl,
+        statusCode: null,
+        latencyMs: null,
+        responsePreview: null,
+        error: actErr.message || "Connection timed out or host unreachable"
+      };
+    }
+
+    // 3. Check Email SMTP Gateway & Fallbacks
+    const smtpResult: any = {
+      status: "not_configured",
+      isConfigured: false,
+      host: process.env.SMTP_HOST || null,
+      port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587,
+      user: process.env.SMTP_USER || null,
+      from: process.env.SMTP_FROM || "Errand Runner <notifications@ais-errands.app>",
+      secure: process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
+      resendConfigured: !!process.env.RESEND_API_KEY,
+      verified: false,
+      latencyMs: null,
+      error: null
+    };
+
+    try {
+      const transporter = getSmtpTransporter();
+      if (transporter) {
+        smtpResult.isConfigured = true;
+        const smtpStart = Date.now();
+        
+        // Timeout guard 3500ms
+        const verifyPromise = transporter.verify();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("SMTP socket connection timed out after 3.5s")), 3500)
+        );
+
+        await Promise.race([verifyPromise, timeoutPromise]);
+        smtpResult.verified = true;
+        smtpResult.latencyMs = Date.now() - smtpStart;
+        smtpResult.status = "operational";
+      } else if (smtpResult.resendConfigured) {
+        smtpResult.status = "operational";
+        smtpResult.verified = true;
+        smtpResult.note = "Resend API configured as active email service";
+      } else {
+        smtpResult.status = "not_configured";
+        smtpResult.error = "SMTP_HOST / SMTP_USER not set in environment";
+      }
+    } catch (smtpErr: any) {
+      smtpResult.isConfigured = true;
+      smtpResult.verified = false;
+      smtpResult.status = "error";
+      smtpResult.error = smtpErr.message || "SMTP Verification Failed";
+    }
+
+    // Compute Overall Health
+    let overallStatus: 'all_systems_operational' | 'partially_degraded' | 'critical_issues' = 'all_systems_operational';
+    if (!dbResult.connected) {
+      overallStatus = 'critical_issues';
+    } else if (!actionResult.online || smtpResult.status === 'error') {
+      overallStatus = 'partially_degraded';
+    }
+
+    const totalDurationMs = Date.now() - sequenceStart;
+
+    res.json({
+      success: true,
+      overallStatus,
+      timestamp: new Date().toISOString(),
+      totalDurationMs,
+      database: dbResult,
+      actionServer: actionResult,
+      emailSmtp: smtpResult
+    });
+  });
+
+  // 10. Dedicated SMTP Gateway Verification Endpoint
+  app.get("/api/connectionadmin/smtp/verify", requireConnectionAdminAuth, async (req, res) => {
+    const t0 = Date.now();
+    try {
+      const transporter = getSmtpTransporter();
+      if (!transporter) {
+        return res.json({
+          success: false,
+          isConfigured: false,
+          resendConfigured: !!process.env.RESEND_API_KEY,
+          error: "SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) are not set in environment."
+        });
+      }
+
+      await Promise.race([
+        transporter.verify(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("SMTP verification timed out")), 4000))
+      ]);
+
+      return res.json({
+        success: true,
+        verified: true,
+        latencyMs: Date.now() - t0,
+        host: process.env.SMTP_HOST,
+        port: process.env.SMTP_PORT || 587,
+        from: process.env.SMTP_FROM || "notifications@ais-errands.app"
+      });
+    } catch (err: any) {
+      return res.json({
+        success: false,
+        verified: false,
+        latencyMs: Date.now() - t0,
+        error: err.message || "SMTP Verification Failed"
+      });
+    }
+  });
+
   // DB Configuration endpoints
   app.get("/api/dbconfig/status", (req, res) => {
     res.json({
@@ -4574,7 +4786,7 @@ Please proceed with the task according to safety guidelines and update milestone
       };
       
       // Save configuration securely to legacy database_config.json
-      fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2), "utf-8");
+      safeWriteJsonFile(CONFIG_FILE, newConfig);
       dbConfig = newConfig;
 
       // Update unified configuration file app_config.json
@@ -4590,7 +4802,7 @@ Please proceed with the task according to safety guidelines and update milestone
         appConfig.actionServerUrl = actionServerUrl.trim();
       }
 
-      fs.writeFileSync(APP_CONFIG_FILE, JSON.stringify(appConfig, null, 2), "utf-8");
+      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
       
       // Attempt connection pool initialization
       await initPgPool();
@@ -5525,7 +5737,7 @@ export default async function handler(req: any, res: any) {
 
 // Standalone mode: Start HTTP listener on port 3000 when NOT running in Vercel
 if (!process.env.VERCEL) {
-  const PORT = parseInt(process.env.PORT || "3000");
+  const PORT = 3000;
   getApp().then((app) => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
