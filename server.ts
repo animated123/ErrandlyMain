@@ -4187,18 +4187,41 @@ Please proceed with the task according to safety guidelines and update milestone
   // =========================================================================
 
   const requireConnectionAdminAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    // Open administrative access
-    return next();
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ success: false, error: "Unauthorized: Admin authorization token required." });
+    }
+    const token = authHeader.split(" ")[1];
+    try {
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || "errand_runner_secret_key_2026");
+      if (decoded && decoded.role === 'connectionadmin' && decoded.authorized) {
+        return next();
+      }
+      return res.status(403).json({ success: false, error: "Forbidden: Invalid Connection Admin credentials." });
+    } catch (err: any) {
+      return res.status(401).json({ success: false, error: "Unauthorized: Invalid or expired token." });
+    }
   };
 
-  // 1. Connection Admin Authentication Endpoint (Open Access)
-  app.all("/api/connectionadmin/auth", (req, res) => {
+  // 1. Connection Admin Authentication Endpoint (Guarded by CONNECTIONADMIN_PASSWORD)
+  app.post("/api/connectionadmin/auth", (req, res) => {
+    const { password } = req.body || {};
+    const expectedPassword = (process.env.CONNECTIONADMIN_PASSWORD || "Admin@Errandly2026!").trim();
+    
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({ success: false, error: "Password is required." });
+    }
+
+    if (password.trim() !== expectedPassword) {
+      return res.status(401).json({ success: false, error: "Invalid password. Access denied." });
+    }
+
     const token = jwt.sign(
       { role: 'connectionadmin', authorized: true, timestamp: Date.now() },
       process.env.JWT_SECRET || "errand_runner_secret_key_2026",
       { expiresIn: '7d' }
     );
-    return res.json({ success: true, token, message: "Connection Admin open access enabled" });
+    return res.json({ success: true, token, message: "Connection Admin authenticated successfully" });
   });
 
   // 2. Comprehensive Status (DB, Action Server, Config, Server Diagnostics)
@@ -4727,23 +4750,6 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   });
 
-  // DB Configuration endpoints
-  app.get("/api/dbconfig/status", (req, res) => {
-    res.json({
-      connected: pgConnected,
-      config: {
-        host: dbConfig.host,
-        port: dbConfig.port,
-        user: dbConfig.user,
-        database: dbConfig.database,
-        hasPassword: !!dbConfig.password
-      },
-      actionServerUrl: appConfig.actionServerUrl,
-      error: pgError,
-      forceDatabaseMode
-    });
-  });
-
   // Real-time server diagnostics logging & database mode overrides
   app.get("/api/admin/logs", (req, res) => {
     res.json({ logs: capturedLogs });
@@ -4767,93 +4773,6 @@ Please proceed with the task according to safety guidelines and update milestone
     }
     console.log(`[Admin Override] Database forced-mode setting updated. Forced: ${forceDatabaseMode}`);
     res.json({ success: true, forceDatabaseMode });
-  });
-
-  app.post("/api/dbconfig/save", async (req, res) => {
-    try {
-      const { host, port, user, password, database, actionServerUrl } = req.body;
-      
-      if (!host || !port || !user || !database) {
-        return res.status(400).json({ error: "Missing required configuration fields" });
-      }
-      
-      const newConfig = {
-        host: host.trim(),
-        port: parseInt(port),
-        user: user.trim(),
-        password: password ? password.trim() : "",
-        database: database.trim()
-      };
-      
-      // Save configuration securely to legacy database_config.json
-      safeWriteJsonFile(CONFIG_FILE, newConfig);
-      dbConfig = newConfig;
-
-      // Update unified configuration file app_config.json
-      appConfig.database = {
-        host: newConfig.host,
-        port: newConfig.port,
-        user: newConfig.user,
-        password: newConfig.password,
-        name: newConfig.database
-      };
-
-      if (actionServerUrl !== undefined) {
-        appConfig.actionServerUrl = actionServerUrl.trim();
-      }
-
-      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
-      
-      // Attempt connection pool initialization
-      await initPgPool();
-      
-      res.json({
-        success: pgConnected,
-        connected: pgConnected,
-        actionServerUrl: appConfig.actionServerUrl,
-        error: pgError
-      });
-    } catch (err: any) {
-      console.error("[DbConfig Exception] Error during post save configuration:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/dbconfig/test-query", async (req, res) => {
-    try {
-      const { sql } = req.body;
-      const testSql = sql || "SELECT NOW() as current_time";
-      
-      if (!pgPool || !pgConnected) {
-        return res.status(200).json({ 
-          success: false, 
-          connected: pgConnected,
-          error: pgError || "Database connection pool is offline" 
-        });
-      }
-      
-      const client = await pgPool.connect();
-      try {
-        const result = await client.query(testSql);
-        client.release();
-        res.json({
-          success: true,
-          connected: pgConnected,
-          rows: result.rows,
-          rowCount: result.rowCount,
-          fields: result.fields?.map(f => f.name) || []
-        });
-      } catch (queryErr: any) {
-        client.release();
-        res.json({
-          success: false,
-          connected: pgConnected,
-          error: queryErr.message
-        });
-      }
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
   });
 
   // =========================================================================
@@ -5686,14 +5605,7 @@ Please proceed with the task according to safety guidelines and update milestone
         const vite = await createViteServer({
           server: {
             middlewareMode: true,
-            allowedHosts: [
-              'errandlymain.onrender.com',
-              '.onrender.com',
-              'errandly.site',
-              '.errandly.site',
-              'localhost',
-              '127.0.0.1'
-            ]
+            allowedHosts: true
           },
           appType: "spa",
         });

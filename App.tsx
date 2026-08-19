@@ -61,7 +61,6 @@ import RunnerRegistrationModal from './src/components/RunnerRegistrationModal';
 import { FAQModal, PrivacyPolicyModal } from './src/components/LegalModals';
 import { LandingPage } from './src/components/LandingPage';
 import RunnerApplicationPage from './src/components/RunnerApplicationPage';
-import DbConfigPage from './src/components/DbConfigPage';
 import ConnectionAdminPage from './src/components/ConnectionAdminPage';
 
 // Mock Gemini call for static run
@@ -933,18 +932,10 @@ export default function App() {
     }
   };
 
-  if (currentPath === '/connectionadmin' || currentPath.startsWith('/connectionadmin')) {
+  if (currentPath === '/connectionadmin' || currentPath.startsWith('/connectionadmin') || currentPath === '/dbconfig') {
     return (
       <ErrorBoundary>
         <ConnectionAdminPage onBackToHome={() => navigateTo('/')} />
-      </ErrorBoundary>
-    );
-  }
-
-  if (currentPath === '/dbconfig') {
-    return (
-      <ErrorBoundary>
-        <DbConfigPage />
       </ErrorBoundary>
     );
   }
@@ -1078,9 +1069,9 @@ export default function App() {
             </motion.div>
           )}
 
-          <div className="max-w-7xl mx-auto space-y-3 px-4 md:px-6">
+          <div className="max-w-7xl mx-auto space-y-6 md:space-y-8 px-4 sm:px-6 md:px-8">
             {activeTab === 'dashboard' && (
-          <div className="space-y-6 pb-12">
+          <div className="space-y-8 pb-16">
             {/* Hero Section */}
             <div className="relative group">
               <div className="absolute inset-0 bg-gradient-to-br from-primary via-primary/50 to-secondary/30 rounded-[2rem] md:rounded-[2.5rem] blur-3xl opacity-10 group-hover:opacity-20 transition-opacity duration-700"></div>
@@ -1810,7 +1801,7 @@ export default function App() {
           </div>
         )}
         {activeTab === 'active' && (
-           <div className="w-full max-w-xl md:max-w-4xl lg:max-w-5xl mx-auto pb-12 px-4">
+           <div className="w-full max-w-7xl mx-auto pb-16 px-4 md:px-6">
             {!user ? (
               <div className="bg-card text-card-foreground rounded-3xl p-8 border border-border shadow-strong text-center animate-in fade-in zoom-in-95 mt-8">
                 <div 
@@ -3326,20 +3317,20 @@ const AdminPanelLocal: React.FC<{
   // Synchronize DB status & Forced database mode
   const fetchDbStatus = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/dbconfig/status`);
+      const res = await fetch(`${API_BASE_URL}/api/admin/config-status`);
       if (res.ok) {
         const data = await res.json();
         setDbStatus({
-          connected: data.connected,
-          config: data.config,
-          error: data.error,
-          forceDatabaseMode: data.forceDatabaseMode
+          connected: data.databaseConnected || false,
+          config: data.database || null,
+          error: data.databaseError || null,
+          forceDatabaseMode: data.forceDatabaseMode || false
         });
-        if (data.config) {
-          setDbHost(data.config.host || '');
-          setDbPort(String(data.config.port || '5432'));
-          setDbUser(data.config.user || '');
-          setDbName(data.config.database || '');
+        if (data.database) {
+          setDbHost(data.database.host || '');
+          setDbPort(String(data.database.port || '5432'));
+          setDbUser(data.database.user || '');
+          setDbName(data.database.database || '');
         }
         if (data.actionServerUrl) {
           setActionServerUrlVal(data.actionServerUrl);
@@ -4668,24 +4659,26 @@ const AdminPanelLocal: React.FC<{
                         onClick={async () => {
                           try {
                             setIsSavingDbConfig(true);
-                            const res = await fetch(`${API_BASE_URL}/api/dbconfig/save`, {
+                            const res = await fetch(`${API_BASE_URL}/api/connectionadmin/db/update`, {
                               method: "POST",
-                              headers: { "Content-Type": "application/json" },
+                              headers: { 
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${sessionStorage.getItem('connectionadmin_token') || ''}`
+                              },
                               body: JSON.stringify({
                                 host: dbHost,
                                 port: parseInt(dbPort) || 5432,
                                 user: dbUser,
                                 password: dbPassword,
-                                database: dbName,
-                                actionServerUrl: actionServerUrlVal
+                                database: dbName
                               })
                             });
                             const result = await res.json();
-                            if (res.ok) {
+                            if (res.ok && result.success) {
                               alert("Database configuration updated and re-verified successfully on the server pool!");
                               await fetchDbStatus();
                             } else {
-                              alert("Failed to reconnect: " + (result.error || "Unknown server error"));
+                              alert("Failed to update database: " + (result.error || "Unknown server error"));
                             }
                           } catch (err: any) {
                             alert("Exception during save: " + err.message);

@@ -10,13 +10,6 @@ export default defineConfig({
   ],
   server: {
     hmr: false,
-    allowedHosts: [
-      'errandlymain.onrender.com',
-      '.onrender.com',
-      'errandly.site',
-      '.errandly.site',
-      'localhost',
-      '127.0.0.1'
-    ],
+    allowedHosts: true,
   },
 })

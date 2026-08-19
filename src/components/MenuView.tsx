@@ -20,81 +20,89 @@ export default function MenuView({ listings, onSelect, isLoading }: MenuViewProp
   ];
 
   return (
-    <div className="space-y-4 pb-12">
-      <div className="px-2">
-        <h2 className="text-lg font-black text-foreground tracking-tight">Services</h2>
-        <p className="text-xs font-black text-muted-foreground tracking-normal font-medium">Browse available services</p>
+    <div className="space-y-6 md:space-y-8 pb-16">
+      <div className="px-3 md:px-4">
+        <h2 className="text-2xl md:text-3xl font-black text-foreground tracking-tight font-display">Services Catalogue</h2>
+        <p className="text-sm font-medium text-muted-foreground mt-1">Browse pre-priced professional errands and on-demand local assistance</p>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar px-2">
+      <div className="flex gap-3 md:gap-4 overflow-x-auto pb-3 no-scrollbar px-3 md:px-4">
         {categories.map((cat) => {
           const Icon = cat.icon;
           return (
             <button
               key={cat.id}
-              className="flex-shrink-0 px-5 py-4 bg-card text-card-foreground rounded-2xl border border-border text-muted-foreground hover:border-indigo-100 hover:text-secondary group transition-all flex flex-col items-center gap-2 min-w-[80px]"
+              className="flex-shrink-0 px-6 py-4 bg-card text-card-foreground rounded-2xl border border-border/80 text-muted-foreground hover:border-primary/40 hover:text-foreground group transition-all flex flex-col items-center gap-2.5 min-w-[100px] shadow-sm hover:shadow-md"
             >
-              <div className="w-10 h-10 bg-slate-50 dark:bg-slate-800 rounded-xl flex items-center justify-center group-hover:bg-secondary group-hover:text-white transition-all shadow-sm">
-                <Icon size={18} className="text-primary group-hover:text-inherit" />
+              <div className="w-12 h-12 bg-secondary rounded-xl flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-all shadow-inner">
+                <Icon size={20} className="text-primary group-hover:text-white transition-colors" />
               </div>
-              <span className="text-[10px] font-black uppercase tracking-wider whitespace-nowrap">{cat.label}</span>
+              <span className="text-xs font-bold tracking-tight whitespace-nowrap">{cat.label}</span>
             </button>
           );
         })}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 px-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-6 px-3 md:px-4">
         {isLoading ? (
-          [1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-            <div key={`skeleton-listing-${i}`} className="bg-card text-card-foreground p-3 rounded-2xl border border-border shadow-sm">
-              <div className="flex items-center justify-between mb-2">
-                <Skeleton className="w-8 h-8 rounded-xl" />
-                <Skeleton className="w-16 h-5 rounded-full" />
+          [1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={`skeleton-listing-${i}`} className="bg-card text-card-foreground p-6 rounded-3xl border border-border shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <Skeleton className="w-12 h-12 rounded-2xl" />
+                <Skeleton className="w-24 h-7 rounded-full" />
               </div>
-              <Skeleton className="w-3/4 h-5 mb-1" />
-              <Skeleton className="w-full h-3 mb-1" />
-              <div className="flex items-center justify-between pt-2 border-t border-slate-50">
-                <Skeleton className="w-16 h-3" />
-                <Skeleton className="w-6 h-6 rounded-lg" />
+              <Skeleton className="w-3/4 h-6" />
+              <Skeleton className="w-full h-4" />
+              <div className="flex items-center justify-between pt-3 border-t border-border/50">
+                <Skeleton className="w-16 h-4" />
+                <Skeleton className="w-8 h-8 rounded-xl" />
               </div>
             </div>
           ))
         ) : listings.length === 0 ? (
-          <div className="col-span-full p-20 text-center bg-card text-card-foreground rounded-[3rem] border border-border shadow-sm">
-            <Sparkles size={48} className="mx-auto mb-4 text-muted-foreground/50" />
-            <h3 className="text-xl font-black text-foreground mb-1">No services found</h3>
-            <p className="text-sm font-bold text-muted-foreground">Try adjusting your filters or search.</p>
+          <div className="col-span-full p-16 md:p-24 text-center bg-card text-card-foreground rounded-[2.5rem] border border-border shadow-sm max-w-2xl mx-auto my-6">
+            <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4 text-primary">
+              <Sparkles size={32} />
+            </div>
+            <h3 className="text-2xl font-black text-foreground mb-2 font-display">No services found</h3>
+            <p className="text-sm font-medium text-muted-foreground">Try adjusting your filters or search to view available service listings.</p>
           </div>
         ) : (
           listings.map((listing) => (
             <div 
               key={listing.id}
               onClick={() => onSelect(listing)}
-              className="bg-card text-card-foreground p-3 rounded-2xl border border-border shadow-sm hover:shadow-md hover:border-indigo-100 transition-all group cursor-pointer flex flex-col gap-2"
+              className="bg-card text-card-foreground p-6 rounded-3xl border border-border/80 shadow-sm hover:shadow-xl hover:border-primary/40 transition-all duration-300 group cursor-pointer flex flex-col justify-between gap-4"
             >
-              <div className="flex items-center justify-between">
-                <div className="w-8 h-8 bg-indigo-50 rounded-xl flex items-center justify-center">
-                  <ShoppingBag className="text-indigo-600" size={16} />
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary group-hover:bg-primary group-hover:text-white transition-all shadow-inner">
+                    <ShoppingBag size={20} />
+                  </div>
+                  <div className="bg-emerald-500/10 dark:bg-emerald-950/40 px-3.5 py-1.5 rounded-full text-xs font-black text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    KSH {listing.price?.toLocaleString?.() ?? listing.price}
+                  </div>
                 </div>
-                <div className="bg-emerald-50 px-2 py-0.5 rounded-full text-sm font-black text-emerald-600 tracking-normal font-medium">
-                  KSH {listing.price}
+                
+                <div className="pt-1">
+                  <h3 className="text-base font-black text-foreground tracking-tight group-hover:text-primary transition-colors line-clamp-1 font-display">
+                    {listing.title}
+                  </h3>
+                  <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed mt-1 font-medium">
+                    {listing.description}
+                  </p>
                 </div>
               </div>
-              <div>
-                <h3 className="text-sm font-black text-foreground tracking-tight group-hover:text-indigo-600 transition-colors truncate">
-                  {listing.title}
-                </h3>
-                <p className="text-sm font-bold text-muted-foreground line-clamp-1">
-                  {listing.description}
-                </p>
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-slate-50">
-                <div className="flex items-center gap-1 text-amber-500">
-                  <Star size={16} fill="currentColor" />
-                  <span className="text-xs font-black tracking-normal font-medium">4.8</span>
+
+              <div className="flex items-center justify-between pt-3 border-t border-border/50 mt-1">
+                <div className="flex items-center gap-1.5 text-amber-500">
+                  <Star size={15} fill="currentColor" />
+                  <span className="text-xs font-black text-foreground">4.8</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">(24)</span>
                 </div>
-                <button className="p-1.5 bg-black text-white rounded-lg hover:scale-110 transition-transform active:scale-95">
-                  <Plus size={16} />
+                <button className="px-3 py-1.5 bg-primary text-white rounded-xl hover:bg-primary/90 transition-all text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95">
+                  <Plus size={14} />
+                  <span>Book</span>
                 </button>
               </div>
             </div>

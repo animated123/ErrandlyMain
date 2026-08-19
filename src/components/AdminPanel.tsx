@@ -249,13 +249,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     if (activeTab === 'action-server') {
       const fetchDbStatus = async () => {
         try {
-          const res = await fetch(`${API_BASE_URL}/api/dbconfig/status`);
+          const res = await fetch(`${API_BASE_URL}/api/admin/config-status`);
           if (res.ok) {
             const data = await res.json();
             setDbStatus({
-              connected: data.connected,
-              config: data.config,
-              error: data.error
+              connected: data.databaseConnected || false,
+              config: data.database || null,
+              error: data.databaseError || null
             });
           }
         } catch (err: any) {
@@ -2112,13 +2112,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                       onClick={async () => {
                         try {
                           setIsTestingDbConnection(true);
-                          const res = await fetch(`${API_BASE_URL}/api/dbconfig/status`);
+                          const res = await fetch(`${API_BASE_URL}/api/admin/config-status`);
                           if (res.ok) {
                             const data = await res.json();
                             setDbStatus({
-                              connected: data.connected,
-                              config: data.config,
-                              error: data.error
+                              connected: data.databaseConnected || false,
+                              config: data.database || null,
+                              error: data.databaseError || null
                             });
                           }
                         } catch (err: any) {

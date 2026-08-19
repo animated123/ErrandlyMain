@@ -5,7 +5,7 @@ import {
   Trash2, Eye, EyeOff, Save, Globe, Cpu, AlertTriangle, 
   ArrowLeft, Send, Search, Copy, Check, ExternalLink, HardDrive, 
   Layers, Clock, Filter, Radio, Mail, Zap, CheckCheck, Wifi, 
-  Gauge, ShieldCheck, HelpCircle, ChevronRight, Sparkles
+  Gauge, ShieldCheck, HelpCircle, ChevronRight, Sparkles, Key, AlertCircle
 } from 'lucide-react';
 
 export interface CheckAllSystemsResult {
@@ -105,15 +105,20 @@ interface LogEntry {
 }
 
 export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: () => void }) {
-  // Auth state (Open access)
-  const [isAuthenticated] = useState<boolean>(true);
+  // Auth state (Guarded by CONNECTIONADMIN_PASSWORD in .env)
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return !!sessionStorage.getItem('connectionadmin_token');
+  });
+  const [passwordInput, setPasswordInput] = useState('');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
 
   // Active navigation tab
   const [activeTab, setActiveTab] = useState<'db' | 'actionserver' | 'logs' | 'query' | 'apicall'>('actionserver');
 
   // Overall status data
   const [status, setStatus] = useState<ConnectionAdminStatus | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [loadingStatus, setLoadingStatus] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
@@ -202,11 +207,46 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   };
 
   const getAuthHeaders = (): Record<string, string> => {
-    const token = sessionStorage.getItem('connectionadmin_token') || 'open_access';
+    const token = sessionStorage.getItem('connectionadmin_token') || '';
     return {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`
     };
+  };
+
+  // Login handler
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordInput.trim()) {
+      setAuthError('Please enter the Connection Admin password.');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const { ok, status: statusCode, data } = await safeFetchJson('/api/connectionadmin/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordInput })
+      });
+      if (ok && data.success && data.token) {
+        sessionStorage.setItem('connectionadmin_token', data.token);
+        setIsAuthenticated(true);
+        setPasswordInput('');
+      } else {
+        setAuthError(data.error || `Authentication failed (HTTP ${statusCode})`);
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Network error during login');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('connectionadmin_token');
+    setIsAuthenticated(false);
+    setStatus(null);
   };
 
   // Fetch complete status
@@ -477,6 +517,69 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   });
 
   // Main Console View
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white flex flex-col justify-center items-center px-4">
+        <div className="w-full max-w-md bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-xl space-y-6">
+          <div className="text-center space-y-2">
+            <div className="inline-flex p-3 bg-indigo-600/20 border border-indigo-500/40 rounded-2xl text-indigo-400 mb-2">
+              <Key className="w-8 h-8" />
+            </div>
+            <h1 className="text-xl font-black tracking-tight text-white">/connectionadmin</h1>
+            <p className="text-xs text-slate-400">
+              Enter the master Connection Admin password configured in your environment to access infrastructure settings.
+            </p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Admin Password
+              </label>
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                placeholder="••••••••••••••••"
+                className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-200 outline-none focus:border-indigo-500 transition font-mono"
+                autoFocus
+              />
+            </div>
+
+            {authError && (
+              <div className="p-3 bg-red-950/60 border border-red-800 rounded-xl text-xs text-red-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{authError}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition shadow-lg shadow-indigo-600/30 disabled:opacity-50"
+            >
+              {authLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+              {authLoading ? 'Verifying...' : 'Unlock Control Room'}
+            </button>
+          </form>
+
+          <div className="pt-2 text-center">
+            <button
+              onClick={() => {
+                if (onBackToHome) onBackToHome();
+                else window.location.href = '/';
+              }}
+              className="text-xs text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5 mx-auto transition"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Return to App
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white pb-20">
       {/* Top Navigation Header */}
@@ -527,6 +630,15 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />
               Refresh
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="px-3.5 py-1.5 bg-red-950/50 hover:bg-red-900/60 text-red-300 border border-red-800/50 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+              title="Lock and Log Out"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              Lock
             </button>
 
             <button

@@ -306,10 +306,10 @@ Additional Info: ${errandForm.additionalRequirements || 'None'}`;
   };
 
   return (
-    <div className="space-y-4 pb-12">
+    <div className="space-y-6 md:space-y-8 pb-16">
       <div className="px-2">
-        <h2 className="text-lg font-black text-foreground tracking-tight">Create Errand</h2>
-        <p className="text-xs font-black text-muted-foreground tracking-normal font-medium">Tell us what you need help with</p>
+        <h2 className="text-2xl md:text-3xl font-black text-foreground tracking-tight font-display">Create an Errand</h2>
+        <p className="text-sm font-medium text-muted-foreground mt-1">Tell us what you need done and connect with trusted Nairobi runners</p>
       </div>
 
       {drafts.length > 0 && (
