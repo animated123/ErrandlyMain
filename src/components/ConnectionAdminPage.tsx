@@ -104,6 +104,62 @@ interface LogEntry {
   message: string;
 }
 
+export interface SyncTableItem {
+  tableName: string;
+  primaryCount: number;
+  localCount: number;
+  jsonCount: number;
+  inSync: boolean;
+  mismatchesDetected: number;
+  recordsReconciled: number;
+  status: 'synchronized' | 'reconciled' | 'mismatch_detected' | 'offline';
+  discrepancy: string | null;
+  lastSyncedAt: string;
+}
+
+export interface SyncAuditLog {
+  id: string;
+  timestamp: string;
+  table: string;
+  action: string;
+  recordsCount: number;
+  status: 'success' | 'warning' | 'error';
+  details: string;
+}
+
+export interface SyncStatusResponse {
+  success: boolean;
+  synced: boolean;
+  mismatchesDetected: number;
+  recordsReconciled: number;
+  tables: SyncTableItem[];
+  durationMs: number;
+  timestamp: string;
+  auditLogs: SyncAuditLog[];
+  autoSyncIntervalSeconds: number;
+  autoSyncEnabled: boolean;
+  sources: {
+    primary: {
+      connected: boolean;
+      host: string;
+      port: number;
+      database: string;
+      totalRecords: number;
+    };
+    localPg: {
+      connected: boolean;
+      host: string;
+      port: number;
+      database: string;
+      totalRecords: number;
+    };
+    json: {
+      active: boolean;
+      totalRecords: number;
+    };
+  };
+}
+
 export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: () => void }) {
   // Auth state (Guarded by CONNECTIONADMIN_PASSWORD in .env)
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -114,13 +170,23 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [authLoading, setAuthLoading] = useState(false);
 
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'db' | 'actionserver' | 'logs' | 'query' | 'apicall'>('actionserver');
+  const [activeTab, setActiveTab] = useState<'db' | 'actionserver' | 'logs' | 'query' | 'apicall' | 'sync'>('sync');
 
   // Overall status data
   const [status, setStatus] = useState<ConnectionAdminStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+
+  // Database Synchronization State
+  const [syncStatus, setSyncStatus] = useState<SyncStatusResponse | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncTriggering, setSyncTriggering] = useState(false);
+  const [syncingTable, setSyncingTable] = useState<string | null>(null);
+  const [syncFilter, setSyncFilter] = useState<'all' | 'mismatched' | 'synced'>('all');
+  const [syncSearch, setSyncSearch] = useState('');
+  const [syncMsg, setSyncMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [autoRefreshSync, setAutoRefreshSync] = useState(true);
 
   // Check All Systems Diagnostic State
   const [diagnosticLoading, setDiagnosticLoading] = useState(false);
@@ -281,6 +347,81 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       setLoadingStatus(false);
     }
   }, []);
+
+  // DB Sync Status Fetcher & Auto-Reconcile Handlers
+  const fetchSyncStatus = useCallback(async (autoHeal = true) => {
+    setSyncLoading(true);
+    try {
+      const { ok, data } = await safeFetchJson(`/api/connectionadmin/sync/status?autoHeal=${autoHeal}`, {
+        headers: getAuthHeaders()
+      });
+      if (ok && data) {
+        setSyncStatus(data as SyncStatusResponse);
+      }
+    } catch (err: any) {
+      console.warn("Failed to fetch sync status:", err);
+    } finally {
+      setSyncLoading(false);
+    }
+  }, []);
+
+  const handleTriggerFullSync = async () => {
+    setSyncTriggering(true);
+    setSyncMsg(null);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/sync/trigger', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({})
+      });
+      if (ok && data) {
+        setSyncStatus(data as SyncStatusResponse);
+        setSyncMsg({
+          type: 'success',
+          text: `Full bi-directional synchronization complete: ${data.recordsReconciled} records reconciled across ${data.tables?.length || 0} tables.`
+        });
+      } else {
+        setSyncMsg({ type: 'error', text: data.error || 'Failed to trigger synchronization.' });
+      }
+    } catch (err: any) {
+      setSyncMsg({ type: 'error', text: err.message || 'Error triggering sync.' });
+    } finally {
+      setSyncTriggering(false);
+      setTimeout(() => setSyncMsg(null), 5000);
+    }
+  };
+
+  const handleSyncSingleTable = async (tableName: string) => {
+    setSyncingTable(tableName);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/sync/table', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ table: tableName })
+      });
+      if (ok && data) {
+        setSyncStatus(data as SyncStatusResponse);
+      }
+    } catch (err) {
+      console.warn("Failed to sync single table:", err);
+    } finally {
+      setSyncingTable(null);
+    }
+  };
+
+  const handleClearSyncAuditLogs = async () => {
+    try {
+      await safeFetchJson('/api/connectionadmin/sync/logs/clear', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      if (syncStatus) {
+        setSyncStatus({ ...syncStatus, auditLogs: [] });
+      }
+    } catch (err) {
+      console.warn("Failed to clear sync logs:", err);
+    }
+  };
 
   // Sequence Diagnostic: Check All Systems (DB, Action Server, SMTP Gateway)
   const handleCheckAllSystems = useCallback(async () => {
@@ -494,8 +635,18 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     if (isAuthenticated) {
       fetchStatus();
       fetchLogs();
+      fetchSyncStatus(true);
     }
-  }, [isAuthenticated, fetchStatus, fetchLogs]);
+  }, [isAuthenticated, fetchStatus, fetchLogs, fetchSyncStatus]);
+
+  // Periodic DB Sync Status Streamer
+  useEffect(() => {
+    if (!isAuthenticated || !autoRefreshSync) return;
+    const interval = setInterval(() => {
+      fetchSyncStatus(true);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, autoRefreshSync, fetchSyncStatus]);
 
   // Periodic log streamer
   useEffect(() => {
@@ -623,6 +774,20 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
               Gateway: {status?.actionServer?.online ? `HTTP ${status.actionServer.statusCode} (${status.actionServer.latencyMs ?? 0}ms)` : 'Unreachable'}
             </div>
 
+            {/* Live Sync Status Badge */}
+            <div 
+              onClick={() => { setActiveTab('sync'); fetchSyncStatus(true); }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border cursor-pointer hover:opacity-90 transition ${
+                syncStatus?.synced 
+                  ? 'bg-emerald-950/60 border-emerald-800/60 text-emerald-300' 
+                  : 'bg-indigo-950/60 border-indigo-800/60 text-indigo-300'
+              }`}
+              title="Click to view database sync status and auto-reconciliation matrix"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncLoading ? 'animate-spin' : ''} text-emerald-400`} />
+              Sync: {syncStatus?.synced ? '100% Synced' : `${syncStatus?.recordsReconciled ?? 0} Reconciled`}
+            </div>
+
             <button
               onClick={() => { fetchStatus(); fetchLogs(); }}
               disabled={loadingStatus}
@@ -716,6 +881,30 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
           >
             <Send className="w-4 h-4" />
             5. Action Server / API Caller
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('sync');
+              fetchSyncStatus(true);
+            }}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shrink-0 ${
+              activeTab === 'sync'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <RefreshCw className={`w-4 h-4 text-emerald-400 ${syncLoading ? 'animate-spin' : ''}`} />
+            6. DB Sync & Auto-Reconcile
+            {syncStatus && (
+              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                syncStatus.synced 
+                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60' 
+                  : 'bg-indigo-950 text-indigo-300 border border-indigo-700/60'
+              }`}>
+                {syncStatus.synced ? '100% Synced' : `${syncStatus.recordsReconciled} Reconciled`}
+              </span>
+            )}
           </button>
         </div>
 
@@ -1906,6 +2095,385 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        )}
+        {/* TAB 6: DB SYNC STATUS & AUTO-RECONCILE */}
+        {activeTab === 'sync' && (
+          <div className="space-y-6">
+            {/* Sync Alert Messages */}
+            {syncMsg && (
+              <div className={`p-4 rounded-2xl border text-xs font-mono flex items-center justify-between animate-fadeIn ${
+                syncMsg.type === 'success'
+                  ? 'bg-emerald-950/70 border-emerald-800 text-emerald-300'
+                  : 'bg-red-950/70 border-red-800 text-red-300'
+              }`}>
+                <div className="flex items-center gap-2">
+                  {syncMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+                  <span>{syncMsg.text}</span>
+                </div>
+                <button onClick={() => setSyncMsg(null)} className="text-slate-400 hover:text-white text-xs font-bold px-2 py-0.5">
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Sync Engine Top Banner Card */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl relative overflow-hidden">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                <div className="flex items-start gap-4">
+                  <div className="p-3.5 bg-emerald-600/20 border border-emerald-500/40 rounded-2xl text-emerald-400 shrink-0">
+                    <RefreshCw className={`w-7 h-7 ${syncLoading || syncTriggering ? 'animate-spin' : ''}`} />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-lg font-black tracking-tight text-white">
+                        Multi-Tier Database Synchronization & Auto-Reconciliation Engine
+                      </h2>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                        syncStatus?.synced 
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/80' 
+                          : 'bg-amber-950 text-amber-300 border border-amber-700/80'
+                      }`}>
+                        {syncStatus?.synced ? 'All Tiers Synchronized' : 'Auto-Healing / Mismatches Reconciled'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 max-w-3xl leading-relaxed">
+                      Continuous background auto-healing checks data parity across Primary PostgreSQL, Local Fallback PostgreSQL, and Resilient Local JSON storage every 25 seconds. Any detected drift is automatically healed using latest timestamp reconciliation.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0 flex-wrap">
+                  <button
+                    onClick={() => fetchSyncStatus(true)}
+                    disabled={syncLoading}
+                    className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 transition active:scale-95 border border-slate-700 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncLoading ? 'animate-spin' : ''}`} />
+                    Check Sync Status
+                  </button>
+
+                  <button
+                    onClick={handleTriggerFullSync}
+                    disabled={syncTriggering}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-emerald-600/30 flex items-center gap-2 transition disabled:opacity-50"
+                  >
+                    {syncTriggering ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Reconciling All Tiers...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3.5 h-3.5" />
+                        Force Full Auto-Sync
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => setAutoRefreshSync(!autoRefreshSync)}
+                    className={`px-3.5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition border ${
+                      autoRefreshSync 
+                        ? 'bg-indigo-950/60 text-indigo-300 border-indigo-700/60' 
+                        : 'bg-slate-900 text-slate-400 border-slate-800'
+                    }`}
+                    title={autoRefreshSync ? 'Live auto-polling active (every 10s)' : 'Auto-polling paused'}
+                  >
+                    <Radio className={`w-3.5 h-3.5 ${autoRefreshSync ? 'text-indigo-400 animate-pulse' : 'text-slate-500'}`} />
+                    {autoRefreshSync ? '10s Auto-Poll ON' : 'Auto-Poll OFF'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 3 Active Tiers Health Card Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800/80">
+                {/* Tier 1: Primary PostgreSQL */}
+                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-4 h-4 text-indigo-400" />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">1. Primary PostgreSQL</span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                      syncStatus?.sources?.primary?.connected 
+                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' 
+                        : 'bg-red-950 text-red-300 border border-red-800'
+                    }`}>
+                      {syncStatus?.sources?.primary?.connected ? 'Online' : 'Offline'}
+                    </span>
+                  </div>
+                  <div className="text-xs space-y-1 text-slate-400 font-mono">
+                    <div className="flex justify-between">
+                      <span>Host:</span>
+                      <span className="text-slate-200 truncate max-w-[130px] font-bold" title={syncStatus?.sources?.primary?.host}>
+                        {syncStatus?.sources?.primary?.host || 'Not configured'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Active Rows:</span>
+                      <span className="text-indigo-300 font-bold">{syncStatus?.sources?.primary?.totalRecords ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tier 2: Fallback Local PostgreSQL */}
+                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Server className="w-4 h-4 text-emerald-400" />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">2. Local PG Fallback</span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                      syncStatus?.sources?.localPg?.connected 
+                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' 
+                        : 'bg-slate-900 text-slate-400 border border-slate-800'
+                    }`}>
+                      {syncStatus?.sources?.localPg?.connected ? 'Active' : 'Standby / Offline'}
+                    </span>
+                  </div>
+                  <div className="text-xs space-y-1 text-slate-400 font-mono">
+                    <div className="flex justify-between">
+                      <span>Host:</span>
+                      <span className="text-slate-200 font-bold">{syncStatus?.sources?.localPg?.host || '127.0.0.1:5432'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Active Rows:</span>
+                      <span className="text-emerald-300 font-bold">{syncStatus?.sources?.localPg?.totalRecords ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tier 3: Local JSON Resilient File Store */}
+                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <HardDrive className="w-4 h-4 text-sky-400" />
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">3. JSON Resilient Store</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-sky-950 text-sky-300 border border-sky-800">
+                      Always Active
+                    </span>
+                  </div>
+                  <div className="text-xs space-y-1 text-slate-400 font-mono">
+                    <div className="flex justify-between">
+                      <span>Local Storage Path:</span>
+                      <span className="text-slate-200 font-bold">.local_db/*.json</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Cached Rows:</span>
+                      <span className="text-sky-300 font-bold">{syncStatus?.sources?.json?.totalRecords ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Engine Metrics Counters */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
+                  <span className="block text-[10px] text-slate-400 uppercase font-black">Monitored Tables</span>
+                  <span className="text-lg font-black text-white font-mono">{syncStatus?.tables?.length ?? 0}</span>
+                </div>
+                <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
+                  <span className="block text-[10px] text-slate-400 uppercase font-black">Auto-Healed Mismatches</span>
+                  <span className="text-lg font-black text-emerald-400 font-mono">{syncStatus?.mismatchesDetected ?? 0}</span>
+                </div>
+                <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
+                  <span className="block text-[10px] text-slate-400 uppercase font-black">Total Records Reconciled</span>
+                  <span className="text-lg font-black text-indigo-300 font-mono">{syncStatus?.recordsReconciled ?? 0}</span>
+                </div>
+                <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
+                  <span className="block text-[10px] text-slate-400 uppercase font-black">Scan Duration</span>
+                  <span className="text-lg font-black text-sky-300 font-mono">{syncStatus?.durationMs ?? 0} ms</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Table-by-Table Synchronization Matrix */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-emerald-400" />
+                  <div>
+                    <h3 className="text-sm font-black text-white">Database Tables Consistency Matrix</h3>
+                    <p className="text-xs text-slate-400">Live count comparison and per-table reconciliation status</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button
+                      onClick={() => setSyncFilter('all')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                        syncFilter === 'all' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      All ({syncStatus?.tables?.length ?? 0})
+                    </button>
+                    <button
+                      onClick={() => setSyncFilter('mismatched')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                        syncFilter === 'mismatched' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Mismatched ({syncStatus?.tables?.filter(t => !t.inSync || t.mismatchesDetected > 0).length ?? 0})
+                    </button>
+                    <button
+                      onClick={() => setSyncFilter('synced')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                        syncFilter === 'synced' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      In Sync ({syncStatus?.tables?.filter(t => t.inSync).length ?? 0})
+                    </button>
+                  </div>
+
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                    <input
+                      type="text"
+                      value={syncSearch}
+                      onChange={(e) => setSyncSearch(e.target.value)}
+                      placeholder="Filter table..."
+                      className="pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder:text-slate-600 outline-none focus:border-indigo-500 w-36 sm:w-48"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Consistency Table */}
+              <div className="overflow-x-auto rounded-2xl border border-slate-800">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead>
+                    <tr className="bg-slate-950/80 text-slate-400 border-b border-slate-800 text-[11px] uppercase tracking-wider">
+                      <th className="p-3.5">Table Name</th>
+                      <th className="p-3.5 text-center">Primary PG</th>
+                      <th className="p-3.5 text-center">Local PG</th>
+                      <th className="p-3.5 text-center">JSON Store</th>
+                      <th className="p-3.5 text-center">Sync Status</th>
+                      <th className="p-3.5 text-center">Reconciled</th>
+                      <th className="p-3.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
+                    {syncStatus?.tables && syncStatus.tables.length > 0 ? (
+                      syncStatus.tables
+                        .filter(t => {
+                          if (syncFilter === 'mismatched' && t.inSync && t.mismatchesDetected === 0) return false;
+                          if (syncFilter === 'synced' && (!t.inSync || t.mismatchesDetected > 0)) return false;
+                          if (syncSearch.trim() && !t.tableName.toLowerCase().includes(syncSearch.toLowerCase())) return false;
+                          return true;
+                        })
+                        .map((tbl) => (
+                          <tr key={tbl.tableName} className="hover:bg-slate-800/40 transition">
+                            <td className="p-3.5 font-bold text-white flex items-center gap-2">
+                              <Database className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                              <span>{tbl.tableName}</span>
+                            </td>
+                            <td className="p-3.5 text-center text-slate-300 font-bold">
+                              {tbl.primaryCount}
+                            </td>
+                            <td className="p-3.5 text-center text-slate-300 font-bold">
+                              {tbl.localCount}
+                            </td>
+                            <td className="p-3.5 text-center text-slate-300 font-bold">
+                              {tbl.jsonCount}
+                            </td>
+                            <td className="p-3.5 text-center">
+                              {tbl.inSync ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-950 text-emerald-300 border border-emerald-800">
+                                  <CheckCheck className="w-3 h-3" />
+                                  Synchronized
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-950 text-amber-300 border border-amber-800" title={tbl.discrepancy || 'Mismatch detected'}>
+                                  <AlertTriangle className="w-3 h-3" />
+                                  Auto-Healed
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3.5 text-center text-slate-400 font-mono">
+                              {tbl.recordsReconciled > 0 ? (
+                                <span className="text-emerald-400 font-bold">+{tbl.recordsReconciled} records</span>
+                              ) : (
+                                <span className="text-slate-600">-</span>
+                              )}
+                            </td>
+                            <td className="p-3.5 text-right">
+                              <button
+                                onClick={() => handleSyncSingleTable(tbl.tableName)}
+                                disabled={syncingTable === tbl.tableName}
+                                className="px-3 py-1 bg-slate-800 hover:bg-emerald-600 hover:text-white text-slate-300 rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 ml-auto disabled:opacity-50"
+                              >
+                                <RefreshCw className={`w-3 h-3 ${syncingTable === tbl.tableName ? 'animate-spin' : ''}`} />
+                                Sync Table
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-slate-500 font-sans text-xs">
+                          {syncLoading ? 'Analyzing database tables across all tiers...' : 'No synchronized tables discovered or status pending.'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Sync Audit Trail & Reconciliation Logs */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-indigo-400" />
+                  <div>
+                    <h3 className="text-sm font-black text-white">Live Sync Audit Trail & Reconciliation Events</h3>
+                    <p className="text-xs text-slate-400">Timestamped record of background write mirroring and auto-healing events</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleClearSyncAuditLogs}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-red-900/50 hover:text-red-300 text-slate-400 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Clear Logs
+                </button>
+              </div>
+
+              <div className="max-h-80 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-950 p-4 space-y-2 font-mono text-xs">
+                {syncStatus?.auditLogs && syncStatus.auditLogs.length > 0 ? (
+                  syncStatus.auditLogs.map((log, idx) => (
+                    <div key={log.id || idx} className="p-2.5 bg-slate-900/80 border border-slate-800/80 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                          log.status === 'success' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' :
+                          log.status === 'warning' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
+                          'bg-red-950 text-red-300 border border-red-800'
+                        }`}>
+                          {log.action}
+                        </span>
+                        <span className="text-indigo-300 font-bold">{log.table}</span>
+                        <span className="text-slate-400 text-[11px]">{log.details}</span>
+                      </div>
+
+                      <div className="flex items-center gap-3 text-[11px] text-slate-500 shrink-0">
+                        {log.recordsCount > 0 && (
+                          <span className="text-emerald-400 font-bold">{log.recordsCount} record(s)</span>
+                        )}
+                        <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="p-6 text-center text-slate-500 font-sans text-xs">
+                    No sync audit events recorded yet. Background synchronization daemon is actively monitoring all tiers.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

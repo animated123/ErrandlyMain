@@ -999,25 +999,6 @@ export default function App() {
         </>
       ) : (
         <>
-          {/* Connection Status Indicator - Admin Only */}
-          {user?.isAdmin && (
-            <div className="fixed bottom-4 right-4 z-[200]">
-              <div className={`px-3 py-1.5 rounded-full text-sm font-black tracking-normal font-medium shadow-lg flex items-center gap-2 ${
-                connectionStatus === 'testing' ? 'bg-secondary text-muted-foreground' :
-                connectionStatus === 'success' ? 'bg-emerald-100 text-emerald-600' :
-                'bg-rose-100 text-rose-600'
-              }`}>
-                <div className={`w-1.5 h-1.5 rounded-full ${
-                  connectionStatus === 'testing' ? 'bg-slate-400 animate-pulse' :
-                  connectionStatus === 'success' ? 'bg-emerald-600' :
-                  'bg-rose-600'
-                }`} />
-                {connectionStatus === 'testing' ? 'Testing Connection...' :
-                 connectionStatus === 'success' ? 'Local Storage Connected' :
-                 'Local Mode (Offline)'}
-              </div>
-            </div>
-          )}
           <Layout 
             user={user} 
             onLogout={() => firebaseService.logout().then(() => setUser(null))} 
@@ -1043,31 +1024,6 @@ export default function App() {
           }}
         >
           <TopProgressBar isLoading={isProcessing} />
-          
-          {geoError && (
-            <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="fixed top-24 left-1/2 -translate-x-1/2 z-[60] w-[90%] max-w-md"
-            >
-              <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 p-4 rounded-2xl flex items-center justify-between gap-4 shadow-2xl backdrop-blur-xl">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-amber-100 dark:bg-amber-800 rounded-xl flex items-center justify-center text-amber-600 dark:text-amber-400">
-                    <AlertCircle size={18} />
-                  </div>
-                  <p className="text-xs font-black text-amber-900 dark:text-amber-100 leading-tight">
-                    {geoError}
-                  </p>
-                </div>
-                <button 
-                  onClick={() => setGeoError(null)}
-                  className="p-1.5 hover:bg-amber-100 dark:hover:bg-amber-800 rounded-lg transition-colors text-amber-600 dark:text-amber-400"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </motion.div>
-          )}
 
           <div className="max-w-7xl mx-auto space-y-6 md:space-y-8 px-4 sm:px-6 md:px-8">
             {activeTab === 'dashboard' && (

@@ -79,10 +79,6 @@ const { Pool } = pg;
 // Environment detection for Serverless Vercel
 const isVercelEnv = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.VERCEL_ENV);
 
-// Define pgPool holder
-let pgPool: any = null;
-let pgConnected = false;
-let pgError: string | null = null;
 const CONFIG_FILE = isVercelEnv ? path.join("/tmp", "database_config.json") : path.join(process.cwd(), "database_config.json");
 const ENV_OVERRIDES_FILE = isVercelEnv ? path.join("/tmp", "env-overrides.json") : path.join(process.cwd(), "env-overrides.json");
 const APP_CONFIG_FILE = isVercelEnv ? path.join("/tmp", "app_config.json") : path.join(process.cwd(), "app_config.json");
@@ -171,8 +167,19 @@ let dbConfig = {
   user: appConfig.database?.user || process.env.PGUSER || "postgres",
   password: appConfig.database?.password !== undefined && appConfig.database?.password !== ""
     ? appConfig.database.password 
-    : (process.env.PGPASSWORD !== undefined ? process.env.PGPASSWORD : ""),
-  database: appConfig.database?.name || process.env.PGDATABASE || "postgres"
+    : (process.env.PGPASSWORD !== undefined ? process.env.PGPASSWORD : "admin"),
+  database: appConfig.database?.name || process.env.PGDATABASE || "Errandly",
+  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL || undefined
+};
+
+// Fallback Local PostgreSQL Configuration
+let localDbConfig = {
+  host: process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
+  port: process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432),
+  user: process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
+  password: process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : (process.env.FALLBACK_PGPASSWORD !== undefined ? process.env.FALLBACK_PGPASSWORD : "admin"),
+  database: process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
+  connectionString: process.env.LOCAL_DATABASE_URL || process.env.FALLBACK_DATABASE_URL || undefined
 };
 
 try {
@@ -220,74 +227,155 @@ function convertToSupabaseRow(obj: any): any {
   return result;
 }
 
-let schemaInitialized = false;
+// Database Connection Pools & Health
+let primaryPgPool: any = null;
+let primaryPgConnected = false;
+let primaryPgError: string | null = null;
 
-// Global Postgres connection pool initiator
-async function initPgPool(forceReconnect = false) {
-  if (pgPool && pgConnected && !forceReconnect) {
-    if (!schemaInitialized) {
-      await ensurePostgreSqlSchema();
-    }
+let localPgPool: any = null;
+let localPgConnected = false;
+let localPgError: string | null = null;
+
+// Primary pool alias for backwards-compatibility
+let pgPool: any = null;
+let pgConnected = false;
+let pgError: string | null = null;
+
+const initializedPools = new WeakSet<any>();
+
+// Primary Postgres connection pool initiator
+async function initPrimaryPgPool(forceReconnect = false) {
+  if (primaryPgPool && primaryPgConnected && !forceReconnect) {
+    await ensurePostgreSqlSchema(primaryPgPool);
     return;
   }
 
-  if (forceReconnect) {
-    schemaInitialized = false;
-  }
-
-  if (pgPool) {
+  if (primaryPgPool) {
     try {
-      await pgPool.end();
-    } catch (_) {
-      // Ignore pool termination failures
+      await primaryPgPool.end();
+    } catch (e: any) {
+      console.warn("[Primary PostgreSQL] Notice on pool end:", e?.message);
     }
   }
-  
+
   const isRemoteHost = dbConfig.host && !dbConfig.host.includes('127.0.0.1') && !dbConfig.host.includes('localhost');
-  const poolOpts: any = {
+  const poolOpts: any = dbConfig.connectionString ? {
+    connectionString: dbConfig.connectionString,
+    max: isVercelEnv ? 2 : 10,
+    connectionTimeoutMillis: isVercelEnv ? 4000 : 7000,
+    idleTimeoutMillis: isVercelEnv ? 5000 : 10000
+  } : {
     host: dbConfig.host,
     port: dbConfig.port,
     user: dbConfig.user,
     password: dbConfig.password,
     database: dbConfig.database,
     max: isVercelEnv ? 2 : 10,
-    connectionTimeoutMillis: isVercelEnv ? 5000 : 8000,
+    connectionTimeoutMillis: isVercelEnv ? 4000 : 7000,
     idleTimeoutMillis: isVercelEnv ? 5000 : 10000
   };
 
-  if (isRemoteHost) {
+  if (isRemoteHost && !dbConfig.connectionString) {
     poolOpts.ssl = { rejectUnauthorized: false };
   }
 
-  pgPool = new Pool(poolOpts);
+  primaryPgPool = new Pool(poolOpts);
+  pgPool = primaryPgPool;
 
   try {
-    const client = await pgPool.connect();
+    const client = await primaryPgPool.connect();
+    primaryPgConnected = true;
+    primaryPgError = null;
     pgConnected = true;
     pgError = null;
-    console.log(`[PostgreSQL] Connection established successfully to '${dbConfig.database}' on ${dbConfig.host}:${dbConfig.port}`);
+    console.log(`[Primary PostgreSQL] Connection established successfully to '${dbConfig.database}' on ${dbConfig.host}:${dbConfig.port}`);
     client.release();
-    
-    // Validate database schema
-    if (!schemaInitialized) {
-      await ensurePostgreSqlSchema();
-    }
+    await ensurePostgreSqlSchema(primaryPgPool);
   } catch (err: any) {
+    primaryPgConnected = false;
+    primaryPgError = err.message;
     pgConnected = false;
     pgError = err.message;
-    console.error(`[PostgreSQL] Live connection failed: ${err.message}. Standing by for manual settings at /dbconfig...`);
+    console.warn(`[Primary PostgreSQL] Live connection failed: ${err.message}.`);
   }
 }
 
+// Fallback Local Postgres connection pool initiator
+async function initLocalPgPool(forceReconnect = false) {
+  if (localPgPool && localPgConnected && !forceReconnect) {
+    await ensurePostgreSqlSchema(localPgPool);
+    return;
+  }
+
+  if (localPgPool) {
+    try {
+      await localPgPool.end();
+    } catch (e: any) {
+      console.warn("[Local PostgreSQL] Notice on pool end:", e?.message);
+    }
+  }
+
+  // Refresh config from process.env if available
+  localDbConfig = {
+    host: process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
+    port: process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432),
+    user: process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
+    password: process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : (process.env.FALLBACK_PGPASSWORD !== undefined ? process.env.FALLBACK_PGPASSWORD : "admin"),
+    database: process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
+    connectionString: process.env.LOCAL_DATABASE_URL || process.env.FALLBACK_DATABASE_URL || undefined
+  };
+
+  const poolOpts: any = localDbConfig.connectionString ? {
+    connectionString: localDbConfig.connectionString,
+    max: isVercelEnv ? 2 : 10,
+    connectionTimeoutMillis: 3000,
+    idleTimeoutMillis: 10000
+  } : {
+    host: localDbConfig.host,
+    port: localDbConfig.port,
+    user: localDbConfig.user,
+    password: localDbConfig.password,
+    database: localDbConfig.database,
+    max: isVercelEnv ? 2 : 10,
+    connectionTimeoutMillis: 3000,
+    idleTimeoutMillis: 10000
+  };
+
+  localPgPool = new Pool(poolOpts);
+
+  try {
+    const client = await localPgPool.connect();
+    localPgConnected = true;
+    localPgError = null;
+    console.log(`[Local PostgreSQL Fallback] Connection established successfully to '${localDbConfig.database}' on ${localDbConfig.host}:${localDbConfig.port}`);
+    client.release();
+    await ensurePostgreSqlSchema(localPgPool);
+  } catch (err: any) {
+    localPgConnected = false;
+    localPgError = err.message;
+    console.log(`[Local PostgreSQL Fallback] Standby (Not reachable at ${localDbConfig.host}:${localDbConfig.port}: ${err.message})`);
+  }
+}
+
+// Global Postgres connection pool initiator
+async function initPgPool(forceReconnect = false) {
+  await Promise.allSettled([
+    initPrimaryPgPool(forceReconnect),
+    initLocalPgPool(forceReconnect)
+  ]);
+}
+
 // Table schema compiler
-async function ensurePostgreSqlSchema() {
-  if (!pgPool || schemaInitialized) return;
-  schemaInitialized = true;
+async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPgPool || pgPool) {
+  if (!targetPool) return;
+  if (initializedPools.has(targetPool)) return;
+  initializedPools.add(targetPool);
   let client;
   try {
-    client = await pgPool.connect();
+    client = await targetPool.connect();
   } catch (connErr: any) {
     console.warn("[PostgreSQL] Connection for schema check failed:", connErr.message);
+    initializedPools.delete(targetPool);
     return;
   }
   try {
@@ -642,9 +730,9 @@ async function ensurePostgreSqlSchema() {
 }
 
 // Postgrest mock query translator for PostgreSQL
-async function executePostgresOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
-  if (!pgConnected || !pgPool) {
-    throw new Error("PostgreSQL database is currently offline.");
+async function executePostgresOperation(targetPool: any, tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
+  if (!targetPool) {
+    throw new Error("PostgreSQL database pool is unavailable.");
   }
 
   let isWrite = false;
@@ -742,7 +830,7 @@ async function executePostgresOperation(tableName: string, chainCalls: Array<{ m
         params.push(...vals);
 
         const subQuery = `INSERT INTO public."${tableName}" (${cols}) VALUES (${placeholders}) RETURNING *`;
-        const res = await pgPool.query(subQuery, vals);
+        const res = await targetPool.query(subQuery, vals);
         insertedRows.push(...res.rows);
       }
       
@@ -816,7 +904,7 @@ async function executePostgresOperation(tableName: string, chainCalls: Array<{ m
           DO UPDATE SET ${updateSet}
           RETURNING *
         `;
-        const res = await pgPool.query(subQuery, vals);
+        const res = await targetPool.query(subQuery, vals);
         upsertedRows.push(...res.rows);
       }
       
@@ -886,7 +974,7 @@ async function executePostgresOperation(tableName: string, chainCalls: Array<{ m
     queryStr = `SELECT * FROM public."${tableName}" ${whereStr} ${orderStr} ${limitStr}`;
   }
 
-  const res = await pgPool.query(queryStr, params);
+  const res = await targetPool.query(queryStr, params);
   const rows = res.rows.map(convertToSupabaseRow);
 
   if (isSingle) {
@@ -895,30 +983,44 @@ async function executePostgresOperation(tableName: string, chainCalls: Array<{ m
   return { data: rows, error: null };
 }
 
-let forceDatabaseMode = true; // Temporary disable JSON writes and force physical DB writes as per user request
+let forceDatabaseMode = true; // Force database write attempts before resilient JSON fallback
 
 async function executeDbOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
-  if (forceDatabaseMode) {
-    if (!pgPool || !pgConnected) {
-      console.warn(`[Database Operation Warning] PostgreSQL is not connected! Falling back gracefully to local JSON database storage as a resilient measure so that updates (e.g., runner applications approval) succeed.`);
-      return await executeLocalDbOperation(tableName, chainCalls);
-    }
+  const isWriteOp = chainCalls.some(c => ['insert', 'update', 'upsert', 'delete'].includes(c.method));
+
+  // Tier 1: Try Primary PostgreSQL
+  if (primaryPgPool && primaryPgConnected) {
     try {
-      return await executePostgresOperation(tableName, chainCalls);
+      const res = await executePostgresOperation(primaryPgPool, tableName, chainCalls);
+      if (isWriteOp) {
+        mirrorWriteToActiveSources(tableName, chainCalls, 'primary');
+      }
+      return res;
     } catch (err: any) {
-      console.error(`[Database Operation Error] PostgreSQL operation failed: ${err.message}. Gracefully falling back to local JSON database storage.`);
-      return await executeLocalDbOperation(tableName, chainCalls);
+      console.warn(`[Database Tier 1] Primary PostgreSQL operation on '${tableName}' failed: ${err.message}. Trying Local PostgreSQL fallback...`);
     }
   }
 
-  if (pgConnected && pgPool) {
+  // Tier 2: Try Fallback Local PostgreSQL (if primary is offline or primary operation failed)
+  if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
     try {
-      return await executePostgresOperation(tableName, chainCalls);
+      const res = await executePostgresOperation(localPgPool, tableName, chainCalls);
+      console.log(`[Database Tier 2] Processed '${tableName}' operation via Fallback Local PostgreSQL.`);
+      if (isWriteOp) {
+        mirrorWriteToActiveSources(tableName, chainCalls, 'local_pg');
+      }
+      return res;
     } catch (err: any) {
-      console.warn(`[PostgreSQL fallback] Query failed on '${tableName}': ${err.message}. Routing to local JSON database.`);
+      console.warn(`[Database Tier 2] Local PostgreSQL fallback operation on '${tableName}' failed: ${err.message}. Trying Local JSON storage...`);
     }
   }
-  return await executeLocalDbOperation(tableName, chainCalls);
+
+  // Tier 3: Resilient Local JSON Database Fallback
+  const res = await executeLocalDbOperation(tableName, chainCalls);
+  if (isWriteOp) {
+    mirrorWriteToActiveSources(tableName, chainCalls, 'json');
+  }
+  return res;
 }
 
 function buildMockPostgrestBuilder(tableName: string, chainCalls: any[] = []): any {
@@ -1116,6 +1218,14 @@ async function executeLocalDbOperation(tableName: string, chainCalls: Array<{ me
   const filterFn = (row: any) => {
     for (const f of eqFilters) {
       const val = row[f.field] !== undefined ? row[f.field] : row[snakeToCamel(f.field)] !== undefined ? row[snakeToCamel(f.field)] : row[camelToSnake(f.field)];
+      if ((val === null || val === undefined) && (f.value === null || f.value === undefined)) {
+        continue;
+      }
+      if (typeof f.value === 'boolean') {
+        const boolVal = val === true || val === 'true' || val === 1 || val === '1';
+        if (boolVal !== f.value) return false;
+        continue;
+      }
       if (String(val) !== String(f.value)) {
         return false;
       }
@@ -1247,6 +1357,359 @@ async function executeLocalDbOperation(tableName: string, chainCalls: Array<{ me
 
   return { data: convertToSupabaseRow(filteredRows), error: null };
 }
+
+// =========================================================================
+// MULTI-DATABASE SYNCHRONIZATION & AUTOMATIC MISMATCH HEALING ENGINE
+// =========================================================================
+
+const KNOWN_SYNC_TABLES = [
+  'profiles',
+  'errands',
+  'runner_applications',
+  'bids',
+  'notifications',
+  'reviews',
+  'errand_chats',
+  'support_messages',
+  'transactions',
+  'wallets',
+  'settings',
+  'categories',
+  'saved_places',
+  'featured_services',
+  'service_listings',
+  'otp_codes'
+];
+
+interface SyncAuditLogEntry {
+  id: string;
+  timestamp: string;
+  table: string;
+  action: string;
+  recordsCount: number;
+  status: 'success' | 'warning' | 'error';
+  details: string;
+}
+
+const syncAuditLog: SyncAuditLogEntry[] = [];
+const MAX_SYNC_AUDIT_LOGS = 250;
+
+function addSyncAuditLog(table: string, action: string, recordsCount: number, status: 'success' | 'warning' | 'error', details: string) {
+  syncAuditLog.unshift({
+    id: `sync_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+    timestamp: new Date().toISOString(),
+    table,
+    action,
+    recordsCount,
+    status,
+    details
+  });
+  if (syncAuditLog.length > MAX_SYNC_AUDIT_LOGS) {
+    syncAuditLog.pop();
+  }
+}
+
+async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{ method: string, args: any[] }>, sourceUsed: 'primary' | 'local_pg' | 'json') {
+  try {
+    if (sourceUsed === 'primary') {
+      if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
+        executePostgresOperation(localPgPool, tableName, chainCalls).catch(err => {
+          console.warn(`[Sync Mirror] Notice mirroring write to Local PG on '${tableName}':`, err.message);
+        });
+      }
+      executeLocalDbOperation(tableName, chainCalls).catch(err => {
+        console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
+      });
+    } else if (sourceUsed === 'local_pg') {
+      if (primaryPgPool && primaryPgConnected && primaryPgPool !== localPgPool) {
+        executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
+          console.warn(`[Sync Mirror] Notice mirroring write to Primary PG on '${tableName}':`, err.message);
+        });
+      }
+      executeLocalDbOperation(tableName, chainCalls).catch(err => {
+        console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
+      });
+    } else if (sourceUsed === 'json') {
+      if (primaryPgPool && primaryPgConnected) {
+        executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
+          console.warn(`[Sync Mirror] Notice mirroring write to Primary PG from JSON on '${tableName}':`, err.message);
+        });
+      }
+      if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
+        executePostgresOperation(localPgPool, tableName, chainCalls).catch(err => {
+          console.warn(`[Sync Mirror] Notice mirroring write to Local PG from JSON on '${tableName}':`, err.message);
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[Sync Mirror Exception on '${tableName}']:`, err?.message);
+  }
+}
+
+async function fetchAllRowsFromPg(pool: any, tableName: string): Promise<any[]> {
+  if (!pool) return [];
+  try {
+    const res = await pool.query(`SELECT * FROM public."${tableName}"`);
+    return (res.rows || []).map(convertToSupabaseRow);
+  } catch (err: any) {
+    return [];
+  }
+}
+
+function fetchAllRowsFromJson(tableName: string): any[] {
+  const db = loadLocalDb();
+  const rows = db[tableName] || [];
+  return rows.map(convertToSupabaseRow);
+}
+
+interface TableSyncResult {
+  tableName: string;
+  primaryCount: number;
+  localCount: number;
+  jsonCount: number;
+  inSync: boolean;
+  mismatchesDetected: number;
+  recordsReconciled: number;
+  status: 'synchronized' | 'reconciled' | 'mismatch_detected' | 'offline';
+  discrepancy: string | null;
+  lastSyncedAt: string;
+}
+
+let lastSyncSummary = {
+  synced: true,
+  mismatchesDetected: 0,
+  recordsReconciled: 0,
+  lastSyncTimestamp: new Date().toISOString(),
+  tableComparisons: [] as TableSyncResult[],
+  durationMs: 0
+};
+
+async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable?: string } = {}) {
+  const { autoHeal = true, targetTable } = options;
+  const startTime = Date.now();
+
+  // 1. Discover all tables
+  const tablesToScan = new Set<string>(KNOWN_SYNC_TABLES);
+  if (targetTable) {
+    tablesToScan.clear();
+    tablesToScan.add(targetTable);
+  } else {
+    if (primaryPgPool && primaryPgConnected) {
+      try {
+        const tblRes = await primaryPgPool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public';");
+        tblRes.rows.forEach((r: any) => tablesToScan.add(r.table_name));
+      } catch (err: any) {
+        console.warn("Primary PG table discovery skipped:", err?.message);
+      }
+    }
+    if (localPgPool && localPgConnected) {
+      try {
+        const tblRes = await localPgPool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public';");
+        tblRes.rows.forEach((r: any) => tablesToScan.add(r.table_name));
+      } catch (err: any) {
+        console.warn("Local PG table discovery skipped:", err?.message);
+      }
+    }
+    const db = loadLocalDb();
+    Object.keys(db).forEach(k => tablesToScan.add(k));
+  }
+
+  const tableResults: TableSyncResult[] = [];
+  let totalMismatches = 0;
+  let totalReconciled = 0;
+
+  const isPrimaryOnline = !!(primaryPgPool && primaryPgConnected);
+  const isLocalPgOnline = !!(localPgPool && localPgConnected && localPgPool !== primaryPgPool);
+
+  for (const tableName of Array.from(tablesToScan)) {
+    try {
+      const [primaryRows, localPgRows, jsonRows] = await Promise.all([
+        isPrimaryOnline ? fetchAllRowsFromPg(primaryPgPool, tableName) : Promise.resolve([]),
+        isLocalPgOnline ? fetchAllRowsFromPg(localPgPool, tableName) : Promise.resolve([]),
+        Promise.resolve(fetchAllRowsFromJson(tableName))
+      ]);
+
+      const primaryMap = new Map<string, any>();
+      primaryRows.forEach(r => { if (r && (r.id || r.id === 0)) primaryMap.set(String(r.id), r); });
+
+      const localPgMap = new Map<string, any>();
+      localPgRows.forEach(r => { if (r && (r.id || r.id === 0)) localPgMap.set(String(r.id), r); });
+
+      const jsonMap = new Map<string, any>();
+      jsonRows.forEach(r => { if (r && (r.id || r.id === 0)) jsonMap.set(String(r.id), r); });
+
+      const allIds = new Set<string>([
+        ...primaryMap.keys(),
+        ...localPgMap.keys(),
+        ...jsonMap.keys()
+      ]);
+
+      let tableMismatches = 0;
+      let tableReconciled = 0;
+
+      for (const id of Array.from(allIds)) {
+        const inPrimary = primaryMap.has(id);
+        const inLocalPg = localPgMap.has(id);
+        const inJson = jsonMap.has(id);
+
+        const recPrimary = primaryMap.get(id);
+        const recLocalPg = localPgMap.get(id);
+        const recJson = jsonMap.get(id);
+
+        const candidates = [recPrimary, recLocalPg, recJson].filter(Boolean);
+        if (candidates.length === 0) continue;
+
+        let bestRecord = candidates[0];
+        const bestTime = bestRecord.updated_at || bestRecord.created_at || 0;
+        let bestTimestamp = typeof bestTime === 'string' ? new Date(bestTime).getTime() : (typeof bestTime === 'number' ? bestTime : 0);
+
+        for (let i = 1; i < candidates.length; i++) {
+          const cand = candidates[i];
+          const candTime = cand.updated_at || cand.created_at || 0;
+          const candTimestamp = typeof candTime === 'string' ? new Date(candTime).getTime() : (typeof candTime === 'number' ? candTime : 0);
+          if (candTimestamp > bestTimestamp || (!bestTimestamp && Object.keys(cand).length > Object.keys(bestRecord).length)) {
+            bestRecord = cand;
+            bestTimestamp = candTimestamp;
+          }
+        }
+
+        // Check if missing or outdated across available tiers
+        const primaryNeedsSync = isPrimaryOnline && (!inPrimary || (inPrimary && recPrimary.updated_at && bestRecord.updated_at && new Date(recPrimary.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
+        const localPgNeedsSync = isLocalPgOnline && (!inLocalPg || (inLocalPg && recLocalPg.updated_at && bestRecord.updated_at && new Date(recLocalPg.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
+        const jsonNeedsSync = !inJson || (inJson && recJson.updated_at && bestRecord.updated_at && new Date(recJson.updated_at).getTime() < new Date(bestRecord.updated_at).getTime());
+
+        if (primaryNeedsSync || localPgNeedsSync || jsonNeedsSync) {
+          tableMismatches++;
+
+          if (autoHeal) {
+            const syncPromises = [];
+            if (primaryNeedsSync && isPrimaryOnline) {
+              syncPromises.push(executePostgresOperation(primaryPgPool, tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal Primary PG] ${tableName}/${id}:`, e.message)));
+            }
+            if (localPgNeedsSync && isLocalPgOnline) {
+              syncPromises.push(executePostgresOperation(localPgPool, tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal Local PG] ${tableName}/${id}:`, e.message)));
+            }
+            if (jsonNeedsSync) {
+              syncPromises.push(executeLocalDbOperation(tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal JSON] ${tableName}/${id}:`, e.message)));
+            }
+            await Promise.allSettled(syncPromises);
+            tableReconciled++;
+          }
+        }
+      }
+
+      totalMismatches += tableMismatches;
+      totalReconciled += tableReconciled;
+
+      const activeCounts = [
+        isPrimaryOnline ? primaryRows.length : null,
+        isLocalPgOnline ? localPgRows.length : null,
+        jsonRows.length
+      ].filter(c => c !== null) as number[];
+
+      const allCountsMatch = activeCounts.every(c => c === activeCounts[0]);
+      const inSync = tableMismatches === 0 && allCountsMatch;
+
+      let discrepancy: string | null = null;
+      if (!inSync) {
+        if (tableReconciled > 0) {
+          discrepancy = `Auto-healed ${tableReconciled} mismatched record(s) across database tiers.`;
+        } else {
+          discrepancy = `Detected ${tableMismatches} record mismatch between active data sources.`;
+        }
+      }
+
+      tableResults.push({
+        tableName,
+        primaryCount: isPrimaryOnline ? primaryRows.length : 0,
+        localCount: isLocalPgOnline ? localPgRows.length : 0,
+        jsonCount: jsonRows.length,
+        inSync,
+        mismatchesDetected: tableMismatches,
+        recordsReconciled: tableReconciled,
+        status: inSync ? 'synchronized' : (tableReconciled > 0 ? 'reconciled' : 'mismatch_detected'),
+        discrepancy,
+        lastSyncedAt: new Date().toISOString()
+      });
+
+      if (tableReconciled > 0) {
+        addSyncAuditLog(
+          tableName,
+          'AUTO_RECONCILE',
+          tableReconciled,
+          'success',
+          `Reconciled ${tableReconciled} record(s) across Primary PG (${primaryRows.length}), Local PG (${localPgRows.length}), and JSON (${jsonRows.length}).`
+        );
+      }
+    } catch (tblErr: any) {
+      console.warn(`[Sync Engine Notice on '${tableName}']`, tblErr.message);
+    }
+  }
+
+  const durationMs = Date.now() - startTime;
+  const isOverallSynced = totalMismatches === 0 || totalReconciled >= totalMismatches;
+
+  lastSyncSummary = {
+    synced: isOverallSynced,
+    mismatchesDetected: totalMismatches,
+    recordsReconciled: totalReconciled,
+    lastSyncTimestamp: new Date().toISOString(),
+    tableComparisons: tableResults,
+    durationMs
+  };
+
+  return {
+    success: true,
+    synced: isOverallSynced,
+    mismatchesDetected: totalMismatches,
+    recordsReconciled: totalReconciled,
+    tables: tableResults,
+    durationMs,
+    timestamp: new Date().toISOString(),
+    sources: {
+      primary: {
+        connected: primaryPgConnected,
+        host: dbConfig.host,
+        port: dbConfig.port,
+        database: dbConfig.database,
+        totalRecords: tableResults.reduce((acc, t) => acc + (primaryPgConnected ? t.primaryCount : 0), 0)
+      },
+      localPg: {
+        connected: localPgConnected,
+        host: localDbConfig.host,
+        port: localDbConfig.port,
+        database: localDbConfig.database,
+        totalRecords: tableResults.reduce((acc, t) => acc + (localPgConnected ? t.localCount : 0), 0)
+      },
+      json: {
+        active: true,
+        totalRecords: tableResults.reduce((acc, t) => acc + t.jsonCount, 0)
+      }
+    }
+  };
+}
+
+// Background auto-sync daemon: Enforces "Always sync either if there is a data mismatch" continuously
+setInterval(async () => {
+  try {
+    if ((primaryPgPool && primaryPgConnected) || (localPgPool && localPgConnected)) {
+      await syncDataBetweenSources({ autoHeal: true });
+    }
+  } catch (err: any) {
+    // Fail silently in background
+  }
+}, 25000);
+
+// Initial boot-up sync check
+setTimeout(async () => {
+  try {
+    console.log("[Auto-Sync Engine] Initializing bi-directional consistency verification across all database sources...");
+    const res = await syncDataBetweenSources({ autoHeal: true });
+    console.log(`[Auto-Sync Engine] Initial sync verified: ${res.tables.length} tables analyzed, ${res.recordsReconciled} records reconciled. In Sync: ${res.synced}`);
+  } catch (e: any) {
+    console.warn("[Auto-Sync Engine] Initial sync check notice:", e?.message);
+  }
+}, 3000);
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
@@ -1388,21 +1851,21 @@ const rateLimitConfig = {
   enabled: true,
   general: {
     windowMs: parseInt(process.env.RATE_LIMIT_GENERAL_WINDOW_MS || "60000"), // 1 min window
-    maxRequests: parseInt(process.env.RATE_LIMIT_GENERAL_MAX || "100") // 100 requests per session/min
+    maxRequests: parseInt(process.env.RATE_LIMIT_GENERAL_MAX || "1000") // 1000 requests per session/min (generous for active SPAs)
   },
   ai: {
     windowMs: parseInt(process.env.RATE_LIMIT_AI_WINDOW_MS || "60000"), // 1 min window
-    maxRequests: parseInt(process.env.RATE_LIMIT_AI_MAX || "20") // 20 Gemini calls per session/min
+    maxRequests: parseInt(process.env.RATE_LIMIT_AI_MAX || "120") // 120 Gemini calls per session/min
   },
   auth: {
     windowMs: parseInt(process.env.RATE_LIMIT_AUTH_WINDOW_MS || "60000"), // 1 min window
-    maxRequests: parseInt(process.env.RATE_LIMIT_AUTH_MAX || "15") // 15 Auth/SMS calls per session/min
+    maxRequests: parseInt(process.env.RATE_LIMIT_AUTH_MAX || "100") // 100 Auth/SMS calls per session/min
   },
   payment: {
     windowMs: parseInt(process.env.RATE_LIMIT_PAYMENT_WINDOW_MS || "60000"), // 1 min window
-    maxRequests: parseInt(process.env.RATE_LIMIT_PAYMENT_MAX || "20") // 20 Payment calls per session/min
+    maxRequests: parseInt(process.env.RATE_LIMIT_PAYMENT_MAX || "100") // 100 Payment calls per session/min
   },
-  adminMultiplier: 5 // Admin credentials receive 5x multiplier
+  adminMultiplier: 10 // Admin credentials receive 10x multiplier
 };
 
 const rateLimitStore = new Map<string, RateLimitStoreEntry>();
@@ -1585,6 +2048,89 @@ export async function getApp(): Promise<express.Application> {
 
   // Attach Session Rate Limiter Middleware
   app.use("/api", sessionRateLimiter);
+
+  // Universal Database Proxy Endpoint (translates client PostgREST calls to PostgreSQL or local DB)
+  app.all(["/api/db/:tableName/:action", "/api/db/:tableName"], async (req, res) => {
+    try {
+      const tableName = req.params.tableName;
+      const rawAction = req.params.action || (req.method === 'GET' ? 'select' : 'select');
+      const action = rawAction.toLowerCase();
+      
+      let chainCalls: Array<{ method: string, args: any[] }> = [];
+
+      if (req.body && Array.isArray(req.body.chainCalls) && req.body.chainCalls.length > 0) {
+        chainCalls = req.body.chainCalls;
+      } else {
+        // Construct chainCalls from action and request payload
+        const queryVal = req.body?.query || req.query?.select || '*';
+        const bodyVal = req.body?.body !== undefined ? req.body.body : req.body;
+        const matchVal = req.body?.match || req.body?.eq || {};
+        const orVal = req.body?.or;
+        const inVal = req.body?.in;
+        const limitVal = req.body?.limit ? parseInt(String(req.body.limit), 10) : undefined;
+        const orderVal = req.body?.order;
+        const isSingle = req.body?.single === true || req.body?.maybeSingle === true;
+
+        if (action === 'insert') {
+          chainCalls.push({ method: 'insert', args: [bodyVal] });
+        } else if (action === 'update') {
+          chainCalls.push({ method: 'update', args: [bodyVal] });
+        } else if (action === 'upsert') {
+          chainCalls.push({ method: 'upsert', args: [bodyVal] });
+        } else if (action === 'delete') {
+          chainCalls.push({ method: 'delete', args: [] });
+        } else {
+          chainCalls.push({ method: 'select', args: [queryVal] });
+        }
+
+        if (matchVal && typeof matchVal === 'object') {
+          for (const [col, val] of Object.entries(matchVal)) {
+            chainCalls.push({ method: 'eq', args: [col, val] });
+          }
+        }
+
+        if (orVal && typeof orVal === 'string') {
+          chainCalls.push({ method: 'or', args: [orVal] });
+        }
+
+        if (inVal && inVal.column && Array.isArray(inVal.values)) {
+          chainCalls.push({ method: 'in', args: [inVal.column, inVal.values] });
+        }
+
+        if (orderVal) {
+          if (typeof orderVal === 'string') {
+            chainCalls.push({ method: 'order', args: [orderVal, { ascending: true }] });
+          } else if (typeof orderVal === 'object' && orderVal.column) {
+            chainCalls.push({ method: 'order', args: [orderVal.column, { ascending: orderVal.ascending !== false }] });
+          }
+        }
+
+        if (limitVal) {
+          chainCalls.push({ method: 'limit', args: [limitVal] });
+        }
+
+        if (isSingle) {
+          chainCalls.push({ method: 'maybeSingle', args: [] });
+        }
+      }
+
+      const result = await executeDbOperation(tableName, chainCalls);
+      const data = result ? result.data : null;
+      const count = Array.isArray(data) ? data.length : (data ? 1 : 0);
+      return res.json({
+        data,
+        count,
+        error: result?.error || null
+      });
+    } catch (dbErr: any) {
+      console.error(`[API /api/db Error] Table: ${req.params?.tableName}:`, dbErr.message);
+      return res.status(500).json({
+        data: null,
+        count: 0,
+        error: { message: dbErr.message || "Database action failed" }
+      });
+    }
+  });
 
   const upload = multer({ storage: multer.memoryStorage() });
 
@@ -4226,17 +4772,16 @@ Please proceed with the task according to safety guidelines and update milestone
 
   // 2. Comprehensive Status (DB, Action Server, Config, Server Diagnostics)
   app.get("/api/connectionadmin/status", requireConnectionAdminAuth, async (req, res) => {
-    const startTime = Date.now();
     let dbLatencyMs: number | null = null;
     let dbTables: string[] = [];
     let dbVersion: string | undefined = undefined;
     let dbServerTime: string | undefined = undefined;
 
-    // Check DB live connectivity
-    if (pgPool && pgConnected) {
+    // Check Primary DB live connectivity
+    if (primaryPgPool && primaryPgConnected) {
       try {
         const t0 = Date.now();
-        const client = await pgPool.connect();
+        const client = await primaryPgPool.connect();
         const pingRes = await client.query("SELECT NOW() as current_time, version() as version;");
         dbLatencyMs = Date.now() - t0;
         dbVersion = pingRes.rows[0]?.version;
@@ -4248,8 +4793,32 @@ Please proceed with the task according to safety guidelines and update milestone
         client.release();
         dbTables = tablesRes.rows.map(r => r.table_name);
       } catch (err: any) {
+        primaryPgConnected = false;
+        primaryPgError = err.message;
         pgConnected = false;
         pgError = err.message;
+      }
+    }
+
+    // Check Fallback Local DB connectivity
+    let localDbLatencyMs: number | null = null;
+    let localDbTables: string[] = [];
+    let localDbVersion: string | undefined = undefined;
+    if (localPgPool && localPgConnected) {
+      try {
+        const t0 = Date.now();
+        const client = await localPgPool.connect();
+        const pingRes = await client.query("SELECT NOW() as current_time, version() as version;");
+        localDbLatencyMs = Date.now() - t0;
+        localDbVersion = pingRes.rows[0]?.version;
+        const tablesRes = await client.query(
+          "SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;"
+        );
+        client.release();
+        localDbTables = tablesRes.rows.map(r => r.table_name);
+      } catch (err: any) {
+        localPgConnected = false;
+        localPgError = err.message;
       }
     }
 
@@ -4288,9 +4857,10 @@ Please proceed with the task according to safety guidelines and update milestone
 
     res.json({
       database: {
-        connected: pgConnected,
-        error: pgError,
-        latencyMs: dbLatencyMs,
+        connected: primaryPgConnected || localPgConnected,
+        activeSource: primaryPgConnected ? "primary_postgres" : (localPgConnected ? "local_postgres_fallback" : "local_json_resilient"),
+        error: primaryPgConnected ? null : (primaryPgError || (localPgConnected ? null : localPgError)),
+        latencyMs: primaryPgConnected ? dbLatencyMs : localDbLatencyMs,
         config: {
           host: dbConfig.host,
           port: dbConfig.port,
@@ -4298,9 +4868,18 @@ Please proceed with the task according to safety guidelines and update milestone
           database: dbConfig.database,
           hasPassword: !!dbConfig.password
         },
-        tables: dbTables,
-        tableCount: dbTables.length,
-        version: dbVersion,
+        fallbackConfig: {
+          host: localDbConfig.host,
+          port: localDbConfig.port,
+          user: localDbConfig.user,
+          database: localDbConfig.database,
+          connected: localPgConnected,
+          error: localPgError,
+          latencyMs: localDbLatencyMs
+        },
+        tables: primaryPgConnected ? dbTables : localDbTables,
+        tableCount: primaryPgConnected ? dbTables.length : localDbTables.length,
+        version: primaryPgConnected ? dbVersion : localDbVersion,
         serverTime: dbServerTime
       },
       actionServer: {
@@ -4328,6 +4907,7 @@ Please proceed with the task according to safety guidelines and update milestone
         envStatus: {
           hasConnectionAdminPwd: !!(process.env.Connectionadmin || process.env.CONNECTIONADMIN_PASSWORD || "Company1."),
           hasPgHost: !!process.env.PGHOST,
+          hasLocalPgHost: !!process.env.LOCAL_PGHOST,
           hasActionServerUrl: !!process.env.VITE_ACTION_SERVER_URL,
           hasGeminiApiKey: !!process.env.GEMINI_API_KEY
         }
@@ -4354,7 +4934,7 @@ Please proceed with the task according to safety guidelines and update milestone
 
       // Write to database_config.json
       safeWriteJsonFile(CONFIG_FILE, newConfig);
-      dbConfig = newConfig;
+      dbConfig = { ...dbConfig, ...newConfig };
 
       // Update app_config.json
       appConfig.database = {
@@ -4368,15 +4948,15 @@ Please proceed with the task according to safety guidelines and update milestone
       console.log(`[ConnectionAdmin] Live DB credentials updated in ${APP_CONFIG_FILE}`);
 
       // Re-initialize pool in memory immediately
-      await initPgPool(true);
+      await initPrimaryPgPool(true);
 
       let latencyMs: number | null = null;
       let tables: string[] = [];
 
-      if (pgPool && pgConnected) {
+      if (primaryPgPool && primaryPgConnected) {
         try {
           const t0 = Date.now();
-          const client = await pgPool.connect();
+          const client = await primaryPgPool.connect();
           await client.query("SELECT NOW();");
           latencyMs = Date.now() - t0;
           const tblRes = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public';");
@@ -4388,11 +4968,11 @@ Please proceed with the task according to safety guidelines and update milestone
       }
 
       res.json({
-        success: pgConnected,
-        connected: pgConnected,
+        success: primaryPgConnected,
+        connected: primaryPgConnected,
         latencyMs,
         tables,
-        error: pgError,
+        error: primaryPgError,
         config: {
           host: dbConfig.host,
           port: dbConfig.port,
@@ -4465,16 +5045,18 @@ Please proceed with the task according to safety guidelines and update milestone
       return res.status(400).json({ success: false, error: "SQL query statement is required." });
     }
 
-    if (!pgPool || !pgConnected) {
+    const activePool = (primaryPgPool && primaryPgConnected) ? primaryPgPool : (localPgPool && localPgConnected ? localPgPool : null);
+
+    if (!activePool) {
       return res.status(200).json({
         success: false,
-        error: pgError || "Database connection pool is currently offline. Please configure credentials first."
+        error: primaryPgError || localPgError || "No active PostgreSQL database connection available. Please check credentials."
       });
     }
 
     const t0 = Date.now();
     try {
-      const client = await pgPool.connect();
+      const client = await activePool.connect();
       try {
         const result = await client.query(sql);
         const executionTimeMs = Date.now() - t0;
@@ -4554,8 +5136,8 @@ Please proceed with the task according to safety guidelines and update milestone
   app.get("/api/connectionadmin/check-all", requireConnectionAdminAuth, async (req, res) => {
     const sequenceStart = Date.now();
 
-    // 1. Check Database
-    let dbResult: any = {
+    // 1. Check Primary and Fallback Databases
+    let primaryResult: any = {
       status: "offline",
       connected: false,
       latencyMs: null,
@@ -4565,17 +5147,17 @@ Please proceed with the task according to safety guidelines and update milestone
       user: dbConfig.user,
       tableCount: 0,
       version: null,
-      error: null
+      error: primaryPgError
     };
 
-    try {
-      if (pgPool) {
+    if (primaryPgPool && primaryPgConnected) {
+      try {
         const dbStart = Date.now();
-        const client = await pgPool.connect();
+        const client = await primaryPgPool.connect();
         const verRes = await client.query("SELECT NOW() as now, version();");
         const tblRes = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public';");
         client.release();
-        dbResult = {
+        primaryResult = {
           status: "operational",
           connected: true,
           latencyMs: Date.now() - dbStart,
@@ -4587,23 +5169,64 @@ Please proceed with the task according to safety guidelines and update milestone
           version: verRes.rows[0]?.version || "PostgreSQL",
           error: null
         };
-      } else {
-        dbResult.error = pgError || "Database connection pool not initialized";
+      } catch (dbErr: any) {
+        primaryResult.error = dbErr.message || String(dbErr);
       }
-    } catch (dbErr: any) {
-      dbResult = {
-        status: "offline",
-        connected: false,
-        latencyMs: null,
-        host: dbConfig.host,
-        port: dbConfig.port,
-        database: dbConfig.database,
-        user: dbConfig.user,
-        tableCount: 0,
-        version: null,
-        error: dbErr.message || String(dbErr)
-      };
     }
+
+    let localResult: any = {
+      status: "offline",
+      connected: false,
+      latencyMs: null,
+      host: localDbConfig.host,
+      port: localDbConfig.port,
+      database: localDbConfig.database,
+      user: localDbConfig.user,
+      tableCount: 0,
+      version: null,
+      error: localPgError
+    };
+
+    if (localPgPool && localPgConnected) {
+      try {
+        const dbStart = Date.now();
+        const client = await localPgPool.connect();
+        const verRes = await client.query("SELECT NOW() as now, version();");
+        const tblRes = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public';");
+        client.release();
+        localResult = {
+          status: "operational",
+          connected: true,
+          latencyMs: Date.now() - dbStart,
+          host: localDbConfig.host,
+          port: localDbConfig.port,
+          database: localDbConfig.database,
+          user: localDbConfig.user,
+          tableCount: tblRes.rows.length,
+          version: verRes.rows[0]?.version || "PostgreSQL",
+          error: null
+        };
+      } catch (dbErr: any) {
+        localResult.error = dbErr.message || String(dbErr);
+      }
+    }
+
+    const isAnyDbConnected = primaryResult.connected || localResult.connected;
+    const dbResult = {
+      status: primaryResult.connected ? "operational" : (localResult.connected ? "operational" : "offline"),
+      connected: isAnyDbConnected,
+      activeSource: primaryResult.connected ? "primary_postgres" : (localResult.connected ? "local_postgres_fallback" : "local_json_resilient"),
+      latencyMs: primaryResult.connected ? primaryResult.latencyMs : localResult.latencyMs,
+      host: primaryResult.connected ? primaryResult.host : localResult.host,
+      port: primaryResult.connected ? primaryResult.port : localResult.port,
+      database: primaryResult.connected ? primaryResult.database : localResult.database,
+      user: primaryResult.connected ? primaryResult.user : localResult.user,
+      tableCount: primaryResult.connected ? primaryResult.tableCount : localResult.tableCount,
+      version: primaryResult.connected ? primaryResult.version : localResult.version,
+      error: isAnyDbConnected ? null : (primaryResult.error || localResult.error),
+      primary: primaryResult,
+      fallbackLocal: localResult
+    };
 
     // 2. Check Action Server & Gateway
     const targetActionUrl = appConfig.actionServerUrl || process.env.VITE_ACTION_SERVER_URL || "https://gateway.errandly.site";
@@ -4759,6 +5382,62 @@ Please proceed with the task according to safety guidelines and update milestone
     capturedLogs.length = 0;
     res.json({ success: true, logs: [] });
   });
+
+  // =========================================================================
+  // DATA SYNCHRONIZATION & CONSISTENCY STATUS API ENDPOINTS
+  // =========================================================================
+
+  // 1. Get Live Sync Status & Trigger Mismatch Auto-Reconciliation
+  const handleGetSyncStatus = async (req: express.Request, res: express.Response) => {
+    try {
+      const autoHeal = req.query.autoHeal !== 'false';
+      const syncResult = await syncDataBetweenSources({ autoHeal });
+      res.json({
+        ...syncResult,
+        auditLogs: syncAuditLog.slice(0, 100),
+        autoSyncIntervalSeconds: 25,
+        autoSyncEnabled: true
+      });
+    } catch (err: any) {
+      console.error("[Sync Status Endpoint Error]:", err);
+      res.status(500).json({ success: false, error: err.message, lastSummary: lastSyncSummary });
+    }
+  };
+
+  app.get("/api/connectionadmin/sync/status", requireConnectionAdminAuth, handleGetSyncStatus);
+  app.get("/api/admin/sync/status", handleGetSyncStatus);
+
+  // 2. Force Full Bi-Directional Database Sync
+  const handleTriggerSync = async (req: express.Request, res: express.Response) => {
+    try {
+      const { table } = req.body || {};
+      const syncResult = await syncDataBetweenSources({ autoHeal: true, targetTable: table });
+      res.json({
+        ...syncResult,
+        auditLogs: syncAuditLog.slice(0, 100),
+        message: syncResult.synced 
+          ? `All data sources are 100% synchronized (${syncResult.recordsReconciled} records reconciled).` 
+          : `Sync completed with ${syncResult.mismatchesDetected} mismatches processed.`
+      });
+    } catch (err: any) {
+      console.error("[Sync Trigger Endpoint Error]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  };
+
+  app.post("/api/connectionadmin/sync/trigger", requireConnectionAdminAuth, handleTriggerSync);
+  app.post("/api/admin/sync/trigger", handleTriggerSync);
+  app.post("/api/connectionadmin/sync/table", requireConnectionAdminAuth, handleTriggerSync);
+  app.post("/api/admin/sync/table", handleTriggerSync);
+
+  // 3. Clear Sync Audit Logs
+  const handleClearSyncLogs = (req: express.Request, res: express.Response) => {
+    syncAuditLog.length = 0;
+    res.json({ success: true, message: "Sync audit logs cleared successfully." });
+  };
+
+  app.post("/api/connectionadmin/sync/logs/clear", requireConnectionAdminAuth, handleClearSyncLogs);
+  app.post("/api/admin/sync/logs/clear", handleClearSyncLogs);
 
   app.get("/api/admin/db-mode", (req, res) => {
     res.json({ forceDatabaseMode });

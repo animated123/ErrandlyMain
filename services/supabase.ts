@@ -70,7 +70,8 @@ function buildClientPostgrestBuilder(tableName: string, chainCalls: any[] = []):
           body: bodyVal,
           match: Object.keys(matchVal).length > 0 ? matchVal : undefined,
           or: orVal || undefined,
-          in: inVal || undefined
+          in: inVal || undefined,
+          chainCalls: chainCalls
         })
       });
 
