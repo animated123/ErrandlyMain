@@ -1,4 +1,5 @@
-// Client-side session rate limit interceptor and toast notifications
+
+// Client-side session rate limit interceptor and sync queue
 export function getSessionId(): string {
   if (typeof window === 'undefined') return 'server_side';
   let sessionId = sessionStorage.getItem('errand_session_id');
@@ -9,42 +10,59 @@ export function getSessionId(): string {
   return sessionId;
 }
 
-let toastContainer: HTMLDivElement | null = null;
+// In-memory queue for requests that failed due to rate limiting
+// We use in-memory to support non-serializable bodies like FormData/Blob
+interface QueuedRequest {
+  input: RequestInfo | URL;
+  init?: RequestInit;
+  retryAfter: number;
+  attempts: number;
+}
 
-function showRateLimitToast(message: string, retryAfterSec: number) {
-  if (typeof document === 'undefined') return;
+const requestQueue: QueuedRequest[] = [];
+let isProcessingQueue = false;
 
-  if (!toastContainer) {
-    toastContainer = document.createElement('div');
-    toastContainer.id = 'rate-limit-toast-container';
-    toastContainer.className = 'fixed top-4 right-4 z-[99999] flex flex-col gap-2 max-w-md w-full px-4 pointer-events-none';
-    document.body.appendChild(toastContainer);
+async function processQueue() {
+  if (isProcessingQueue || requestQueue.length === 0) return;
+  isProcessingQueue = true;
+
+  console.log(`[RateLimiter] Syncing ${requestQueue.length} queued requests...`);
+
+  while (requestQueue.length > 0) {
+    const request = requestQueue[0];
+    
+    // Wait for the requested duration
+    await new Promise(resolve => setTimeout(resolve, request.retryAfter * 1000));
+
+    try {
+      const response = await fetch(request.input, request.init);
+      if (response.status === 429) {
+        // Still rate limited, increase backoff and keep in queue
+        request.attempts++;
+        request.retryAfter = Math.min(request.retryAfter * 1.5, 60);
+        console.warn(`[RateLimiter] Still rate limited. Attempt ${request.attempts}. Retrying in ${request.retryAfter}s`);
+        break; // Stop processing and wait for next interval
+      } else {
+        // Success! Remove from queue
+        requestQueue.shift();
+        console.log(`[RateLimiter] Successfully synced request to ${request.input}`);
+      }
+    } catch (err) {
+      console.error('[RateLimiter] Failed to sync request:', err);
+      // Remove if too many failures, or keep retrying?
+      if (request.attempts > 5) {
+        requestQueue.shift();
+      } else {
+        request.attempts++;
+        break;
+      }
+    }
   }
 
-  const toast = document.createElement('div');
-  toast.className = 'pointer-events-auto bg-slate-900/95 text-white p-4 rounded-2xl shadow-2xl border border-amber-500/30 backdrop-blur-md flex items-start gap-3 animate-in fade-in slide-in-from-top-4 duration-300';
-  
-  toast.innerHTML = `
-    <div class="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 font-bold text-base mt-0.5 border border-amber-500/30">
-      ⚡
-    </div>
-    <div class="flex-1 text-xs">
-      <div class="font-bold text-amber-400 flex items-center justify-between">
-        <span>Session Rate Limit Active</span>
-        <span class="font-mono text-[10px] bg-amber-500/20 px-2 py-0.5 rounded text-amber-300 border border-amber-500/30 font-bold">${retryAfterSec}s pause</span>
-      </div>
-      <p class="text-slate-300 mt-1 leading-relaxed">${message || 'You have reached the maximum allowed requests for this session. Please wait a few seconds to protect host and database performance.'}</p>
-    </div>
-  `;
-
-  toastContainer.appendChild(toast);
-
-  setTimeout(() => {
-    toast.classList.add('opacity-0', 'transition-opacity', 'duration-500');
-    setTimeout(() => {
-      toast.remove();
-    }, 500);
-  }, Math.max(retryAfterSec * 1000, 4000));
+  isProcessingQueue = false;
+  if (requestQueue.length > 0) {
+    setTimeout(processQueue, 5000); // Check again in 5s
+  }
 }
 
 export function initClientRateLimiter() {
@@ -65,24 +83,62 @@ export function initClientRateLimiter() {
     }
     options.headers = headers;
 
-    const response = await originalFetch(input, options);
+    try {
+      const response = await originalFetch(input, options);
 
-    if (response.status === 429) {
-      try {
-        const clone = response.clone();
-        const data = await clone.json();
+      if (response.status === 429) {
+        const data = await response.clone().json().catch(() => ({}));
         const retryAfter = data.retryAfterSeconds || parseInt(response.headers.get('Retry-After') || '15', 10);
-        showRateLimitToast(data.message, retryAfter);
         
-        window.dispatchEvent(new CustomEvent('session-rate-limit-exceeded', {
-          detail: { message: data.message, retryAfterSeconds: retryAfter, tier: data.tier }
-        }));
-      } catch (_) {
-        showRateLimitToast('Session call limit reached. Please pause for a moment.', 15);
-      }
-    }
+        console.warn(`[RateLimiter] Rate limit exceeded. Queueing request for ${input}`);
 
-    return response;
+        // Queue the request for background sync
+        requestQueue.push({
+          input,
+          init: options,
+          retryAfter,
+          attempts: 1
+        });
+
+        // Start background processing
+        if (!isProcessingQueue) {
+          setTimeout(processQueue, 100);
+        }
+
+        // Return a "fake" successful response to the UI to avoid errors, 
+        // since we've queued it for eventual success.
+        // Or return a 202 Accepted style response.
+        return new Response(JSON.stringify({ 
+          status: 'queued', 
+          message: 'Request rate limited, queued for background sync',
+          retryAfter 
+        }), {
+          status: 202,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      return response;
+    } catch (err) {
+      // If it's a network error, we could also queue it
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        console.warn(`[RateLimiter] Connection lost. Queueing request for ${input}`);
+        requestQueue.push({
+          input,
+          init: options,
+          retryAfter: 5,
+          attempts: 1
+        });
+        if (!isProcessingQueue) {
+          setTimeout(processQueue, 5000);
+        }
+        return new Response(JSON.stringify({ status: 'queued', message: 'Offline, queued for sync' }), {
+          status: 202,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      throw err;
+    }
   };
 
   try {
@@ -99,5 +155,5 @@ export function initClientRateLimiter() {
     }
   }
 
-  console.log(`[RateLimiter Client] Initialized with session ID: ${getSessionId()}`);
+  console.log(`[RateLimiter Client] Initialized with session ID: ${getSessionId()}. Background sync active.`);
 }

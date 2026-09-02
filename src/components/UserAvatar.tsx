@@ -14,7 +14,8 @@ const UserAvatar: React.FC<UserAvatarProps> = ({ src, name, className = "w-12 h-
 
   const getFallbackUrl = () => {
     if (!name) return null;
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff&bold=true`;
+    // Using a consistent primary color background (Teal-ish) instead of random
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=0D9488&color=fff&bold=true`;
   };
 
   const finalSrc = error ? getFallbackUrl() : (src || getFallbackUrl());
@@ -23,14 +24,14 @@ const UserAvatar: React.FC<UserAvatarProps> = ({ src, name, className = "w-12 h-
     <img 
       src={finalSrc} 
       alt={name || 'User'} 
-      className={`${className} object-cover rounded-full border border-slate-100 dark:border-slate-800 shadow-sm`}
+      className={`${className} object-cover border border-border shadow-sm`}
       referrerPolicy="no-referrer"
       onError={() => {
         if (!error) setError(true);
       }}
     />
   ) : (
-    <div className={`${className} bg-secondary flex items-center justify-center text-muted-foreground rounded-full border border-border shadow-inner text-xs font-black uppercase`}>
+    <div className={`${className} bg-secondary flex items-center justify-center text-muted-foreground border border-border shadow-inner text-xs font-black uppercase`}>
       {name ? name[0] : <UserIcon size={size} strokeWidth={2.5} />}
     </div>
   );

@@ -359,30 +359,33 @@ export default function MapComponent({
         <p className="text-sm text-slate-600 max-w-md mb-6 leading-relaxed">
           {(!apiKey || apiKey === 'YOUR_API_KEY' || apiKey?.trim() === '') ? 
             "API key is missing. Please add a valid VITE_GOOGLE_MAPS_API_KEY in your settings to view the map." : 
-            "Your API key was loaded, but the 'Maps JavaScript API' is not enabled in your Google Cloud Project."
+            "The Maps JavaScript API is not enabled OR billing is not configured in your Google Cloud Project."
           }
         </p>
-        <div className="bg-white rounded-2xl border border-slate-150 p-4 text-left max-w-md w-full shadow-sm text-xs font-semibold text-slate-700 space-y-2 font-sans">
-          <p className="font-black text-slate-800 uppercase tracking-wider text-[10px]">Setup Instruction Steps:</p>
-          <div className="flex gap-2">
-            <span className="font-extrabold text-indigo-600">1.</span> 
-            <span>Open <a hRef="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="underline font-bold text-indigo-600 hover:text-indigo-700">Google Cloud Console</a>.</span>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl w-full text-left">
+          <div className="bg-white rounded-2xl border border-slate-150 p-4 shadow-sm text-xs font-semibold text-slate-700 space-y-2 font-sans">
+            <p className="font-black text-slate-800 uppercase tracking-wider text-[10px] text-indigo-600">Option A: Prototyping (Fastest)</p>
+            <p className="text-[11px] leading-snug">Use the <strong>Maps Demo Key</strong> — no billing or Cloud project required.</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Open <a hRef="https://mapsplatform.google.com/maps-demo-key" target="_blank" rel="noreferrer" className="underline font-bold text-indigo-600">Maps Demo Key Console</a>.</li>
+              <li>Sign in & accept terms.</li>
+              <li>Copy the key and paste it as <strong>VITE_GOOGLE_MAPS_API_KEY</strong> in your app settings.</li>
+            </ol>
           </div>
-          <div className="flex gap-2">
-            <span className="font-extrabold text-indigo-600">2.</span> 
-            <span>Go to <strong>APIs & Services</strong> &gt; <strong>Library</strong>.</span>
-          </div>
-          <div className="flex gap-2">
-            <span className="font-extrabold text-indigo-600">3.</span> 
-            <span>Search for <strong>&quot;Maps JavaScript API&quot;</strong> and click <strong>Enable</strong>.</span>
-          </div>
-          <div className="flex gap-2">
-            <span className="font-extrabold text-indigo-600">4.</span> 
-            <span>Also enable <strong>&quot;Places API (New)&quot;</strong> and <strong>&quot;Routes API&quot;</strong> for full functionality.</span>
+
+          <div className="bg-white rounded-2xl border border-slate-150 p-4 shadow-sm text-xs font-semibold text-slate-700 space-y-2 font-sans">
+            <p className="font-black text-slate-800 uppercase tracking-wider text-[10px] text-slate-500">Option B: Production Setup</p>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Open <a hRef="https://console.cloud.google.com/google/maps-apis/credentials" target="_blank" rel="noreferrer" className="underline font-bold text-slate-600">Cloud Console</a>.</li>
+              <li>Enable <strong>Billing</strong> for your project.</li>
+              <li>Enable <strong>Maps JavaScript API</strong>, <strong>Places API</strong>, and <strong>Routes API</strong> in the Library.</li>
+            </ol>
           </div>
         </div>
+
         <div className="mt-6 text-slate-400 text-[10px] font-mono leading-tight">
-          Error signature: Google Maps API loading failed
+          Error Signature: BillingNotEnabledMapError
         </div>
       </div>
     );

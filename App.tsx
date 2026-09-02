@@ -34,6 +34,7 @@ import { generateErrandWhatsAppShareUrl, generateErrandDeepLink } from './servic
 import Layout from './src/components/Layout';
 import ErrandCard, { ErrandCardSkeleton, Skeleton } from './src/components/ErrandCard';
 import { Logo } from './src/components/Logo';
+import { haptics } from './src/lib/haptics';
 import AuthModal from './src/components/AuthModal';
 import TemporaryPasswordModal from './src/components/TemporaryPasswordModal';
 import { NotificationService } from './src/services/NotificationService';
@@ -1027,451 +1028,394 @@ export default function App() {
 
           <div className="max-w-7xl mx-auto space-y-6 md:space-y-8 px-4 sm:px-6 md:px-8">
             {activeTab === 'dashboard' && (
-          <div className="space-y-8 pb-16">
-            {/* Hero Section */}
-            <div className="relative group">
-              <div className="absolute inset-0 bg-gradient-to-br from-primary via-primary/50 to-secondary/30 rounded-[2rem] md:rounded-[2.5rem] blur-3xl opacity-10 group-hover:opacity-20 transition-opacity duration-700"></div>
-              <div 
-                className="bg-[#0a2e5c] rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-10 text-white relative overflow-hidden shadow-strong min-h-[180px] md:min-h-[220px] flex flex-col justify-center border border-white/5"
-                style={appSettings.dashboardHeroUrl ? {
-                  backgroundImage: `linear-gradient(rgba(10, 46, 92, 0.8), rgba(10, 46, 92, 0.8)), url('${appSettings.dashboardHeroUrl}')`,
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center'
-                } : {
-                  backgroundImage: `linear-gradient(rgba(10, 46, 92, 0.8), rgba(10, 46, 92, 0.8)), url('https://res-console.cloudinary.com/dul9xvvap/thumbnails/transform/v1/image/upload/Y19maWxsLGhfMjAwLHdfMjAw/v1/RXJyYW5kc19sb2dvX25ld19rc3RleW8=/template_primary')`,
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center'
-                }}
-              >
-                <div className="relative z-10 max-w-2xl">
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5 }}
-                  >
-                    <div className="flex items-center gap-2 md:gap-3 mb-4 md:mb-6">
-                      <div className="px-2 md:px-3 py-1 bg-white/10 text-white backdrop-blur-md rounded-full border border-white/20 text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em]">
-                        ✨ Welcome Back
-                      </div>
-                      {user?.role === UserRole.RUNNER && (
-                        <div className="px-2 md:px-3 py-1 bg-primary/20 text-cyan-200 backdrop-blur-md rounded-full border border-primary/30 text-[8px] md:text-[10px] font-black uppercase tracking-[0.2em]">
-                          Runner Portal
-                        </div>
-                      )}
-                    </div>
-                    <h2 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-black mb-4 md:mb-6 tracking-tighter leading-[0.9] md:leading-[0.85] font-serif italic">
-                      Errands Coordination <br className="hidden md:block" /> for the Modern World.
-                    </h2>
-                    <p className="text-sm md:text-base font-medium text-slate-300 mb-8 md:mb-10 max-w-xl leading-relaxed">
-                      Experience the next generation of logistics. From premium laundry to real-time coordination—handle every errand with surgical precision.
-                    </p>
-                  </motion.div>
-                  
-                  <div className="flex flex-wrap gap-3 md:gap-4">
-                    <button 
-                      onClick={() => setActiveTab(user?.role === UserRole.RUNNER ? 'find' : 'create')}
-                      className="flex-1 sm:flex-none px-6 md:px-8 py-3.5 md:py-4 bg-primary text-white hover:bg-primary/90 rounded-xl md:rounded-2xl flex items-center justify-center gap-2 md:gap-3 font-black text-[10px] md:text-xs uppercase tracking-widest transition-all shadow-[0_10px_20px_rgba(33,140,141,0.2)] active:scale-95"
-                    >
-                      {user?.role === UserRole.RUNNER ? <Search size={14} /> : <PlusCircle size={14} />}
-                      {user?.role === UserRole.RUNNER ? 'Find Errands' : 'Post New Task'}
-                    </button>
-                    <button 
-                      onClick={() => setActiveTab(user?.role === UserRole.RUNNER ? 'my-errands' : 'find')}
-                      className="flex-1 sm:flex-none px-6 md:px-8 py-3.5 md:py-4 bg-white/10 text-white border border-white/20 rounded-xl md:rounded-2xl text-[10px] md:text-xs font-black uppercase tracking-widest hover:bg-white/20 transition-all active:scale-95 backdrop-blur-md flex items-center justify-center"
-                    >
-                      {user?.role === UserRole.RUNNER ? 'Active Tasks' : 'Find Runners'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Decorative Elements */}
-                <div className="absolute -right-12 -bottom-12 opacity-10 rotate-12 pointer-events-none">
-                  <Logo 
-                    size={400} 
-                    url={appSettings.logoUrl} 
-                    scale={appSettings.logoScale} 
-                    variant={appSettings.logoVariant} 
-                  />
-                </div>
-                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/20 rounded-full -mr-32 -mt-32 blur-[100px]"></div>
-                <div className="absolute bottom-0 left-1/4 w-32 h-32 bg-secondary/10 rounded-full blur-[80px]"></div>
-              </div>
-            </div>
-
-            {/* Stats Bento Grid (Admin or Active User) */}
-            {(user?.isAdmin || errands.length > 0) && (
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-                {user?.isAdmin ? (
-                  <>
-                    <motion.div 
-                      whileHover={{ y: -5 }}
-                      className="bg-white dark:bg-slate-900 p-4 md:p-6 rounded-2xl md:rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between min-h-[120px] md:min-h-[140px] group hover:shadow-xl hover:border-indigo-500/30 transition-all cursor-pointer relative overflow-hidden"
-                    >
-                      <div className="absolute top-0 right-0 w-20 md:w-24 h-20 md:h-24 bg-indigo-50 dark:bg-indigo-900/10 rounded-full -mr-10 md:-mr-12 -mt-10 md:-mt-12 transition-transform group-hover:scale-150 duration-700" />
-                      <div className="w-10 h-10 md:w-12 md:h-12 bg-indigo-50 dark:bg-indigo-900/20 rounded-xl md:rounded-2xl flex items-center justify-center text-indigo-600 mb-3 md:mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-all relative z-10">
-                        <Users size={20} />
-                      </div>
-                      <div className="relative z-10">
-                        <p className="text-[8px] md:text-[10px] font-black tracking-widest uppercase text-slate-400 mb-0.5 md:mb-1">Total Users</p>
-                        <p className="text-xl md:text-3xl font-black tracking-tighter text-slate-900 dark:text-white">{(stats?.totalUsers || 0).toLocaleString()}</p>
-                      </div>
-                    </motion.div>
-                    <motion.div 
-                      whileHover={{ y: -5 }}
-                      className="bg-white dark:bg-slate-900 p-4 md:p-6 rounded-2xl md:rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between min-h-[120px] md:min-h-[140px] group hover:shadow-xl hover:border-violet-500/30 transition-all cursor-pointer relative overflow-hidden"
-                    >
-                      <div className="absolute top-0 right-0 w-20 md:w-24 h-20 md:h-24 bg-violet-50 dark:bg-violet-900/10 rounded-full -mr-10 md:-mr-12 -mt-10 md:-mt-12 transition-transform group-hover:scale-150 duration-700" />
-                      <div className="w-10 h-10 md:w-12 md:h-12 bg-violet-50 dark:bg-violet-900/20 rounded-xl md:rounded-2xl flex items-center justify-center text-violet-600 mb-3 md:mb-4 group-hover:bg-violet-600 group-hover:text-white transition-all relative z-10">
-                        <List size={20} />
-                      </div>
-                      <div className="relative z-10">
-                        <p className="text-[8px] md:text-[10px] font-black tracking-widest uppercase text-slate-400 mb-0.5 md:mb-1">Total Tasks</p>
-                        <p className="text-xl md:text-3xl font-black tracking-tighter text-slate-900 dark:text-white">{(stats?.totalTasks || 0).toLocaleString()}</p>
-                      </div>
-                    </motion.div>
-                    <motion.div 
-                      whileHover={{ y: -5 }}
-                      className="bg-white dark:bg-slate-900 p-4 md:p-6 rounded-2xl md:rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between min-h-[120px] md:min-h-[140px] group hover:shadow-xl hover:border-emerald-500/30 transition-all cursor-pointer relative overflow-hidden"
-                    >
-                      <div className="absolute top-0 right-0 w-20 md:w-24 h-20 md:h-24 bg-emerald-50 dark:bg-emerald-900/10 rounded-full -mr-10 md:-mr-12 -mt-10 md:-mt-12 transition-transform group-hover:scale-150 duration-700" />
-                      <div className="w-10 h-10 md:w-12 md:h-12 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl md:rounded-2xl flex items-center justify-center text-emerald-600 mb-3 md:mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-all relative z-10">
-                        <Activity size={20} />
-                      </div>
-                      <div className="relative z-10">
-                        <p className="text-[8px] md:text-[10px] font-black tracking-widest uppercase text-slate-400 mb-0.5 md:mb-1">Online Now</p>
-                        <p className="text-xl md:text-3xl font-black tracking-tighter text-emerald-600">{(stats?.onlineUsers || 0).toLocaleString()}</p>
-                      </div>
-                    </motion.div>
-                    <motion.div 
-                      whileHover={{ y: -5 }}
-                      className="bg-white dark:bg-slate-900 p-4 md:p-6 rounded-2xl md:rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between min-h-[120px] md:min-h-[140px] group hover:shadow-xl hover:border-amber-500/30 transition-all cursor-pointer relative overflow-hidden"
-                    >
-                      <div className="absolute top-0 right-0 w-20 md:w-24 h-20 md:h-24 bg-amber-50 dark:bg-amber-900/10 rounded-full -mr-10 md:-mr-12 -mt-10 md:-mt-12 transition-transform group-hover:scale-150 duration-700" />
-                      <div className="w-10 h-10 md:w-12 md:h-12 bg-amber-50 dark:bg-amber-900/20 rounded-xl md:rounded-2xl flex items-center justify-center text-amber-600 mb-3 md:mb-4 group-hover:bg-amber-600 group-hover:text-white transition-all relative z-10">
-                        <DollarSign size={20} />
-                      </div>
-                      <div className="relative z-10">
-                        <p className="text-[8px] md:text-[10px] font-black tracking-widest uppercase text-slate-400 mb-0.5 md:mb-1">Revenue</p>
-                        <p className="text-xl md:text-3xl font-black tracking-tighter text-slate-900 dark:text-white">KSH {(stats?.totalRevenue || 0).toLocaleString()}</p>
-                      </div>
-                    </motion.div>
-                  </>
-                ) : (
-                  <>
-                    <motion.div 
-                      whileHover={{ y: -5 }}
-                      className="bg-white dark:bg-slate-900 p-5 md:p-8 rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm group hover:shadow-xl hover:border-indigo-500/30 transition-all relative overflow-hidden"
-                    >
-                      <div className="absolute top-0 right-0 w-24 md:w-32 h-24 md:h-32 bg-indigo-50 dark:bg-indigo-900/10 rounded-full -mr-12 md:-mr-16 -mt-12 md:-mt-16 transition-transform group-hover:scale-150 duration-700" />
-                      <div className="relative z-10">
-                        <div className="w-10 h-10 md:w-12 md:h-12 bg-primary/10 dark:bg-primary/20 rounded-xl md:rounded-2xl flex items-center justify-center text-primary mb-4 md:mb-6 group-hover:bg-primary group-hover:text-white transition-colors">
-                          <Activity size={20} />
-                        </div>
-                        <p className="text-[8px] md:text-[10px] font-black tracking-widest uppercase text-slate-400 mb-1 md:mb-2">Active Tasks</p>
-                        <p className="text-2xl md:text-4xl font-black tracking-tighter text-slate-900 dark:text-white">{errands.filter(e => e.status !== ErrandStatus.COMPLETED).length}</p>
-                      </div>
-                    </motion.div>
-
-                    <motion.div 
-                      whileHover={{ y: -5 }}
-                      className="bg-white dark:bg-slate-900 p-8 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-sm group hover:shadow-xl hover:border-emerald-500/30 transition-all relative overflow-hidden"
-                    >
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50 dark:bg-emerald-900/10 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150 duration-700" />
-                      <div className="relative z-10">
-                        <div className="w-12 h-12 bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl flex items-center justify-center text-emerald-600 mb-6 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                          <CheckCircle2 size={24} />
-                        </div>
-                        <p className="text-[10px] font-black tracking-widest uppercase text-slate-400 mb-2">Completed</p>
-                        <p className="text-4xl font-black tracking-tighter text-slate-900 dark:text-white">{errands.filter(e => e.status === ErrandStatus.COMPLETED).length}</p>
-                      </div>
-                    </motion.div>
-                    
-                    <motion.div 
-                      whileHover={{ y: -5 }}
-                      className="bg-indigo-600 p-8 col-span-2 md:col-span-2 rounded-[2.5rem] text-white shadow-xl shadow-indigo-200 dark:shadow-none relative overflow-hidden group border border-indigo-500"
-                    >
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:bg-white/20 transition-all duration-700" />
-                      <div className="flex justify-between items-start mb-6 relative z-10">
-                        <p className="text-[10px] font-black tracking-widest uppercase opacity-70">Wallet Balance</p>
-                        <div className="flex items-center gap-3">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              refreshBalance();
-                            }}
-                            className="p-2 hover:bg-white/10 rounded-xl transition-all"
-                            title="Refresh Balance"
-                          >
-                            <RefreshCw size={18} className="opacity-70 hover:opacity-100" />
-                          </button>
-                          <Zap size={18} className="text-amber-300 animate-pulse" />
-                        </div>
-                      </div>
-                      <div className="flex items-baseline gap-2 mb-8 relative z-10">
-                        <span className="text-xl font-black leading-none opacity-60">KSH</span>
-                        <p className="text-5xl font-black tracking-tighter">{(user?.walletBalance || 0).toLocaleString()}</p>
-                      </div>
-                      <button 
-                        onClick={() => setShowWallet(true)}
-                        className="w-full py-4 bg-white/10 hover:bg-white/20 rounded-[1.25rem] text-[10px] font-black uppercase tracking-widest transition-all border border-white/20 backdrop-blur-md relative z-10"
-                      >
-                        Manage Account Balance
-                      </button>
-                    </motion.div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Search & AI Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              <div className="lg:col-span-7 space-y-4">
-                {/* Search Bar */}
-                <div className="relative group z-30 px-2 md:px-0">
-                  <div className="absolute inset-y-0 left-6 md:left-8 flex items-center pointer-events-none">
-                    <Search className="text-slate-400 group-focus-within:text-indigo-600 transition-colors" size={20} />
-                  </div>
-                  <input 
-                    type="text" 
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search errands..." 
-                    className="w-full pl-12 md:pl-16 pr-6 md:pr-8 py-4 md:py-6 bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-100 dark:border-slate-800 rounded-2xl md:rounded-[2.5rem] font-black text-sm md:text-lg outline-none focus:ring-[8px] md:focus:ring-[12px] focus:ring-primary/5 focus:border-primary/30 transition-all shadow-sm placeholder:text-slate-400"
-                  />
-                  {searchSuggestions.length > 0 && (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      className="absolute top-full left-0 right-0 mt-4 bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-2xl overflow-hidden z-50 p-2"
-                    >
-                      <div className="px-6 py-4 flex items-center justify-between">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Smart Suggestions</p>
-                        <Sparkles size={16} className="text-indigo-600 animate-pulse" />
-                      </div>
-                      <div className="max-h-80 overflow-y-auto custom-scrollbar">
-                        {searchSuggestions.map((s) => (
-                          <button 
-                            key={s}
-                            onClick={() => {
-                              setSearchQuery(s);
-                              setSearchSuggestions([]);
-                            }}
-                            className="w-full px-6 py-5 text-left text-sm font-black text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl transition-all flex items-center gap-4 group"
-                          >
-                            <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                              <Search size={16} />
-                            </div>
-                            {s}
-                          </button>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </div>
-
-                {/* Categories */}
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between px-4">
-                    <h3 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white font-serif">Popular Services</h3>
-                    <button onClick={() => setActiveTab('menu')} className="text-[10px] font-black uppercase tracking-[0.2em] text-primary hover:text-secondary transition-all">Explore Catalogue</button>
-                  </div>
-                  <div className="flex gap-4 md:gap-6 overflow-x-auto pb-6 no-scrollbar px-2 md:px-4 -mx-4">
-                    {Object.values(ErrandCategory).map((cat) => (
-                      <button 
-                        key={cat}
-                        onClick={() => {
-                          setErrandForm({ ...errandForm, category: cat });
-                          setActiveTab('create');
-                        }}
-                        className="flex-shrink-0 w-24 md:w-28 group"
-                      >
-                        <div className="aspect-square bg-white dark:bg-slate-900 rounded-[1.5rem] md:rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col items-center justify-center gap-2 md:gap-3 group-hover:shadow-xl group-hover:border-primary/30 transition-all group-hover:-translate-y-2">
-                          <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 dark:bg-slate-800 rounded-xl md:rounded-2xl flex items-center justify-center transition-colors overflow-hidden">
-                             <img src={`https://picsum.photos/seed/${cat}/100/100`} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt={cat} />
-                          </div>
-                          <p className="text-[10px] md:text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-primary transition-colors px-2 text-center leading-none">{cat.replace('_', ' ')}</p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="lg:col-span-5">
-                {/* Smart Create NLP */}
-                <div className="bg-slate-950 p-8 rounded-[3rem] shadow-2xl space-y-6 h-full flex flex-col relative overflow-hidden group">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-primary/20 rounded-full blur-[80px] -mr-24 -mt-24 group-hover:bg-primary/30 transition-all duration-1000" />
-                  
-                  <div className="flex items-center justify-between relative z-10">
-                    <div>
-                      <h3 className="text-3xl text-white font-black tracking-tight font-serif italic-caps">Magic Post</h3>
-                      <div className="flex items-center gap-2.5 mt-1">
-                        <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">AI Logic Processing</p>
-                      </div>
-                    </div>
-                    <div className="w-12 h-12 bg-white/5 rounded-[1.25rem] flex items-center justify-center text-primary shadow-inner backdrop-blur-xl border border-white/10 group-hover:rotate-12 transition-transform duration-500">
-                      <Sparkles size={24} className="animate-pulse" />
-                    </div>
-                  </div>
-                  
-                  <div className="relative flex-1 z-10 flex flex-col">
-                    <textarea 
-                      value={smartInput}
-                      onChange={(e) => setSmartInput(e.target.value)}
-                      placeholder="Describe your errand in plain words... e.g. 'I need some groceries from Chandarana Westlands for 1000 bob' "
-                      className="w-full flex-1 p-6 bg-white/5 border border-white/10 rounded-2xl text-lg font-bold text-white outline-none resize-none focus:ring-4 focus:ring-primary/10 focus:border-primary/40 transition-all placeholder:text-slate-600"
-                    />
-                    <div className="mt-6 flex items-center justify-between gap-4">
-                      <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest hidden sm:block">AI will auto-fill everything</p>
-                      <button 
-                        onClick={handleSmartCreate}
-                        disabled={isParsing || !smartInput.trim()}
-                        className="px-8 py-5 bg-primary text-white rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] shadow-[0_12px_24px_rgba(var(--primary-rgb),0.3)] hover:shadow-[0_12px_32px_rgba(var(--primary-rgb),0.5)] active:scale-95 transition-all disabled:opacity-50 flex items-center gap-3"
-                      >
-                        {isParsing ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                        Analyze & Post
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Featured Services */}
-            <div className="space-y-6">
-              <div className="flex items-center justify-between px-4">
-                <h3 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white font-serif">Curated Services</h3>
-                <button onClick={() => setActiveTab('menu')} className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600 hover:text-indigo-700 transition-all">View Full Menu</button>
-              </div>
-              <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar px-2 -mx-2">
-                {isLoadingFeatured ? (
-                  Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="flex-shrink-0 w-48 bg-card text-card-foreground rounded-3xl p-3 border border-border shadow-soft animate-pulse">
-                      <div className="aspect-[4/3] bg-secondary rounded-2xl mb-3"></div>
-                      <div className="h-3 bg-secondary rounded-full w-3/4 mb-2"></div>
-                      <div className="h-3 bg-secondary rounded-full w-1/2"></div>
-                    </div>
-                  ))
-                ) : featuredServices.length === 0 ? (
-                  <div className="w-full py-16 text-center bg-card text-card-foreground rounded-[3rem] border border-border shadow-soft">
-                    <p className="text-base font-bold text-muted-foreground">No featured services available</p>
-                  </div>
-                ) : (
-                  featuredServices.map(service => (
-                    <motion.div 
-                      key={service.id} 
-                      whileHover={{ y: -5 }}
-                      onClick={() => setSelectedFeaturedService(service)}
-                      className="flex-shrink-0 w-44 bg-card text-card-foreground rounded-[2rem] overflow-hidden border border-border shadow-soft hover:shadow-strong transition-all group cursor-pointer"
-                    >
-                      <div className="aspect-square relative overflow-hidden m-2 rounded-2xl">
-                        <img src={service.imageUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" alt={service.title} />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-[2px]">
-                           <div className="bg-card text-card-foreground text-black px-4 py-2 rounded-xl text-sm font-black tracking-normal font-medium shadow-strong">View Details</div>
-                        </div>
-                        <div className="absolute top-2 right-2 px-2 py-1 bg-card text-card-foreground/90 backdrop-blur-md rounded-lg text-xs font-black text-primary shadow-sm">
-                          KSH {(service.price || 0).toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="p-4 pt-1">
-                        <h4 className="text-xs font-black mb-1 truncate text-foreground group-hover:text-primary transition-colors">{service.title}</h4>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1 text-amber-500">
-                            <Star size={16} fill="currentColor" />
-                            <span className="text-sm font-black">4.9</span>
-                          </div>
-                          <div className="w-7 h-7 bg-secondary rounded-lg flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-all">
-                            <ArrowRight size={14} />
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Nearby Runners for Requesters */}
-            {user?.role === UserRole.REQUESTER && nearbyRunners.length > 0 && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between px-4">
-                  <h3 className="text-3xl font-black tracking-tight text-slate-900 dark:text-white font-serif">Verified Runners</h3>
-                  <button onClick={() => setActiveTab('live-map')} className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-600 hover:text-indigo-700 transition-all">Interactive Map</button>
-                </div>
-                <div className="flex gap-4 overflow-x-auto pb-4 no-scrollbar px-2 -mx-2">
-                  {nearbyRunners.map((runner) => (
-                    <motion.div 
-                      key={runner.id} 
-                      whileHover={{ scale: 1.02 }}
-                      className="flex-shrink-0 w-36 bg-card text-card-foreground p-4 rounded-[2rem] border border-border shadow-soft flex flex-col items-center text-center gap-3"
-                    >
-                      <div className="w-14 h-14 rounded-2xl overflow-hidden border-4 border-white shadow-strong relative group">
-                        <UserAvatar 
-                          src={runner.profilePhoto || runner.avatar} 
-                          name={runner.name} 
-                          className="w-full h-full object-cover" 
-                          isVerified={runner.isVerified}
-                        />
-                        {runner.isOnline && (
-                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full shadow-sm"></div>
+              <div className="space-y-6 md:space-y-8 pb-16">
+                {/* Executive Command Header */}
+                <div className="bg-card text-card-foreground rounded-2xl border border-border p-6 md:p-8 shadow-sm relative overflow-hidden">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                    <div className="space-y-2 max-w-2xl">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">
+                          {user?.role === UserRole.RUNNER ? 'Runner Operations Console' : 'Errand & Delivery Network'}
+                        </span>
+                        {user?.isVerified && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                            <ShieldCheck size={12} /> Verified
+                          </span>
                         )}
                       </div>
-                      <div className="min-w-0 w-full">
-                        <h4 className="text-xs font-black truncate text-foreground">{runner.name.split(' ')[0]}</h4>
-                        <div className="flex items-center justify-center gap-1 text-amber-500 mt-0.5">
-                          <Star size={16} fill="currentColor" />
-                          <span className="text-sm font-black">{(runner.rating || 0).toFixed(1)}</span>
+                      <h1 className="text-2xl md:text-3xl font-black text-foreground tracking-tight font-display">
+                        {user ? `Welcome back, ${user.name.split(' ')[0]}` : 'On-Demand Errands & Local Delivery'}
+                      </h1>
+                      <p className="text-sm text-muted-foreground font-medium leading-relaxed">
+                        {user?.role === UserRole.RUNNER
+                          ? 'Browse open delivery jobs, place competitive bids, and manage active customer assignments across Nairobi.'
+                          : 'Coordinate custom deliveries, grocery shopping, laundry runs, and town errands with verified local couriers.'}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap sm:flex-nowrap items-center gap-3">
+                      <button 
+                        onClick={() => setActiveTab(user?.role === UserRole.RUNNER ? 'find' : 'create')}
+                        className="flex-1 sm:flex-none px-5 py-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95"
+                      >
+                        {user?.role === UserRole.RUNNER ? <Search size={15} /> : <Plus size={15} />}
+                        <span>{user?.role === UserRole.RUNNER ? 'Find Open Errands' : 'Post New Errand'}</span>
+                      </button>
+                      <button 
+                        onClick={() => setActiveTab(user?.role === UserRole.RUNNER ? 'my-errands' : 'menu')}
+                        className="flex-1 sm:flex-none px-5 py-3 bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-xl font-bold text-xs uppercase tracking-wider transition-all border border-border flex items-center justify-center gap-2 active:scale-95"
+                      >
+                        {user?.role === UserRole.RUNNER ? <List size={15} /> : <ShoppingBag size={15} />}
+                        <span>{user?.role === UserRole.RUNNER ? 'Active Runs' : 'Service Menu'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* KPI Metrics Strip */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                  {/* Card 1: Active Tasks */}
+                  <div className="bg-card text-card-foreground p-4 md:p-5 rounded-2xl border border-border shadow-sm flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Active Tasks</span>
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                        <Activity size={16} />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-2xl md:text-3xl font-black text-foreground">
+                        {errands.filter(e => e.status !== ErrandStatus.COMPLETED).length}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">In progress / pending</p>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Completed */}
+                  <div className="bg-card text-card-foreground p-4 md:p-5 rounded-2xl border border-border shadow-sm flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Completed</span>
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                        <CheckCircle2 size={16} />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-2xl md:text-3xl font-black text-foreground">
+                        {errands.filter(e => e.status === ErrandStatus.COMPLETED).length}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">Successfully delivered</p>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Wallet Balance */}
+                  <div className="bg-card text-card-foreground p-4 md:p-5 rounded-2xl border border-border shadow-sm flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">M-Pesa Wallet</span>
+                      <button 
+                        onClick={refreshBalance}
+                        className="w-8 h-8 rounded-lg bg-secondary text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors"
+                        title="Refresh Balance"
+                      >
+                        <RefreshCw size={14} />
+                      </button>
+                    </div>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div>
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-xs font-bold text-muted-foreground">KSH</span>
+                          <span className="text-2xl md:text-3xl font-black text-foreground">
+                            {(user?.walletBalance || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        <button 
+                          onClick={() => setShowWallet(true)} 
+                          className="text-[11px] text-primary font-bold hover:underline mt-0.5 block"
+                        >
+                          {user?.role === UserRole.RUNNER ? 'Request Payout →' : 'Top Up Balance →'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card 4: Fleet / Status */}
+                  <div className="bg-card text-card-foreground p-4 md:p-5 rounded-2xl border border-border shadow-sm flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Network Status</span>
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                        <MapPin size={16} />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-2xl md:text-3xl font-black text-foreground">
+                        {nearbyRunners.length > 0 ? nearbyRunners.length : 'Live'}
+                      </p>
+                      <button 
+                        onClick={() => setActiveTab('live-map')}
+                        className="text-[11px] text-primary font-bold hover:underline mt-0.5 block"
+                      >
+                        Open Live Courier Map →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Main 2-Column Action Grid: Categories & Smart Errand Composer */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  {/* Left Column: Popular Services Matrix */}
+                  <div className="lg:col-span-7 space-y-4">
+                    {/* Search Bar */}
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-muted-foreground">
+                        <Search size={16} />
+                      </div>
+                      <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search services or errands (e.g., Laundry, Kilimani delivery, Market shopping)..." 
+                        className="w-full pl-11 pr-4 py-3 bg-card text-card-foreground border border-border rounded-xl font-medium text-sm outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all placeholder:text-muted-foreground/60"
+                      />
+                    </div>
+
+                    {/* Category Fast-Launch Grid */}
+                    <div className="bg-card text-card-foreground p-5 md:p-6 rounded-2xl border border-border shadow-sm space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="text-base font-bold text-foreground tracking-tight font-display">Errand Categories</h2>
+                          <p className="text-xs text-muted-foreground">Select a category to quickly start a new request</p>
+                        </div>
+                        <button 
+                          onClick={() => setActiveTab('menu')}
+                          className="text-xs font-bold text-primary hover:underline"
+                        >
+                          View Catalogue
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {[
+                          { id: ErrandCategory.MAMA_FUA, label: 'Laundry & Mama Fua', icon: Waves, price: 'From KSH 500' },
+                          { id: ErrandCategory.MARKET_SHOPPING, label: 'Market Shopping', icon: ShoppingBag, price: 'From KSH 400' },
+                          { id: ErrandCategory.PACKAGE_DELIVERY, label: 'Package Delivery', icon: Package, price: 'From KSH 300' },
+                          { id: ErrandCategory.TOWN_SERVICE, label: 'Town & Queuing', icon: Car, price: 'From KSH 600' },
+                          { id: ErrandCategory.HOUSE_HUNTING, label: 'House Scouting', icon: Home, price: 'From KSH 1,500' },
+                          { id: ErrandCategory.SHOPPING, label: 'General Errand', icon: Sparkles, price: 'Custom Quote' },
+                        ].map((cat) => {
+                          const Icon = cat.icon;
+                          return (
+                            <button
+                              key={cat.id}
+                              onClick={() => {
+                                setErrandForm({ ...errandForm, category: cat.id });
+                                setActiveTab('create');
+                              }}
+                              className="p-3.5 bg-secondary/50 hover:bg-secondary border border-border rounded-xl text-left transition-all group flex flex-col justify-between gap-3 hover:border-primary/30"
+                            >
+                              <div className="w-9 h-9 rounded-lg bg-card text-primary flex items-center justify-center shadow-xs group-hover:bg-primary group-hover:text-white transition-colors">
+                                <Icon size={18} />
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold text-foreground group-hover:text-primary transition-colors leading-snug">
+                                  {cat.label}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground font-medium mt-0.5">
+                                  {cat.price}
+                                </p>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Natural Language Composer */}
+                  <div className="lg:col-span-5">
+                    <div className="bg-card text-card-foreground p-5 md:p-6 rounded-2xl border border-border shadow-sm space-y-4 flex flex-col h-full">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="text-base font-bold text-foreground tracking-tight font-display flex items-center gap-2">
+                            <Sparkles size={16} className="text-primary" /> Express AI Composer
+                          </h2>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Type in plain English to auto-populate category, locations & budget
+                          </p>
                         </div>
                       </div>
-                      <button 
-                        onClick={() => {
-                          setErrandForm({ ...errandForm, category: ErrandCategory.GENERAL });
-                          setActiveTab('create');
-                        }}
-                        className="w-full py-2 bg-secondary rounded-xl text-xs font-black tracking-normal font-medium hover:bg-primary hover:text-white transition-all shadow-sm"
-                      >
-                        Hire Now
+
+                      <div className="flex-1 flex flex-col space-y-3">
+                        <textarea 
+                          value={smartInput}
+                          onChange={(e) => setSmartInput(e.target.value)}
+                          placeholder="Example: 'Pick up laundry from Westlands and deliver to Kilimani tomorrow morning for 800 bob'..."
+                          className="w-full min-h-[140px] p-3.5 bg-secondary/30 border border-border rounded-xl text-sm font-medium text-foreground outline-none resize-none focus:border-primary/50 focus:ring-2 focus:ring-primary/10 transition-all placeholder:text-muted-foreground/60"
+                        />
+                        <div className="flex items-center justify-between gap-3 pt-1">
+                          <span className="text-[11px] text-muted-foreground">Auto-extracts locations & price</span>
+                          <button 
+                            onClick={handleSmartCreate}
+                            disabled={isParsing || !smartInput.trim()}
+                            className="px-4 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-xs flex items-center gap-2 active:scale-95"
+                          >
+                            {isParsing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                            <span>Parse & Post</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pre-Priced Fixed Catalogue Highlights */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-bold text-foreground tracking-tight font-display">Featured Services</h2>
+                      <p className="text-xs text-muted-foreground">Pre-priced standard errands available for immediate booking</p>
+                    </div>
+                    <button onClick={() => setActiveTab('menu')} className="text-xs font-bold text-primary hover:underline">
+                      Explore All
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {isLoadingFeatured ? (
+                      Array.from({ length: 4 }).map((_, i) => (
+                        <div key={i} className="bg-card p-4 rounded-2xl border border-border space-y-3 animate-pulse">
+                          <div className="h-28 bg-secondary rounded-xl" />
+                          <div className="h-4 bg-secondary rounded-md w-3/4" />
+                          <div className="h-3 bg-secondary rounded-md w-1/2" />
+                        </div>
+                      ))
+                    ) : featuredServices.length === 0 ? (
+                      <div className="col-span-full py-12 text-center bg-card rounded-2xl border border-border">
+                        <p className="text-sm font-medium text-muted-foreground">No featured services available currently</p>
+                      </div>
+                    ) : (
+                      featuredServices.slice(0, 4).map((service) => (
+                        <div 
+                          key={service.id}
+                          onClick={() => setSelectedFeaturedService(service)}
+                          className="bg-card text-card-foreground p-4 rounded-2xl border border-border shadow-xs hover:shadow-md hover:border-primary/30 transition-all cursor-pointer flex flex-col justify-between gap-3 group"
+                        >
+                          <div className="space-y-2">
+                            <div className="aspect-video relative overflow-hidden rounded-xl bg-secondary">
+                              <img src={service.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt={service.title} />
+                              <div className="absolute top-2 right-2 px-2.5 py-1 bg-card/90 backdrop-blur-md rounded-md text-xs font-black text-primary border border-border/50">
+                                KSH {(service.price || 0).toLocaleString()}
+                              </div>
+                            </div>
+                            <h3 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors line-clamp-1">
+                              {service.title}
+                            </h3>
+                            <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                              {service.description}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2 border-t border-border/60">
+                            <div className="flex items-center gap-1 text-amber-500 text-xs font-bold">
+                              <Star size={13} fill="currentColor" />
+                              <span>4.9</span>
+                            </div>
+                            <span className="text-xs font-bold text-primary group-hover:translate-x-0.5 transition-transform flex items-center gap-1">
+                              Book Now <ArrowRight size={12} />
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Verified Runner Fleet (For Requesters) */}
+                {user?.role === UserRole.REQUESTER && nearbyRunners.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h2 className="text-lg font-bold text-foreground tracking-tight font-display">Nearby Verified Runners</h2>
+                        <p className="text-xs text-muted-foreground">Available local couriers ready for direct dispatch</p>
+                      </div>
+                      <button onClick={() => setActiveTab('live-map')} className="text-xs font-bold text-primary hover:underline">
+                        View Interactive Map
                       </button>
-                    </motion.div>
-                  ))}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                      {nearbyRunners.slice(0, 6).map((runner) => (
+                        <div 
+                          key={runner.id}
+                          className="bg-card text-card-foreground p-3.5 rounded-2xl border border-border shadow-xs flex flex-col items-center text-center gap-2.5"
+                        >
+                          <div className="w-12 h-12 rounded-xl overflow-hidden relative">
+                            <UserAvatar 
+                              src={runner.profilePhoto || runner.avatar} 
+                              name={runner.name} 
+                              className="w-full h-full object-cover" 
+                              isVerified={runner.isVerified}
+                            />
+                            {runner.isOnline && (
+                              <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-card rounded-full" />
+                            )}
+                          </div>
+                          <div className="min-w-0 w-full">
+                            <p className="text-xs font-bold text-foreground truncate">{runner.name.split(' ')[0]}</p>
+                            <div className="flex items-center justify-center gap-1 text-amber-500 text-xs font-bold mt-0.5">
+                              <Star size={11} fill="currentColor" />
+                              <span>{(runner.rating || 5.0).toFixed(1)}</span>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => {
+                              setErrandForm({ ...errandForm, category: ErrandCategory.GENERAL });
+                              setActiveTab('create');
+                            }}
+                            className="w-full py-1.5 bg-secondary text-secondary-foreground hover:bg-primary hover:text-white rounded-lg text-[11px] font-bold transition-colors"
+                          >
+                            Direct Hire
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent Errand Activity */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-bold text-foreground tracking-tight font-display">Recent Activity</h2>
+                      <p className="text-xs text-muted-foreground">Track updates on your active and recent errands</p>
+                    </div>
+                    <button onClick={() => setActiveTab('my-errands')} className="text-xs font-bold text-primary hover:underline">
+                      View All
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {isLoadingErrands ? (
+                      [1, 2, 3, 4].map(i => <ErrandCardSkeleton key={`skeleton-recent-${i}`} />)
+                    ) : (errands || []).slice(0, 4).length === 0 ? (
+                      <div className="col-span-full py-14 text-center bg-card text-card-foreground rounded-2xl border border-dashed border-border">
+                        <div className="w-12 h-12 bg-secondary rounded-xl flex items-center justify-center mx-auto mb-3 text-muted-foreground">
+                          <List size={22} />
+                        </div>
+                        <h3 className="text-sm font-bold text-foreground">No recent activity</h3>
+                        <p className="text-xs text-muted-foreground mt-1">Your posted tasks and assignments will appear here</p>
+                      </div>
+                    ) : (
+                      (errands || []).slice(0, 4).map(e => (
+                        <ErrandCard 
+                          key={e.id} 
+                          errand={e} 
+                          onClick={(errand, tab) => { setSelectedErrand(errand); setInitialDetailTab(tab || 'details'); }} 
+                          currentLocation={currentLocation} 
+                        />
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
             )}
-
-            {/* Recent Activity */}
-            <div className="space-y-6">
-              <div className="flex items-center justify-between px-2">
-                <h3 className="text-xl font-display">Recent Activity</h3>
-                <button onClick={() => setActiveTab('my-errands')} className="text-micro text-primary hover:underline">View All</button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {isLoadingErrands ? (
-                  [1,2,3,4].map(i => <ErrandCardSkeleton key={`skeleton-recent-${i}`} />)
-                ) : (errands || []).slice(0, 6).length === 0 ? (
-                  <div className="col-span-full py-20 text-center bg-card text-card-foreground rounded-[3rem] border-2 border-dashed border-border">
-                    <div className="w-16 h-16 bg-secondary rounded-2xl flex items-center justify-center mx-auto mb-4">
-                      <List size={32} className="text-muted-foreground/70" />
-                    </div>
-                    <h4 className="text-xl font-black text-muted-foreground">No recent activity</h4>
-                    <p className="text-xs font-bold text-muted-foreground/70 tracking-normal font-medium mt-2">Your posted tasks will appear here</p>
-                  </div>
-                ) : (
-                  (errands || []).slice(0, 6).map(e => (
-                    <motion.div
-                      key={e.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      <ErrandCard errand={e} onClick={(errand, tab) => { setSelectedErrand(errand); setInitialDetailTab(tab || 'details'); }} currentLocation={currentLocation} />
-                    </motion.div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        )}
         {activeTab === 'my-errands' && (
           <div className="space-y-6 md:space-y-8 pb-20">
             {!user ? (
@@ -1759,26 +1703,30 @@ export default function App() {
         {activeTab === 'active' && (
            <div className="w-full max-w-7xl mx-auto pb-16 px-4 md:px-6">
             {!user ? (
-              <div className="bg-card text-card-foreground rounded-3xl p-8 border border-border shadow-strong text-center animate-in fade-in zoom-in-95 mt-8">
+              <div className="bg-card text-card-foreground rounded-2xl p-8 md:p-12 border border-border shadow-sm text-center max-w-md mx-auto mt-8 space-y-6">
                 <div 
                   onClick={() => {
                     setAuthModalMode('register');
                     setShowAuthModal(true);
                   }}
-                  className="w-24 h-24 bg-secondary rounded-2xl flex items-center justify-center mx-auto mb-6 relative overflow-hidden cursor-pointer hover:scale-105 transition-transform active:scale-95 group"
+                  className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mx-auto cursor-pointer hover:bg-primary/20 transition-colors"
                 >
-                   <div className="absolute inset-0 bg-gradient-to-tr from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                   <UserCircle size={48} className="text-muted-foreground/70 relative z-10 group-hover:text-primary transition-colors" />
+                  <UserCircle size={36} />
                 </div>
-                <h2 className="text-2xl font-black text-foreground mb-2 tracking-tight font-display">My Profile</h2>
-                <p className="text-sm font-medium text-muted-foreground mb-8 max-w-xs mx-auto leading-relaxed">Join our community to manage your tasks, track earnings, and connect with others.</p>
-                <div className="space-y-4">
+                <div>
+                  <h2 className="text-2xl font-black text-foreground tracking-tight font-display">Account Center</h2>
+                  <p className="text-sm font-medium text-muted-foreground mt-1 leading-relaxed">
+                    Sign in or create an account to post tasks, track deliveries, and manage your M-Pesa wallet.
+                  </p>
+                </div>
+                
+                <div className="space-y-3">
                   <button 
                     onClick={() => {
                       setAuthModalMode('register');
                       setShowAuthModal(true);
                     }} 
-                    className="btn-primary w-full py-5"
+                    className="w-full py-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-xs"
                   >
                     Create Account
                   </button>
@@ -1787,170 +1735,171 @@ export default function App() {
                       setAuthModalMode('login');
                       setShowAuthModal(true);
                     }}
-                    className="w-full py-4 bg-secondary text-muted-foreground rounded-[2rem] font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-all"
+                    className="w-full py-3 bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-xl font-bold text-xs uppercase tracking-wider transition-all border border-border"
                   >
                     Sign In
                   </button>
                 </div>
                 
-                <div className="mt-12 space-y-2">
-                  <ProfileMenuItem icon={<Globe size={18} />} label="Change Language" onClick={() => setShowLanguageModal(true)} />
-                  <ProfileMenuItem icon={<MessageCircle size={18} />} label="Live Support" onClick={() => setIsSupportChatOpen(true)} />
-                  <ProfileMenuItem icon={<Calculator size={18} />} label="Price Guide" onClick={() => setShowPriceGuideModal(true)} />
-                  <ProfileMenuItem icon={<HelpCircle size={18} />} label="FAQs" onClick={() => setShowFAQ(true)} />
-                  <ProfileMenuItem icon={<Phone size={18} />} label="Contact Us" onClick={() => setShowContactUsModal(true)} />
-                  <ProfileMenuItem icon={<ShieldAlert size={18} />} label="Cookies Policy" />
-                  <ProfileMenuItem icon={<Info size={18} />} label="About Us" />
-                  <ProfileMenuItem icon={<ShieldAlert size={18} />} label="Privacy Policy" onClick={() => setShowPrivacyPolicy(true)} />
-                  <ProfileMenuItem icon={<List size={18} />} label="Terms and Conditions" />
+                <div className="pt-4 border-t border-border space-y-1.5 text-left">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-3 pb-1">Support & Policies</p>
+                  <ProfileMenuItem icon={<HelpCircle size={16} />} label="Frequently Asked Questions" onClick={() => setShowFAQ(true)} />
+                  <ProfileMenuItem icon={<Calculator size={16} />} label="Errand Price Guide" onClick={() => setShowPriceGuideModal(true)} />
+                  <ProfileMenuItem icon={<Phone size={16} />} label="Contact Helpline" onClick={() => setShowContactUsModal(true)} />
+                  <ProfileMenuItem icon={<ShieldAlert size={16} />} label="Privacy Policy" onClick={() => setShowPrivacyPolicy(true)} />
                 </div>
               </div>
             ) : (
-              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+              <div className="space-y-6">
                 {profileView === 'main' && (
-                  <div className="w-full max-w-7xl mx-auto pb-16 px-2 sm:px-4 md:px-6">
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                      {/* Left Sidebar Profile Column - Spans 12 on mobile/tablet, 4 on desktop */}
-                      <div className="lg:col-span-4 space-y-6">
-                        {/* Hero Card */}
-                        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-[2.5rem] overflow-hidden shadow-strong relative group">
-                          {/* Banner Background */}
-                          <div className="h-32 bg-gradient-to-br from-indigo-900 via-indigo-950 to-slate-950 relative overflow-hidden">
-                            <div className="absolute inset-0 opacity-15 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px]" />
-                            <div className="absolute -right-10 -top-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-xl" />
-                          </div>
+                  <div className="w-full max-w-7xl mx-auto pb-16 px-2 sm:px-4 md:px-6 space-y-6">
+                    {/* Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-border">
+                      <div>
+                        <h1 className="text-2xl font-black text-foreground tracking-tight font-display">Account Settings & Profile</h1>
+                        <p className="text-xs text-muted-foreground">Manage your credentials, payments, verification status, and operational preferences.</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setProfileView('edit')}
+                          className="px-3.5 py-2 bg-background text-foreground hover:bg-secondary border border-border rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs"
+                        >
+                          <Edit2 size={13} /> Edit Profile
+                        </button>
+                        <button
+                          onClick={() => setShowLogoutConfirm(true)}
+                          className="px-3.5 py-2 bg-background text-muted-foreground hover:text-rose-600 hover:bg-rose-50 border border-border rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-xs"
+                        >
+                          <LogOut size={13} /> Sign Out
+                        </button>
+                      </div>
+                    </div>
 
-                          {/* Avatar & Profile Identity */}
-                          <div className="px-6 pb-6 relative">
-                            <div className="relative inline-block -mt-16 mb-4">
-                              <div className="p-1.5 bg-white dark:bg-slate-950 rounded-[2rem] shadow-xl border-4 border-white dark:border-slate-950">
-                                <UserAvatar src={user.profilePhoto || user.avatar} name={user.name} className="w-24 h-24 rounded-[1.5rem] object-cover" />
-                              </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                      {/* Left Sidebar Profile Column */}
+                      <div className="lg:col-span-4 space-y-5">
+                        {/* Profile Summary Card */}
+                        <div className="bg-card text-card-foreground border border-border rounded-2xl p-6 shadow-sm space-y-5">
+                          <div className="flex items-start gap-4">
+                            <div className="relative">
+                              <UserAvatar src={user.profilePhoto || user.avatar} name={user.name} className="w-16 h-16 rounded-xl object-cover border border-border" />
                               {user.isVerified && (
-                                <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-indigo-600 text-white rounded-xl flex items-center justify-center border-4 border-white dark:border-slate-950 shadow-lg">
-                                  <ShieldCheck size={16} />
+                                <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-primary text-white rounded-md flex items-center justify-center shadow-xs">
+                                  <ShieldCheck size={12} />
                                 </div>
                               )}
                             </div>
-
-                            <div className="space-y-1">
+                            <div className="space-y-1 min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight font-display">{user.name}</h2>
-                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                                <h2 className="text-base font-bold text-foreground truncate">{user.name}</h2>
+                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${
                                   user.role === UserRole.RUNNER 
-                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' 
-                                    : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20'
+                                    ? 'bg-primary/5 text-primary border-primary/20' 
+                                    : 'bg-secondary text-secondary-foreground border-border'
                                 }`}>
-                                  {user.role === UserRole.RUNNER ? 'PRO RUNNER' : 'CLIENT'}
+                                  {user.role === UserRole.RUNNER ? 'Pro Runner' : 'Client'}
                                 </span>
                               </div>
-                              <p className="text-xs text-slate-400 font-medium">
-                                {user.role === UserRole.RUNNER ? 'Verified Professional Runner • Nairobi Core' : `Member since ${new Date(user.createdAt || Date.now()).getFullYear()}`}
-                              </p>
+                              <p className="text-xs text-muted-foreground truncate">{user.email || user.phone || 'Nairobi, Kenya'}</p>
                               {user.biography && (
-                                <p className="text-xs text-slate-500 dark:text-slate-400 italic mt-2 line-clamp-2 leading-relaxed">
+                                <p className="text-xs text-muted-foreground italic mt-2 line-clamp-2 leading-relaxed">
                                   "{user.biography}"
                                 </p>
                               )}
                             </div>
+                          </div>
 
-                            {/* Quick Vitals Inside Hero Card */}
-                            <div className="grid grid-cols-3 gap-2 mt-6 pt-6 border-t border-slate-100 dark:border-slate-800/50 text-center">
-                              <div className="p-2 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-800/30">
-                                <p className="text-[9px] font-black uppercase text-slate-400 dark:text-slate-500 mb-0.5">Rating</p>
-                                <div className="flex items-center justify-center gap-0.5 text-amber-500 text-sm font-black">
-                                  <Star size={12} fill="currentColor" />
-                                  <span className="text-slate-900 dark:text-white">{(user.rating || 5.0).toFixed(1)}</span>
-                                </div>
+                          {/* Quick Vitals */}
+                          <div className="grid grid-cols-3 gap-2 pt-4 border-t border-border text-center">
+                            <div className="p-2.5 bg-background rounded-xl border border-border shadow-xs">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Rating</p>
+                              <div className="flex items-center justify-center gap-1 text-primary text-xs font-bold mt-0.5">
+                                <Star size={12} fill="currentColor" />
+                                <span className="text-foreground">{(user.rating || 5.0).toFixed(1)}</span>
                               </div>
-                              <div className="p-2 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-800/30">
-                                <p className="text-[9px] font-black uppercase text-slate-400 dark:text-slate-500 mb-0.5">{user.role === UserRole.RUNNER ? 'Gigs' : 'Tasks'}</p>
-                                <p className="text-sm font-black text-slate-900 dark:text-white">{user.completedErrands || 0}</p>
-                              </div>
-                              <div className="p-2 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-800/30">
-                                <p className="text-[9px] font-black uppercase text-slate-400 dark:text-slate-500 mb-0.5">Tier</p>
-                                <p className="text-sm font-black text-indigo-600 dark:text-indigo-400">{user.role === UserRole.RUNNER ? 'Gold Pro' : (user.loyaltyLevel || 'Gold')}</p>
-                              </div>
+                            </div>
+                            <div className="p-2.5 bg-background rounded-xl border border-border shadow-xs">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{user.role === UserRole.RUNNER ? 'Gigs' : 'Tasks'}</p>
+                              <p className="text-xs font-bold text-foreground mt-0.5">{user.completedErrands || 0}</p>
+                            </div>
+                            <div className="p-2.5 bg-background rounded-xl border border-border shadow-xs">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tier</p>
+                              <p className="text-xs font-bold text-primary mt-0.5">{user.role === UserRole.RUNNER ? 'Gold Pro' : (user.loyaltyLevel || 'Gold')}</p>
                             </div>
                           </div>
                         </div>
 
-                        {/* Active Duty Status Switch (Runner ONLY) */}
+                        {/* Runner On-Duty Status Switch */}
                         {user.role === UserRole.RUNNER && (
-                          <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-[2rem] p-5 shadow-sm space-y-3">
+                          <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm space-y-3">
                             <div className="flex items-center justify-between">
                               <div>
-                                <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">On Duty Status</p>
-                                <p className={`text-sm font-black mt-0.5 ${runnerOnline ? 'text-emerald-500' : 'text-slate-400'}`}>
-                                  {runnerOnline ? '● Active & Online' : '○ Offline'}
+                                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Courier Availability</p>
+                                <p className={`text-sm font-bold mt-0.5 ${runnerOnline ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                                  {runnerOnline ? '● Online & Accepting Jobs' : '○ Offline / Off Duty'}
                                 </p>
                               </div>
                               <button
                                 onClick={() => setRunnerOnline(!runnerOnline)}
-                                className={`w-14 h-8 rounded-full p-1 transition-colors duration-300 relative focus:outline-none ${
-                                  runnerOnline ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-800'
+                                className={`w-12 h-7 rounded-full p-1 transition-colors duration-200 relative focus:outline-none ${
+                                  runnerOnline ? 'bg-emerald-500' : 'bg-secondary'
                                 }`}
                               >
-                                <motion.div
-                                  layout
-                                  className="w-6 h-6 bg-white rounded-full shadow-md"
-                                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                                  animate={{ x: runnerOnline ? 24 : 0 }}
+                                <div
+                                  className={`w-5 h-5 bg-white rounded-full shadow-xs transition-transform duration-200 ${runnerOnline ? 'translate-x-5' : 'translate-x-0'}`}
                                 />
                               </button>
                             </div>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed pt-1 border-t border-slate-100 dark:border-slate-800/50">
+                            <p className="text-[11px] text-muted-foreground leading-relaxed pt-2 border-t border-border">
                               {runnerOnline 
-                                ? '🟢 Your live location is visible to requesters on the coordinates map. Gigs can be direct-offered!'
-                                : '⚪ You are hidden from live search results. Enable to resume receiving premium delivery offers.'}
+                                ? 'Your position is visible on the interactive map for direct assignment offers.'
+                                : 'You are currently hidden from search. Switch on to receive job broadcasts.'}
                             </p>
                           </div>
                         )}
 
-                        {/* Suspended Warning */}
+                        {/* Suspended Notice */}
                         {user.isSuspended && (
-                          <div className="p-6 bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-[2rem] flex items-start gap-4 shadow-sm">
-                            <AlertCircle size={24} className="text-rose-500 shrink-0" />
-                            <div className="space-y-1">
-                              <h4 className="text-xs font-black text-rose-800 dark:text-rose-400 uppercase tracking-wider">Account Suspended</h4>
-                              <p className="text-xs text-rose-700 dark:text-rose-300 font-medium leading-relaxed">
+                          <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-start gap-3">
+                            <AlertCircle size={20} className="text-rose-500 shrink-0 mt-0.5" />
+                            <div className="space-y-0.5">
+                              <h4 className="text-xs font-bold text-rose-600 dark:text-rose-400">Account Suspended</h4>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
                                 {user.suspensionReason}
-                                {user.suspensionExpiresAt && <span className="block font-black mt-1">Expires: {new Date(user.suspensionExpiresAt).toLocaleDateString()}</span>}
+                                {user.suspensionExpiresAt && <span className="block font-bold mt-1">Expires: {new Date(user.suspensionExpiresAt).toLocaleDateString()}</span>}
                               </p>
                             </div>
                           </div>
                         )}
 
                         {/* Quick Navigation Menu */}
-                        <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-[2.5rem] p-4 shadow-sm space-y-1">
-                          <div className="px-4 py-2">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Account Controls</h4>
+                        <div className="bg-card text-card-foreground border border-border rounded-2xl p-3 shadow-sm space-y-1">
+                          <div className="px-3 py-1.5">
+                            <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Account Navigation</h4>
                           </div>
                           <ProfileMenuItem icon={<Edit2 size={16} />} label="Edit Personal Profile" onClick={() => setProfileView('edit')} />
                           <ProfileMenuItem icon={<HistoryIcon size={16} />} label={user.role === UserRole.RUNNER ? "Completed Gig History" : "My Task History"} onClick={() => setProfileView('history')} />
-                          <ProfileMenuItem icon={<Wallet size={16} />} label="My Wallet Details" onClick={() => setShowWallet(true)} />
+                          <ProfileMenuItem icon={<Wallet size={16} />} label="Manage Wallet & Transactions" onClick={() => setShowWallet(true)} />
                           {user.isAdmin && (
                             <ProfileMenuItem icon={<ShieldCheck size={16} />} label="Access Admin Panel" onClick={() => { setActiveTab('admin'); setProfileView('main'); }} />
                           )}
                           {user.role !== UserRole.RUNNER && (
-                            <ProfileMenuItem icon={<Briefcase size={16} />} label="Become a Nairobi Runner" onClick={() => {
-                              navigateTo('/application-runner');
-                            }} />
+                            <ProfileMenuItem icon={<Briefcase size={16} />} label="Apply to Become a Runner" onClick={() => navigateTo('/application-runner')} />
                           )}
-                          <div className="h-px bg-slate-100 dark:bg-slate-800 my-2 mx-4" />
-                          <ProfileMenuItem icon={<LogOut size={16} />} label="Sign Out of Session" onClick={() => setShowLogoutConfirm(true)} destructive />
+                          <div className="h-px bg-border my-1 mx-2" />
+                          <ProfileMenuItem icon={<LogOut size={16} />} label="Sign Out" onClick={() => setShowLogoutConfirm(true)} destructive />
                         </div>
                       </div>
 
-                      {/* Right Main Column - Dashboard Tab Contents Column */}
+                      {/* Right Main Column - Workspace Tab Contents */}
                       <div className="lg:col-span-8 space-y-6">
-                        {/* Tabs Segment Selector */}
-                        <div className="flex border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 rounded-3xl p-1.5 shadow-sm gap-1 overflow-x-auto no-scrollbar">
+                        {/* Tab Selector */}
+                        <div className="flex border border-border bg-card rounded-xl p-1 shadow-xs gap-1 overflow-x-auto no-scrollbar">
                           {[
                             { id: 'overview', label: 'Overview', icon: LayoutGrid },
-                            { id: 'earnings', label: 'My Wallet', icon: Wallet },
-                            { id: 'tools', label: user.role === UserRole.RUNNER ? 'Helper Tools' : 'Pricing Advisor', icon: Calculator },
-                            { id: 'settings', label: 'Handbooks', icon: HelpCircle },
+                            { id: 'earnings', label: 'Wallet & Payouts', icon: Wallet },
+                            { id: 'tools', label: user.role === UserRole.RUNNER ? 'Logistics Tools' : 'Pricing Advisor', icon: Calculator },
+                            { id: 'settings', label: 'Support & Verification', icon: HelpCircle },
                           ].map((tab) => {
                             const Icon = tab.icon;
                             const isSelected = runnerProfileTab === tab.id;
@@ -1958,10 +1907,10 @@ export default function App() {
                               <button
                                 key={tab.id}
                                 onClick={() => setRunnerProfileTab(tab.id as any)}
-                                className={`flex-1 py-3 px-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all min-w-[120px] ${
+                                className={`flex-1 py-2.5 px-3 rounded-lg font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all min-w-[120px] ${
                                   isSelected
-                                    ? 'bg-indigo-600 text-white shadow-md'
-                                    : 'text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-900'
+                                    ? 'bg-primary text-primary-foreground shadow-xs'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                                 }`}
                               >
                                 <Icon size={14} />
@@ -1971,116 +1920,114 @@ export default function App() {
                           })}
                         </div>
 
-                        {/* Tab Contents */}
+                        {/* Tab Content Views */}
                         <AnimatePresence mode="wait">
                           <motion.div
                             key={runnerProfileTab}
-                            initial={{ opacity: 0, y: 15 }}
+                            initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -15 }}
-                            transition={{ duration: 0.25 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            transition={{ duration: 0.2 }}
                             className="space-y-6"
                           >
+                            {/* OVERVIEW TAB */}
                             {runnerProfileTab === 'overview' && (
                               <div className="space-y-6">
-                                {/* Main Performance Cards */}
-                                <div className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 rounded-[2.5rem] p-6 shadow-sm space-y-6">
+                                <div className="bg-card text-card-foreground border border-border rounded-2xl p-6 shadow-sm space-y-5">
                                   <div>
-                                    <h3 className="text-base font-black text-slate-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
-                                      <Activity size={18} className="text-indigo-600" /> 
-                                      {user.role === UserRole.RUNNER ? 'Professional Performance Metrics' : 'Client Engagement Statistics'}
+                                    <h3 className="text-sm font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                                      <Activity size={16} className="text-primary" /> 
+                                      {user.role === UserRole.RUNNER ? 'Courier Operational Performance' : 'Client Errand Analytics'}
                                     </h3>
-                                    <p className="text-xs text-slate-400 dark:text-slate-500 font-medium mt-1">
+                                    <p className="text-xs text-muted-foreground mt-1">
                                       {user.role === UserRole.RUNNER 
-                                        ? 'Maintain high completion rates and exceptional ratings to secure premier Nairobi payouts.' 
-                                        : 'Your dashboard tracking community involvement, loyalty tiers, and errand saves.'}
+                                        ? 'Maintain optimal ratings and fulfillment reliability to rank higher for dispatch.' 
+                                        : 'Key metrics summarizing your posted tasks, completed errands, and saved time.'}
                                     </p>
                                   </div>
 
                                   {user.role === UserRole.RUNNER ? (
-                                    <div className="space-y-5">
-                                      {/* Cancel Rate */}
-                                      <div className="space-y-2">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                      <div className="p-4 bg-secondary/50 rounded-xl border border-border/50 space-y-2">
                                         <div className="flex justify-between text-xs font-bold">
-                                          <span className="text-slate-500">Cancellation Rate (Target &lt; 15%)</span>
-                                          <span className={user.cancellationRate && user.cancellationRate > 0.15 ? 'text-rose-500 font-black' : 'text-emerald-500 font-black'}>
+                                          <span className="text-muted-foreground">Cancellation</span>
+                                          <span className={user.cancellationRate && user.cancellationRate > 0.15 ? 'text-rose-500' : 'text-emerald-500'}>
                                             {Math.round((user.cancellationRate || 0) * 100)}%
                                           </span>
                                         </div>
-                                        <div className="h-2.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden relative">
+                                        <div className="h-2 bg-secondary rounded-full overflow-hidden">
                                           <div 
-                                            className={`h-full rounded-full transition-all duration-700 ${user.cancellationRate && user.cancellationRate > 0.15 ? 'bg-rose-500' : 'bg-emerald-500'}`} 
+                                            className={`h-full rounded-full ${user.cancellationRate && user.cancellationRate > 0.15 ? 'bg-rose-500' : 'bg-emerald-500'}`} 
                                             style={{ width: `${100 - Math.round((user.cancellationRate || 0) * 100)}%` }} 
                                           />
                                         </div>
+                                        <p className="text-[10px] text-muted-foreground">Target &lt; 15%</p>
                                       </div>
 
-                                      {/* Late Rate */}
-                                      <div className="space-y-2">
+                                      <div className="p-4 bg-secondary/50 rounded-xl border border-border/50 space-y-2">
                                         <div className="flex justify-between text-xs font-bold">
-                                          <span className="text-slate-500">Late Completion Rate (Target &lt; 10%)</span>
-                                          <span className={user.lateCompletionRate && user.lateCompletionRate > 0.10 ? 'text-rose-500 font-black' : 'text-emerald-500 font-black'}>
+                                          <span className="text-muted-foreground">Late Delivery</span>
+                                          <span className={user.lateCompletionRate && user.lateCompletionRate > 0.10 ? 'text-rose-500' : 'text-emerald-500'}>
                                             {Math.round((user.lateCompletionRate || 0) * 100)}%
                                           </span>
                                         </div>
-                                        <div className="h-2.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden relative">
+                                        <div className="h-2 bg-secondary rounded-full overflow-hidden">
                                           <div 
-                                            className={`h-full rounded-full transition-all duration-700 ${user.lateCompletionRate && user.lateCompletionRate > 0.10 ? 'bg-rose-500' : 'bg-emerald-500'}`} 
+                                            className={`h-full rounded-full ${user.lateCompletionRate && user.lateCompletionRate > 0.10 ? 'bg-rose-500' : 'bg-emerald-500'}`} 
                                             style={{ width: `${100 - Math.round((user.lateCompletionRate || 0) * 100)}%` }} 
                                           />
                                         </div>
+                                        <p className="text-[10px] text-muted-foreground">Target &lt; 10%</p>
                                       </div>
 
-                                      {/* Reject Rate */}
-                                      <div className="space-y-2">
+                                      <div className="p-4 bg-secondary/50 rounded-xl border border-border/50 space-y-2">
                                         <div className="flex justify-between text-xs font-bold">
-                                          <span className="text-slate-500">Bid Rejection Rate (Target &lt; 20%)</span>
-                                          <span className={user.rejectionRate && user.rejectionRate > 0.20 ? 'text-rose-500 font-black' : 'text-emerald-500 font-black'}>
+                                          <span className="text-muted-foreground">Bid Rejection</span>
+                                          <span className={user.rejectionRate && user.rejectionRate > 0.20 ? 'text-rose-500' : 'text-emerald-500'}>
                                             {Math.round((user.rejectionRate || 0) * 100)}%
                                           </span>
                                         </div>
-                                        <div className="h-2.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden relative">
+                                        <div className="h-2 bg-secondary rounded-full overflow-hidden">
                                           <div 
-                                            className={`h-full rounded-full transition-all duration-700 ${user.rejectionRate && user.rejectionRate > 0.20 ? 'bg-rose-500' : 'bg-emerald-500'}`} 
+                                            className={`h-full rounded-full ${user.rejectionRate && user.rejectionRate > 0.20 ? 'bg-rose-500' : 'bg-emerald-500'}`} 
                                             style={{ width: `${100 - Math.round((user.rejectionRate || 0) * 100)}%` }} 
                                           />
                                         </div>
+                                        <p className="text-[10px] text-muted-foreground">Target &lt; 20%</p>
                                       </div>
                                     </div>
                                   ) : (
-                                    <div className="space-y-6">
-                                      {/* Requester metrics */}
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div className="p-4 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-800/30 flex items-center gap-4">
-                                          <div className="w-10 h-10 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-xl flex items-center justify-center shrink-0">
-                                            <Clock size={20} />
+                                    <div className="space-y-4">
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <div className="p-4 bg-primary/5 rounded-xl border border-border/50 flex items-center gap-3">
+                                          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center shrink-0">
+                                            <Clock size={18} />
                                           </div>
                                           <div>
-                                            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Est. Hours Saved</p>
-                                            <p className="text-lg font-black text-slate-900 dark:text-white mt-0.5">{(user.hoursSaved || (user.completedErrands || 0) * 2.5).toFixed(1)} Hours</p>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Est. Hours Saved</p>
+                                            <p className="text-base font-black text-foreground mt-0.5">{(user.hoursSaved || (user.completedErrands || 0) * 2.5).toFixed(1)} Hours</p>
                                           </div>
                                         </div>
 
-                                        <div className="p-4 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-800/30 flex items-center gap-4">
-                                          <div className="w-10 h-10 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 rounded-xl flex items-center justify-center shrink-0">
-                                            <Sparkles size={20} />
+                                        <div className="p-4 bg-primary/5 rounded-xl border border-border/50 flex items-center gap-3">
+                                          <div className="w-10 h-10 bg-primary/10 text-primary rounded-lg flex items-center justify-center shrink-0">
+                                            <Sparkles size={18} />
                                           </div>
                                           <div>
-                                            <p className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Loyalty Level Progress</p>
-                                            <p className="text-lg font-black text-slate-900 dark:text-white mt-0.5">{user.loyaltyPoints || (user.completedErrands || 0) * 100} Points</p>
+                                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Loyalty Points</p>
+                                            <p className="text-base font-black text-foreground mt-0.5">{user.loyaltyPoints || (user.completedErrands || 0) * 100} Pts</p>
                                           </div>
                                         </div>
                                       </div>
 
-                                      {/* Loyalty Tier Progress Bar */}
-                                      <div className="space-y-2 pt-2">
-                                        <div className="flex justify-between text-xs font-bold text-slate-500">
-                                          <span>Bronze Tier Progress (Aim 1,000 pts)</span>
-                                          <span className="text-indigo-600 dark:text-indigo-400 font-black">{(Math.min(100, ((user.loyaltyPoints || (user.completedErrands || 0) * 100) / 1000) * 100)).toFixed(0)}%</span>
+                                      <div className="p-4 bg-secondary/30 rounded-xl border border-border/50 space-y-2">
+                                        <div className="flex justify-between text-xs font-bold">
+                                          <span className="text-muted-foreground">Bronze Tier Milestone (Aim: 1,000 pts)</span>
+                                          <span className="text-primary font-black">{(Math.min(100, ((user.loyaltyPoints || (user.completedErrands || 0) * 100) / 1000) * 100)).toFixed(0)}%</span>
                                         </div>
-                                        <div className="h-2.5 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden relative">
+                                        <div className="h-2 bg-secondary rounded-full overflow-hidden">
                                           <div 
-                                            className="h-full bg-gradient-to-r from-indigo-500 to-violet-600 rounded-full transition-all duration-700" 
+                                            className="h-full bg-primary rounded-full" 
                                             style={{ width: `${Math.min(100, ((user.loyaltyPoints || (user.completedErrands || 0) * 100) / 1000) * 100)}%` }} 
                                           />
                                         </div>
@@ -2089,38 +2036,38 @@ export default function App() {
                                   )}
                                 </div>
 
-                                {/* Quick Nairobi Tips card */}
-                                <div className="bg-gradient-to-br from-indigo-50/50 via-slate-50/10 to-transparent dark:from-indigo-950/10 dark:via-slate-950/5 dark:to-transparent border-2 border-indigo-100/50 dark:border-indigo-950/30 rounded-[2.5rem] p-6 shadow-sm flex items-start gap-4">
-                                  <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center shrink-0 text-xl font-black">
-                                    📜
+                                {/* Logistics Guideline */}
+                                <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm flex items-start gap-4">
+                                  <div className="w-10 h-10 bg-primary/10 text-primary rounded-xl flex items-center justify-center shrink-0">
+                                    <ShieldCheck size={20} />
                                   </div>
-                                  <div>
-                                    <h4 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest mb-1">
-                                      {user.role === UserRole.RUNNER ? 'Nairobi Runner Tip' : 'Nairobi Requester Tip'}
+                                  <div className="space-y-1">
+                                    <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">
+                                      {user.role === UserRole.RUNNER ? 'Courier Protocol' : 'Requester Protocol'}
                                     </h4>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium leading-relaxed">
+                                    <p className="text-xs text-muted-foreground leading-relaxed">
                                       {user.role === UserRole.RUNNER 
-                                        ? 'Always upload a clear receipt photo in the task completion screen. Accurate billing builds trust with clients and guarantees 5-star ratings and bigger cash tips!' 
-                                        : 'Provide detailed instructions, specify preferred locations, and set a reasonable budget. Highly rated professional runners respond faster to clear, well-structured listings.'}
+                                        ? 'Always upload an itemized receipt photo in the task completion screen. Accurate billing builds client trust and guarantees 5-star ratings.' 
+                                        : 'Provide detailed pickup instructions and reasonable budgets. Verified runners prioritize clear, well-described task requests.'}
                                     </p>
                                   </div>
                                 </div>
                               </div>
                             )}
 
+                            {/* EARNINGS & WALLET TAB */}
                             {runnerProfileTab === 'earnings' && (
                               <div className="space-y-6">
-                                <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
                                   {/* Wallet Card */}
-                                  <div className="md:col-span-5 bg-gradient-to-br from-indigo-600 via-violet-700 to-indigo-900 text-white p-6 rounded-[2.5rem] shadow-lg relative overflow-hidden flex flex-col justify-between min-h-[220px]">
-                                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl" />
+                                  <div className="md:col-span-5 bg-card text-card-foreground border border-border p-6 rounded-2xl shadow-sm flex flex-col justify-between space-y-6">
                                     <div>
-                                      <p className="text-[10px] font-black uppercase tracking-widest opacity-80 mb-1">
+                                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                                         {user.role === UserRole.RUNNER ? 'Available Payout Balance' : 'Account Wallet Balance'}
                                       </p>
-                                      <div className="flex items-baseline gap-2 mt-2">
-                                        <span className="text-xl font-black opacity-60">KSH</span>
-                                        <p className="text-4xl font-black tracking-tighter">{(user.walletBalance || 0).toLocaleString()}</p>
+                                      <div className="flex items-baseline gap-1.5 mt-2">
+                                        <span className="text-sm font-bold text-muted-foreground">KSH</span>
+                                        <span className="text-3xl font-black text-foreground">{(user.walletBalance || 0).toLocaleString()}</span>
                                       </div>
                                     </div>
 
@@ -2134,51 +2081,51 @@ export default function App() {
                                             }
                                             const proceed = confirm(`Withdraw KSH ${(user.walletBalance || 0).toLocaleString()} to registered M-PESA line ${user.phone || ''}?`);
                                             if (proceed) {
-                                              alert(`Withdrawal request received! KSH ${(user.walletBalance || 0).toLocaleString()} will be disbursed to ${user.phone || ''} instantly via M-PESA (Ref: RF-${Math.floor(100000 + Math.random() * 900000)}).`);
+                                              alert(`Withdrawal request received! KSH ${(user.walletBalance || 0).toLocaleString()} will be disbursed to ${user.phone || ''} via M-PESA.`);
                                             }
                                           }}
-                                          className="w-full py-3.5 bg-white text-indigo-600 hover:bg-indigo-50 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md active:scale-95"
+                                          className="w-full py-3 bg-primary text-primary-foreground hover:bg-primary/90 font-bold uppercase text-xs tracking-wider rounded-xl transition-all shadow-xs"
                                         >
                                           Instant M-PESA Payout
                                         </button>
                                       ) : (
                                         <button
                                           onClick={() => setShowWallet(true)}
-                                          className="w-full py-3.5 bg-white text-indigo-600 hover:bg-indigo-50 font-black uppercase text-[10px] tracking-widest rounded-xl transition-all shadow-md active:scale-95"
+                                          className="w-full py-3 bg-primary text-primary-foreground hover:bg-primary/90 font-bold uppercase text-xs tracking-wider rounded-xl transition-all shadow-xs"
                                         >
                                           Top Up via M-PESA
                                         </button>
                                       )}
-                                      <p className="text-[8px] opacity-75 text-center mt-2.5 font-medium">Processed instantly with zero hidden charges.</p>
+                                      <p className="text-[10px] text-muted-foreground text-center mt-2">Processed instantly with zero hidden charges.</p>
                                     </div>
                                   </div>
 
                                   {/* Financial Summary */}
-                                  <div className="md:col-span-7 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 p-6 rounded-[2.5rem] shadow-sm flex flex-col justify-between">
-                                    <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest mb-4">Financial Summary</h4>
+                                  <div className="md:col-span-7 bg-card text-card-foreground border border-border p-6 rounded-2xl shadow-sm flex flex-col justify-between">
+                                    <h4 className="text-xs font-bold text-foreground uppercase tracking-wider mb-4">Financial Summary</h4>
                                     
-                                    <div className="space-y-4 text-xs font-bold">
+                                    <div className="space-y-3.5 text-xs font-medium">
                                       <div className="flex justify-between">
-                                        <span className="text-slate-400">{user.role === UserRole.RUNNER ? 'Total Career Earnings' : 'Total Funds Deposited'}</span>
-                                        <span className="text-slate-900 dark:text-white">KSH {((user.completedErrands || 0) * 850 + (user.walletBalance || 0)).toLocaleString()}</span>
+                                        <span className="text-muted-foreground">{user.role === UserRole.RUNNER ? 'Total Career Earnings' : 'Total Funds Deposited'}</span>
+                                        <span className="text-foreground font-bold">KSH {((user.completedErrands || 0) * 850 + (user.walletBalance || 0)).toLocaleString()}</span>
                                       </div>
-                                      <div className="h-px bg-slate-100 dark:bg-slate-800/50" />
+                                      <div className="h-px bg-border" />
                                       <div className="flex justify-between">
-                                        <span className="text-slate-400">Pending Escrow Releases</span>
-                                        <span className="text-amber-500">KSH 0</span>
+                                        <span className="text-muted-foreground">Pending Escrow Holds</span>
+                                        <span className="text-amber-500 font-bold">KSH 0</span>
                                       </div>
-                                      <div className="h-px bg-slate-100 dark:bg-slate-800/50" />
+                                      <div className="h-px bg-border" />
                                       <div className="flex justify-between">
-                                        <span className="text-slate-400">Platform Commission Rate</span>
-                                        <span className="text-indigo-600 dark:text-indigo-400">10% (Fixed Floor)</span>
+                                        <span className="text-muted-foreground">Platform Commission Rate</span>
+                                        <span className="text-primary font-bold">10% (Standard)</span>
                                       </div>
                                     </div>
                                   </div>
                                 </div>
 
-                                {/* Recent Completed Gigs */}
+                                {/* Recent Transactions */}
                                 <div className="space-y-3">
-                                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest pl-1">
+                                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
                                     {user.role === UserRole.RUNNER ? 'Recent Completed Gigs' : 'Recent Errand Billing Log'}
                                   </h4>
                                   
@@ -2189,45 +2136,45 @@ export default function App() {
                                         { id: 'tx-2', desc: user.role === UserRole.RUNNER ? 'Laundry Pick & Dry - Westlands' : 'Saka Keja House Scouting - Kilimani', amount: 1200, date: 'Yesterday' },
                                         { id: 'tx-3', desc: user.role === UserRole.RUNNER ? 'Package pickup from GPO Nairobi' : 'Premium Package Delivery - Town', amount: 500, date: '3 days ago' }
                                       ].slice(0, Math.min(3, user.completedErrands)).map(tx => (
-                                        <div key={tx.id} className="bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 flex justify-between items-center hover:shadow-sm transition-all">
+                                        <div key={tx.id} className="bg-background border border-border rounded-xl p-4 flex justify-between items-center shadow-xs">
                                           <div>
-                                            <p className="text-xs font-black text-slate-900 dark:text-white">{tx.desc}</p>
-                                            <p className="text-[10px] text-slate-400 mt-0.5">{tx.date} • Disbursed successfully</p>
+                                            <p className="text-xs font-bold text-foreground">{tx.desc}</p>
+                                            <p className="text-[10px] text-muted-foreground mt-0.5">{tx.date} • Settled</p>
                                           </div>
-                                          <span className="text-xs font-black text-emerald-500">
+                                          <span className="text-xs font-bold text-primary">
                                             {user.role === UserRole.RUNNER ? `+ KSH ${tx.amount}` : `- KSH ${tx.amount}`}
                                           </span>
                                         </div>
                                       ))}
                                     </div>
                                   ) : (
-                                    <div className="text-center p-8 border border-dashed border-slate-200 dark:border-slate-800 rounded-[2rem]">
-                                      <p className="text-xs text-slate-400 font-medium">No recent transactions recorded. Active transactions will dynamically appear here.</p>
+                                    <div className="text-center p-8 border border-dashed border-border rounded-xl">
+                                      <p className="text-xs text-muted-foreground font-medium">No recent transactions recorded. Active transactions will appear here.</p>
                                     </div>
                                   )}
                                 </div>
                               </div>
                             )}
 
+                            {/* TOOLS TAB */}
                             {runnerProfileTab === 'tools' && (
                               <div className="space-y-6">
-                                <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                                  <div className="md:col-span-8 space-y-6">
-                                    {/* Scratchpad (For Runner) / Pricing Advisor (For Requester) */}
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+                                  <div className="md:col-span-8 space-y-5">
+                                    {/* Scratchpad or Pricing Guide */}
                                     {user.role === UserRole.RUNNER ? (
-                                      <div className="bg-white dark:bg-slate-955 p-6 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                                      <div className="bg-card text-card-foreground p-6 rounded-2xl border border-border shadow-sm space-y-4">
                                         <div>
-                                          <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest mb-1 flex items-center gap-2">
-                                            <CheckCircle2 size={16} className="text-indigo-600" /> Active Run Scratchpad
+                                          <h3 className="text-sm font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                                            <CheckCircle2 size={16} className="text-primary" /> Active Run Scratchpad
                                           </h3>
-                                          <p className="text-xs text-slate-400">Log shopping items or temporary checklist milestones on current active runs.</p>
+                                          <p className="text-xs text-muted-foreground mt-0.5">Keep track of checklist items during multi-stop errands.</p>
                                         </div>
 
-                                        {/* Checklist Inputs */}
                                         <div className="flex gap-2">
                                           <input
                                             type="text"
-                                            placeholder="Add temporary checkpoint (e.g., check milk date)..."
+                                            placeholder="Add checkpoint (e.g., Verify produce freshness)..."
                                             value={newChecklistItem}
                                             onChange={(e) => setNewChecklistItem(e.target.value)}
                                             onKeyDown={(e) => {
@@ -2239,7 +2186,7 @@ export default function App() {
                                                 setNewChecklistItem('');
                                               }
                                             }}
-                                            className="flex-1 bg-slate-50 dark:bg-slate-900 px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-white"
+                                            className="flex-1 bg-secondary/50 px-3.5 py-2 rounded-xl text-xs font-medium border border-border text-foreground outline-none focus:border-primary/50"
                                           />
                                           <button
                                             onClick={() => {
@@ -2250,28 +2197,27 @@ export default function App() {
                                               ]);
                                               setNewChecklistItem('');
                                             }}
-                                            className="p-2.5 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl transition-all font-black text-sm flex items-center justify-center aspect-square"
+                                            className="px-3.5 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl transition-all font-bold text-xs flex items-center justify-center"
                                           >
-                                            <Plus size={16} />
+                                            <Plus size={15} />
                                           </button>
                                         </div>
 
-                                        {/* Checklist Display */}
-                                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pt-2">
+                                        <div className="space-y-2 max-h-56 overflow-y-auto pt-1">
                                           {runnerChecklist.map(item => (
-                                            <div key={item.id} className="flex items-center justify-between gap-3 bg-slate-50 dark:bg-slate-900 p-3 rounded-xl border border-slate-100 dark:border-slate-850 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all group/item">
+                                            <div key={item.id} className="flex items-center justify-between gap-3 bg-secondary/40 p-2.5 rounded-xl border border-border/50 hover:bg-secondary/70 transition-colors">
                                               <button
                                                 onClick={() => {
                                                   setRunnerChecklist(runnerChecklist.map(i => i.id === item.id ? { ...i, completed: !i.completed } : i));
                                                 }}
-                                                className="flex items-center gap-3 text-left flex-1"
+                                                className="flex items-center gap-2.5 text-left flex-1"
                                               >
-                                                <div className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
-                                                  item.completed ? 'bg-emerald-500 border-emerald-600 text-white' : 'border-slate-300 bg-white dark:bg-slate-950 text-transparent'
+                                                <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                                                  item.completed ? 'bg-emerald-500 border-emerald-600 text-white' : 'border-border bg-card'
                                                 }`}>
-                                                  <Check size={12} strokeWidth={3} />
+                                                  {item.completed && <Check size={10} strokeWidth={3} />}
                                                 </div>
-                                                <span className={`text-xs font-bold leading-tight ${item.completed ? 'line-through text-slate-400 opacity-60' : 'text-slate-900 dark:text-white'}`}>
+                                                <span className={`text-xs font-medium ${item.completed ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
                                                   {item.text}
                                                 </span>
                                               </button>
@@ -2279,113 +2225,98 @@ export default function App() {
                                                 onClick={() => {
                                                   setRunnerChecklist(runnerChecklist.filter(i => i.id !== item.id));
                                                 }}
-                                                className="text-slate-400 hover:text-rose-500 p-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/25 opacity-0 group-hover/item:opacity-100 transition-opacity"
+                                                className="text-muted-foreground hover:text-rose-500 p-1 rounded-md transition-colors"
                                               >
-                                                <Trash2 size={14} />
+                                                <Trash2 size={13} />
                                               </button>
                                             </div>
                                           ))}
                                         </div>
                                       </div>
                                     ) : (
-                                      <div className="bg-white dark:bg-slate-950 p-6 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                                      <div className="bg-card text-card-foreground p-6 rounded-2xl border border-border shadow-sm space-y-4">
                                         <div>
-                                          <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest mb-1 flex items-center gap-2">
-                                            <Zap size={16} className="text-indigo-600" /> Premium Budget Helper
+                                          <h3 className="text-sm font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                                            <Zap size={16} className="text-primary" /> Standard Errand Rates Guide
                                           </h3>
-                                          <p className="text-xs text-slate-400">Calculate recommended budgets based on service distance or complex errands.</p>
+                                          <p className="text-xs text-muted-foreground mt-0.5">Typical price benchmarks for standard errands in Nairobi.</p>
                                         </div>
 
-                                        <div className="space-y-4 pt-2">
-                                          <div className="grid grid-cols-2 gap-3">
-                                            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-800/50 text-center">
-                                              <p className="text-[9px] font-black uppercase text-slate-400">Mama Fua</p>
-                                              <p className="text-sm font-black text-slate-900 dark:text-white mt-1">KSH 500 - 1500</p>
-                                            </div>
-                                            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-800/50 text-center">
-                                              <p className="text-[9px] font-black uppercase text-slate-400">Shopping Runs</p>
-                                              <p className="text-sm font-black text-slate-900 dark:text-white mt-1">KSH 400 - 1200</p>
-                                            </div>
+                                        <div className="grid grid-cols-2 gap-3 pt-1">
+                                          <div className="p-3.5 bg-secondary/50 rounded-xl border border-border/50 text-center">
+                                            <p className="text-[10px] font-bold uppercase text-muted-foreground">Mama Fua Laundry</p>
+                                            <p className="text-sm font-bold text-foreground mt-0.5">KSH 500 - 1,500</p>
                                           </div>
-                                          <div className="grid grid-cols-2 gap-3">
-                                            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-800/50 text-center">
-                                              <p className="text-[9px] font-black uppercase text-slate-400">Town Service</p>
-                                              <p className="text-sm font-black text-slate-900 dark:text-white mt-1">KSH 600 - 2000</p>
-                                            </div>
-                                            <div className="p-4 bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-100 dark:border-slate-800/50 text-center">
-                                              <p className="text-[9px] font-black uppercase text-slate-400">Saka Keja</p>
-                                              <p className="text-sm font-black text-slate-900 dark:text-white mt-1">KSH 1500 - 5000</p>
-                                            </div>
+                                          <div className="p-3.5 bg-secondary/50 rounded-xl border border-border/50 text-center">
+                                            <p className="text-[10px] font-bold uppercase text-muted-foreground">Market Shopping</p>
+                                            <p className="text-sm font-bold text-foreground mt-0.5">KSH 400 - 1,200</p>
+                                          </div>
+                                          <div className="p-3.5 bg-secondary/50 rounded-xl border border-border/50 text-center">
+                                            <p className="text-[10px] font-bold uppercase text-muted-foreground">Town Queuing</p>
+                                            <p className="text-sm font-bold text-foreground mt-0.5">KSH 600 - 2,000</p>
+                                          </div>
+                                          <div className="p-3.5 bg-secondary/50 rounded-xl border border-border/50 text-center">
+                                            <p className="text-[10px] font-bold uppercase text-muted-foreground">Saka Keja Scouting</p>
+                                            <p className="text-sm font-bold text-foreground mt-0.5">KSH 1,500 - 5,000</p>
                                           </div>
                                         </div>
                                       </div>
                                     )}
 
-                                    {/* Fare Estimator */}
-                                    <div className="bg-white dark:bg-slate-955 p-6 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                                    {/* Fare & Fuel Estimator */}
+                                    <div className="bg-card text-card-foreground p-6 rounded-2xl border border-border shadow-sm space-y-4">
                                       <div>
-                                        <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest mb-1 flex items-center gap-2">
-                                          <Calculator size={16} className="text-indigo-600" /> 
-                                          {user.role === UserRole.RUNNER ? 'Fare & Fuel Estimator' : 'Errand Budget Estimator'}
+                                        <h3 className="text-sm font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                                          <Calculator size={16} className="text-primary" /> 
+                                          {user.role === UserRole.RUNNER ? 'Fare & Fuel Estimator' : 'Transport Cost Estimator'}
                                         </h3>
-                                        <p className="text-xs text-slate-400">
-                                          {user.role === UserRole.RUNNER 
-                                            ? 'Estimate fuel and operating expenditures to construct highly accurate bids.' 
-                                            : 'Estimate approximate transport costs based on vehicle class and distance.'}
-                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-0.5">Calculate approximate transport and fuel requirements for any route.</p>
                                       </div>
 
-                                      <div className="space-y-3 pt-2">
+                                      <div className="space-y-3 pt-1">
                                         <div>
-                                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Total Distance (Kilometers)</label>
+                                          <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Estimated Distance (KM)</label>
                                           <input
                                             type="number"
                                             value={estimatorDistance}
                                             onChange={(e) => setEstimatorDistance(e.target.value)}
-                                            className="w-full bg-slate-50 dark:bg-slate-900 px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-white"
+                                            className="w-full bg-secondary/50 px-3.5 py-2 rounded-xl text-xs font-bold border border-border text-foreground outline-none focus:border-primary/50"
                                           />
                                         </div>
 
                                         <div className="grid grid-cols-2 gap-3">
                                           <div>
-                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Fuel Price (KSH / Liter)</label>
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Fuel Price (KSH / L)</label>
                                             <input
                                               type="number"
                                               value={estimatorFuelPrice}
                                               onChange={(e) => setEstimatorFuelPrice(e.target.value)}
-                                              className="w-full bg-slate-50 dark:bg-slate-900 px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-white"
+                                              className="w-full bg-secondary/50 px-3.5 py-2 rounded-xl text-xs font-bold border border-border text-foreground outline-none focus:border-primary/50"
                                             />
                                           </div>
                                           <div>
-                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">Vehicle Type</label>
+                                            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">Vehicle Type</label>
                                             <select
                                               value={estimatorVehicle}
                                               onChange={(e) => setEstimatorVehicle(e.target.value as any)}
-                                              className="w-full bg-slate-50 dark:bg-slate-900 px-4 py-2.5 rounded-xl text-xs font-bold border border-slate-100 dark:border-slate-800 text-slate-900 dark:text-white outline-none"
+                                              className="w-full bg-secondary/50 px-3.5 py-2 rounded-xl text-xs font-bold border border-border text-foreground outline-none focus:border-primary/50"
                                             >
-                                              <option value="motorbike">🏍️ Motorbike (35 km/L)</option>
-                                              <option value="car">🚗 Hatchback Car (12 km/L)</option>
+                                              <option value="motorbike">Motorbike (35 km/L)</option>
+                                              <option value="car">Hatchback Car (12 km/L)</option>
                                             </select>
                                           </div>
                                         </div>
 
-                                        {/* Calculation Details */}
-                                        <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-100 dark:border-slate-800/50 space-y-2 mt-4 text-xs font-bold text-slate-500">
+                                        <div className="bg-secondary/40 p-3.5 rounded-xl border border-border/50 space-y-1.5 text-xs font-medium">
                                           <div className="flex justify-between">
-                                            <span>Fuel Needed:</span>
-                                            <span className="text-slate-900 dark:text-white">
-                                              {(Number(estimatorDistance) / (estimatorVehicle === 'motorbike' ? 35 : 12)).toFixed(2)} Liters
-                                            </span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span>Est. Fuel Cost:</span>
-                                            <span className="text-slate-900 dark:text-white">
+                                            <span className="text-muted-foreground">Est. Fuel Cost:</span>
+                                            <span className="text-foreground font-bold">
                                               KSH {Math.round((Number(estimatorDistance) / (estimatorVehicle === 'motorbike' ? 35 : 12)) * Number(estimatorFuelPrice)).toLocaleString()}
                                             </span>
                                           </div>
-                                          <div className="h-px bg-slate-100 dark:bg-slate-800 my-1" />
-                                          <div className="flex justify-between text-indigo-600 dark:text-indigo-400 font-black text-sm pt-1">
-                                            <span>{user.role === UserRole.RUNNER ? 'Recommended Quote Price:' : 'Fair Transport Surcharge:'}</span>
+                                          <div className="h-px bg-border my-1" />
+                                          <div className="flex justify-between text-primary font-bold text-sm">
+                                            <span>{user.role === UserRole.RUNNER ? 'Recommended Bid:' : 'Fair Transport Rate:'}</span>
                                             <span>
                                               KSH {Math.round(
                                                 ((Number(estimatorDistance) / (estimatorVehicle === 'motorbike' ? 35 : 12)) * Number(estimatorFuelPrice)) +
@@ -2398,26 +2329,25 @@ export default function App() {
                                     </div>
                                   </div>
 
-                                  {/* Demand Hotspots info */}
-                                  <div className="md:col-span-4 space-y-6">
-                                    <div className="bg-white dark:bg-slate-950 p-5 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-                                      <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest flex items-center gap-1.5 pl-1">
-                                        <MapPin size={14} className="text-indigo-600 animate-bounce" /> 
-                                        Nairobi Hub Details
+                                  {/* Nairobi Hub Info */}
+                                  <div className="md:col-span-4">
+                                    <div className="bg-card text-card-foreground p-5 rounded-2xl border border-border shadow-sm space-y-4">
+                                      <h4 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                        <MapPin size={14} className="text-primary" /> Nairobi Hub Operations
                                       </h4>
                                       
-                                      <div className="space-y-3 text-xs">
-                                        <div className="p-3 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-850">
-                                          <p className="font-black text-slate-900 dark:text-white">🛍️ Westlands (Sarit)</p>
-                                          <p className="text-slate-400 mt-1 leading-normal text-[11px]">Heavy traffic from 4:30 PM. Convenient motorbike bay at the back lane.</p>
+                                      <div className="space-y-2.5 text-xs">
+                                        <div className="p-3 bg-secondary/50 rounded-xl border border-border/50">
+                                          <p className="font-bold text-foreground">Westlands Hub</p>
+                                          <p className="text-muted-foreground mt-0.5 text-[11px]">Heavy traffic after 4:30 PM. Convenient motorbike bays behind Sarit Centre.</p>
                                         </div>
-                                        <div className="p-3 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-850">
-                                          <p className="font-black text-slate-900 dark:text-white">📦 CBD (GPO Square)</p>
-                                          <p className="text-slate-400 mt-1 leading-normal text-[11px]">Pay daily council fees immediately. Strictly avoid parking on pedestrian pathways.</p>
+                                        <div className="p-3 bg-secondary/50 rounded-xl border border-border/50">
+                                          <p className="font-bold text-foreground">CBD / GPO Square</p>
+                                          <p className="text-muted-foreground mt-0.5 text-[11px]">Strict parking zones. Ensure parking fees are logged on city receipt.</p>
                                         </div>
-                                        <div className="p-3 bg-slate-50 dark:bg-slate-900/30 rounded-2xl border border-slate-100 dark:border-slate-850">
-                                          <p className="font-black text-slate-900 dark:text-white">👔 Kilimani (Yaya)</p>
-                                          <p className="text-slate-400 mt-1 leading-normal text-[11px]">Heavy residential coverage. High-density gating requires valid National IDs for entry.</p>
+                                        <div className="p-3 bg-secondary/50 rounded-xl border border-border/50">
+                                          <p className="font-bold text-foreground">Kilimani & Hurlingham</p>
+                                          <p className="text-muted-foreground mt-0.5 text-[11px]">High-security estates. Keep National ID ready at gated communities.</p>
                                         </div>
                                       </div>
                                     </div>
@@ -2426,55 +2356,56 @@ export default function App() {
                               </div>
                             )}
 
+                            {/* SETTINGS & VERIFICATION TAB */}
                             {runnerProfileTab === 'settings' && (
                               <div className="space-y-6">
-                                <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-                                  {/* Onboarding & Verification Status */}
-                                  <div className="md:col-span-8 bg-white dark:bg-slate-950 p-6 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+                                  {/* Verification Checklist */}
+                                  <div className="md:col-span-8 bg-card text-card-foreground p-6 rounded-2xl border border-border shadow-sm space-y-5">
                                     <div>
-                                      <h4 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
-                                        <ShieldCheck size={18} className="text-indigo-600" /> Verification Checklist
+                                      <h4 className="text-sm font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
+                                        <ShieldCheck size={16} className="text-primary" /> Verification Checklist
                                       </h4>
-                                      <p className="text-xs text-slate-400 mt-1 font-medium">Verify your identification to access premium, locked errands on your map.</p>
+                                      <p className="text-xs text-muted-foreground mt-0.5">Complete verification requirements to unlock priority dispatch and higher wallet thresholds.</p>
                                     </div>
                                     
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                                      <div className="p-3 bg-emerald-500/5 rounded-2xl border border-emerald-500/10 flex items-center gap-2.5">
-                                        <ShieldCheck size={18} className="text-emerald-500 shrink-0" />
-                                        <span className="font-black text-slate-900 dark:text-white">National ID Verified</span>
+                                      <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/20 flex items-center gap-2.5">
+                                        <ShieldCheck size={16} className="text-emerald-500 shrink-0" />
+                                        <span className="font-bold text-foreground">National ID Verified</span>
                                       </div>
-                                      <div className="p-3 bg-emerald-500/5 rounded-2xl border border-emerald-500/10 flex items-center gap-2.5">
-                                        <ShieldCheck size={18} className="text-emerald-500 shrink-0" />
-                                        <span className="font-black text-slate-900 dark:text-white">Saka Keja Certified</span>
+                                      <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/20 flex items-center gap-2.5">
+                                        <ShieldCheck size={16} className="text-emerald-500 shrink-0" />
+                                        <span className="font-bold text-foreground">Saka Keja Certified</span>
                                       </div>
-                                      <div className="p-3 bg-emerald-500/5 rounded-2xl border border-emerald-500/10 flex items-center gap-2.5">
-                                        <ShieldCheck size={18} className="text-emerald-500 shrink-0" />
-                                        <span className="font-black text-slate-900 dark:text-white">Phone SMS Verified</span>
+                                      <div className="p-3 bg-emerald-500/5 rounded-xl border border-emerald-500/20 flex items-center gap-2.5">
+                                        <ShieldCheck size={16} className="text-emerald-500 shrink-0" />
+                                        <span className="font-bold text-foreground">Phone SMS Verified</span>
                                       </div>
-                                      <div className="p-3 bg-indigo-500/5 rounded-2xl border border-indigo-500/10 flex items-center gap-2.5">
-                                        <ShieldCheck size={18} className="text-indigo-600 dark:text-indigo-400 shrink-0" />
-                                        <span className="font-black text-slate-900 dark:text-white">Loyalty Status: Active</span>
+                                      <div className="p-3 bg-primary/5 rounded-xl border border-primary/20 flex items-center gap-2.5">
+                                        <ShieldCheck size={16} className="text-primary shrink-0" />
+                                        <span className="font-bold text-foreground">Loyalty Status: Active</span>
                                       </div>
                                     </div>
                                   </div>
 
-                                  {/* Quick Helper Resources list */}
-                                  <div className="md:col-span-4 bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-800 p-5 rounded-[2.5rem] shadow-sm space-y-4">
-                                    <h4 className="text-xs font-black text-slate-900 dark:text-white uppercase tracking-widest pl-1 flex items-center gap-1.5">
-                                      <HelpCircle size={14} className="text-indigo-600" /> Support Handbook
+                                  {/* Support Handbook */}
+                                  <div className="md:col-span-4 bg-card text-card-foreground border border-border p-5 rounded-2xl shadow-sm space-y-3">
+                                    <h4 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                                      <HelpCircle size={14} className="text-primary" /> Support & Policies
                                     </h4>
                                     <div className="space-y-1">
-                                      <button onClick={() => setShowFAQ(true)} className="w-full text-left py-2.5 px-3 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 transition-colors flex items-center justify-between">
-                                        <span>Community FAQ Guide</span>
-                                        <ChevronRight size={14} />
+                                      <button onClick={() => setShowFAQ(true)} className="w-full text-left py-2.5 px-3 hover:bg-secondary rounded-xl text-xs font-medium text-foreground transition-colors flex items-center justify-between">
+                                        <span>Community FAQs</span>
+                                        <ChevronRight size={14} className="text-muted-foreground" />
                                       </button>
-                                      <button onClick={() => setShowPriceGuideModal(true)} className="w-full text-left py-2.5 px-3 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 transition-colors flex items-center justify-between">
+                                      <button onClick={() => setShowPriceGuideModal(true)} className="w-full text-left py-2.5 px-3 hover:bg-secondary rounded-xl text-xs font-medium text-foreground transition-colors flex items-center justify-between">
                                         <span>Errand Price Guide</span>
-                                        <ChevronRight size={14} />
+                                        <ChevronRight size={14} className="text-muted-foreground" />
                                       </button>
-                                      <button onClick={() => setShowContactUsModal(true)} className="w-full text-left py-2.5 px-3 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 transition-colors flex items-center justify-between">
+                                      <button onClick={() => setShowContactUsModal(true)} className="w-full text-left py-2.5 px-3 hover:bg-secondary rounded-xl text-xs font-medium text-foreground transition-colors flex items-center justify-between">
                                         <span>Contact Helpline</span>
-                                        <ChevronRight size={14} />
+                                        <ChevronRight size={14} className="text-muted-foreground" />
                                       </button>
                                     </div>
                                   </div>
@@ -6052,12 +5983,6 @@ const SupportChatViewLocal: React.FC<{ user: User, targetUserId?: string, isAdmi
   );
 };
 
-const triggerHaptic = () => {
-  if (typeof window !== 'undefined' && window.navigator && window.navigator.vibrate) {
-    window.navigator.vibrate(10);
-  }
-};
-
 const ErrandStatusTimeline: React.FC<{ status: ErrandStatus, category?: ErrandCategory }> = ({ status, category }) => {
   const isShopping = category === ErrandCategory.SHOPPING;
   
@@ -7280,6 +7205,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
   const handleToggleMicroStep = async (idx: number, completed: boolean) => {
     try {
       await firebaseService.updateMicroStep(selectedErrand.id, idx, completed);
+      haptics.light();
       refresh();
     } catch (e) { alert("Failed to update progress."); }
   };
@@ -7304,6 +7230,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
     try {
       const url = await cloudinaryService.uploadFile(file, 'image', 'errand_proofs');
       await firebaseService.addErrandProof(selectedErrand.id, url, proofLabel);
+      haptics.medium();
       
       // OCR for Receipts
       if (proofLabel.toLowerCase().includes('receipt')) {
@@ -8502,7 +8429,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                               <button 
                                 onClick={() => {
                                   firebaseService.acceptBid(selectedErrand.id, b.runnerId, b.runnerName, b.runnerPhone || '', b.price, b.eta || 'ASAP');
-                                  triggerHaptic();
+                                  haptics.success();
                                   setActiveDetailTab('map');
                                   refresh();
                                 }} 
@@ -9177,6 +9104,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                                       alert("Uploading final proof...");
                                       const url = await cloudinaryService.uploadImage(file);
                                       await firebaseService.addErrandProof(selectedErrand.id, url, 'Final Proof');
+                                      haptics.medium();
                                       setPhoto(url);
                                       alert("Final proof uploaded successfully!");
                                       refresh();
@@ -9213,6 +9141,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                                       alert("Uploading receipt...");
                                       const url = await cloudinaryService.uploadImage(file);
                                       await firebaseService.addErrandProof(selectedErrand.id, url, 'Receipt');
+                                      haptics.medium();
                                       await firebaseService.updateErrand(selectedErrand.id, { receiptUrl: url });
                                       alert("Receipt uploaded successfully!");
                                       refresh();
@@ -9228,7 +9157,10 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                       </div>
 
                       <button 
-                        onClick={() => onRunnerComplete(selectedErrand.id, comments, photo || undefined)}
+                        onClick={() => {
+                          onRunnerComplete(selectedErrand.id, comments, photo || undefined);
+                          haptics.success();
+                        }}
                         className="w-full py-6 bg-foreground text-background text-white rounded-[2.5rem] text-sm font-black tracking-normal font-medium shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3"
                       >
                         <CheckCircle2 size={20} /> Submit for Review
@@ -9451,32 +9383,32 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                 </div>
               )}
 
-              {/* RPG Quest Guide Card: Progress to Finish */}
-              <div className="mt-8 p-6 rounded-[2.5rem] border-2 border-indigo-100 dark:border-indigo-950 bg-gradient-to-br from-indigo-50/50 via-violet-50/10 to-card dark:from-indigo-950/20 dark:via-violet-950/5 dark:to-card flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm text-left animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Protocol Guide Card: Progress to Finish */}
+              <div className="mt-8 p-6 rounded-[2.5rem] border border-border bg-card flex flex-col md:flex-row items-center justify-between gap-6 shadow-sm text-left animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center shrink-0 text-xl font-black">
-                    ⚔️
+                  <div className="w-12 h-12 bg-primary/10 text-primary rounded-2xl flex items-center justify-center shrink-0 text-xl font-black">
+                    <ShieldCheck size={24} />
                   </div>
                   <div className="text-left space-y-1">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">Quest Step 4: Live tracking checkpoints ⚡</span>
-                    <h4 className="text-sm font-black text-foreground">Active Work Phase!</h4>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-primary">Protocol Step 4: Active Tracking ⚡</span>
+                    <h4 className="text-sm font-black text-foreground">Operational Phase Active</h4>
                     <p className="text-xs text-muted-foreground/90 font-medium leading-relaxed">
-                      Checkpoints logged and updates synced! Head over to the Finish tab to lock in your photos and submit the task for gold release!
+                      Checkpoints logged and updates synced! Head over to the Finish tab to lock in your photos and submit the task for payment release.
                     </p>
                   </div>
                 </div>
                 <div className="flex gap-2.5 shrink-0 w-full md:w-auto">
                   <button 
                     onClick={() => setActiveDetailTab('chat')}
-                    className="flex-1 md:flex-none px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider bg-secondary text-muted-foreground hover:bg-slate-200 transition-all active:scale-95 flex items-center justify-center gap-1.5"
+                    className="flex-1 md:flex-none px-5 py-3 rounded-2xl text-xs font-black uppercase tracking-wider bg-secondary text-secondary-foreground hover:bg-muted transition-all active:scale-95 flex items-center justify-center gap-1.5"
                   >
                     <ArrowLeft size={14} /> Back
                   </button>
                   <button 
                     onClick={() => setActiveDetailTab('finish')}
-                    className="flex-1 md:flex-none px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                    className="flex-1 md:flex-none px-6 py-3 rounded-2xl text-xs font-black uppercase tracking-wider bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
                   >
-                    Go Finish Quest <ArrowRight size={14} />
+                    Complete Task <ArrowRight size={14} />
                   </button>
                 </div>
               </div>

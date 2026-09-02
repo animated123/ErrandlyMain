@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, DollarSign, MessageSquare, Loader2, Sparkles } from 'lucide-react';
 import { Errand, User } from '../../types';
+import { haptics } from '../lib/haptics';
 
 interface BidModalProps {
   isOpen: boolean;
@@ -20,6 +21,7 @@ export default function BidModal({ isOpen, errand, onClose, onSubmit }: BidModal
     setIsSubmitting(true);
     try {
       await onSubmit(amount);
+      haptics.success();
       onClose();
     } catch (err) {
       alert("Failed to submit bid.");

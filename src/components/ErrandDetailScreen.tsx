@@ -12,6 +12,7 @@ import MapComponent from './MapComponent';
 import GoogleMapPicker from './GoogleMapPicker';
 import UserAvatar from './UserAvatar';
 import { useErrandStatusSync } from '../hooks/useErrandStatusSync';
+import { haptics } from '../lib/haptics';
 
 interface ErrandDetailScreenProps {
   errand: Errand;
@@ -65,6 +66,7 @@ export default function ErrandDetailScreen({
       navigator.clipboard.writeText(deepLink).catch(() => {});
     }
     setCopiedShare(true);
+    haptics.light();
     setTimeout(() => setCopiedShare(false), 2500);
     if (typeof window !== 'undefined') {
       window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
@@ -109,6 +111,7 @@ export default function ErrandDetailScreen({
           lng: position.coords.longitude
         };
         await firebaseService.updateRunnerLocation(errand.id, coords);
+        haptics.light();
         alert("Location updated successfully!");
       }, (error) => {
         console.error(error);
@@ -127,6 +130,7 @@ export default function ErrandDetailScreen({
       try {
         const url = await cloudinaryService.uploadFile(dataUrl, 'receipts');
         await firebaseService.updateErrand(errand.id, { receiptUrl: url });
+        haptics.medium();
         alert("Receipt uploaded successfully!");
       } catch (e) {
         console.error(e);
@@ -758,7 +762,10 @@ export default function ErrandDetailScreen({
       <footer className="p-4 border-t border-slate-50 bg-card text-card-foreground sticky bottom-0 space-y-2">
         {canBid && (
           <button 
-            onClick={() => onBid(errand.budget, "I'm interested in this task!")}
+            onClick={() => {
+              onBid(errand.budget, "I'm interested in this task!");
+              haptics.success();
+            }}
             disabled={loading}
             className="w-full py-4 bg-black text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-xl shadow-slate-200 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2.5"
           >
@@ -767,7 +774,10 @@ export default function ErrandDetailScreen({
         )}
         {isRunner && syncedErrand.status === ErrandStatus.ASSIGNED && (
           <button 
-            onClick={() => onReview(errand.id, "Task completed successfully!")}
+            onClick={() => {
+              onReview(errand.id, "Task completed successfully!");
+              haptics.success();
+            }}
             disabled={loading}
             className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-xl shadow-indigo-100 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2.5"
           >
@@ -776,7 +786,10 @@ export default function ErrandDetailScreen({
         )}
         {isRequester && syncedErrand.status === ErrandStatus.REVIEW && (
           <button 
-            onClick={() => onComplete(errand.id)}
+            onClick={() => {
+              onComplete(errand.id);
+              haptics.success();
+            }}
             disabled={loading}
             className="w-full py-4 bg-emerald-600 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-xl shadow-emerald-100 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2.5"
           >
