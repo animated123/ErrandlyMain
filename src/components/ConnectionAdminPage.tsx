@@ -5,7 +5,8 @@ import {
   Trash2, Eye, EyeOff, Save, Globe, Cpu, AlertTriangle, 
   ArrowLeft, Send, Search, Copy, Check, ExternalLink, HardDrive, 
   Layers, Clock, Filter, Radio, Mail, Zap, CheckCheck, Wifi, 
-  Gauge, ShieldCheck, HelpCircle, ChevronRight, Sparkles, Key, AlertCircle
+  Gauge, ShieldCheck, HelpCircle, ChevronRight, Sparkles, Key, AlertCircle,
+  Cloud
 } from 'lucide-react';
 
 export interface CheckAllSystemsResult {
@@ -24,6 +25,30 @@ export interface CheckAllSystemsResult {
     tableCount: number;
     version: string | null;
     error: string | null;
+    primary?: {
+      status: 'operational' | 'offline';
+      connected: boolean;
+      latencyMs: number | null;
+      host: string;
+      port: number;
+      database: string;
+      user: string;
+      tableCount: number;
+      version: string | null;
+      error: string | null;
+    };
+    fallbackLocal?: {
+      status: 'operational' | 'offline';
+      connected: boolean;
+      latencyMs: number | null;
+      host: string;
+      port: number;
+      database: string;
+      user: string;
+      tableCount: number;
+      version: string | null;
+      error: string | null;
+    };
   };
   actionServer: {
     status: 'operational' | 'degraded' | 'unreachable';
@@ -53,6 +78,7 @@ export interface CheckAllSystemsResult {
 interface ConnectionAdminStatus {
   database: {
     connected: boolean;
+    activeSource?: string;
     error: string | null;
     latencyMs: number | null;
     config: {
@@ -61,6 +87,19 @@ interface ConnectionAdminStatus {
       user: string;
       database: string;
       hasPassword: boolean;
+    };
+    fallbackConfig?: {
+      host: string;
+      port: number;
+      user: string;
+      database: string;
+      connected: boolean;
+      error: string | null;
+      latencyMs: number | null;
+      tables?: string[];
+      tableCount?: number;
+      version?: string;
+      hasPassword?: boolean;
     };
     tables: string[];
     tableCount: number;
@@ -195,7 +234,10 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
   const [lastCheckTimestamp, setLastCheckTimestamp] = useState<Date | null>(null);
 
-  // DB Config Form
+  // DB Sub-Tab: Primary Supabase vs Local PostgreSQL
+  const [dbSubTab, setDbSubTab] = useState<'primary' | 'local'>('primary');
+
+  // DB Config Form (Primary)
   const [dbHost, setDbHost] = useState('');
   const [dbPort, setDbPort] = useState('5432');
   const [dbUser, setDbUser] = useState('');
@@ -204,6 +246,36 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [showDbPassword, setShowDbPassword] = useState(false);
   const [dbUpdating, setDbUpdating] = useState(false);
   const [dbUpdateMsg, setDbUpdateMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Local PostgreSQL DB Config & Test State
+  const [localDbHost, setLocalDbHost] = useState('127.0.0.1');
+  const [localDbPort, setLocalDbPort] = useState('5432');
+  const [localDbUser, setLocalDbUser] = useState('postgres');
+  const [localDbPassword, setLocalDbPassword] = useState('');
+  const [localDbName, setLocalDbName] = useState('Errandly');
+  const [showLocalDbPassword, setShowLocalDbPassword] = useState(false);
+  const [localDbUpdating, setLocalDbUpdating] = useState(false);
+  const [localDbTesting, setLocalDbTesting] = useState(false);
+  const [localDbUpdateMsg, setLocalDbUpdateMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [localDbTestResult, setLocalDbTestResult] = useState<{
+    connected: boolean;
+    latencyMs?: number | null;
+    version?: string;
+    serverTime?: string;
+    tables?: string[];
+    tableCount?: number;
+    error?: string;
+    config?: {
+      host: string;
+      port: number;
+      user: string;
+      database: string;
+      hasPassword: boolean;
+    };
+  } | null>(null);
+
+  // Query console target (auto, primary, local)
+  const [queryTarget, setQueryTarget] = useState<'auto' | 'primary' | 'local'>('auto');
 
   // Action Server Config Form
   const [actionServerUrlInput, setActionServerUrlInput] = useState('');
@@ -337,6 +409,12 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
         setDbPort(String(statusData.database.config.port || '5432'));
         setDbUser(statusData.database.config.user || '');
         setDbName(statusData.database.config.database || '');
+      }
+      if (statusData.database?.fallbackConfig) {
+        setLocalDbHost(statusData.database.fallbackConfig.host || '127.0.0.1');
+        setLocalDbPort(String(statusData.database.fallbackConfig.port || '5432'));
+        setLocalDbUser(statusData.database.fallbackConfig.user || 'postgres');
+        setLocalDbName(statusData.database.fallbackConfig.database || 'Errandly');
       }
       if (statusData.actionServer?.url) {
         setActionServerUrlInput(statusData.actionServer.url);
@@ -479,7 +557,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     }
   }, []);
 
-  // Save DB Config Live
+  // Save DB Config Live (Primary Supabase)
   const handleSaveDbConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setDbUpdating(true);
@@ -515,6 +593,119 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       setDbUpdateMsg({ type: 'error', text: err.message || 'Failed to update database config' });
     } finally {
       setDbUpdating(false);
+    }
+  };
+
+  // Check & Test Local PostgreSQL DB Connection (Dry Run)
+  const handleTestLocalDb = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setLocalDbTesting(true);
+    setLocalDbUpdateMsg(null);
+    setLocalDbTestResult(null);
+
+    try {
+      const { ok, status: statusCode, data } = await safeFetchJson('/api/connectionadmin/local-db/check', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          host: localDbHost.trim(),
+          port: parseInt(localDbPort) || 5432,
+          user: localDbUser.trim(),
+          password: localDbPassword,
+          database: localDbName.trim()
+        })
+      });
+
+      if (!ok) {
+        setLocalDbTestResult({
+          connected: false,
+          error: data?.error || `HTTP ${statusCode}`
+        });
+        setLocalDbUpdateMsg({
+          type: 'error',
+          text: `Local connection check failed: ${data?.error || `HTTP ${statusCode}`}`
+        });
+        return;
+      }
+
+      setLocalDbTestResult(data);
+      if (data.connected) {
+        setLocalDbUpdateMsg({
+          type: 'success',
+          text: `Local PostgreSQL connection succeeded! Latency: ${data.latencyMs}ms. Found ${data.tableCount ?? 0} public tables.`
+        });
+      } else {
+        setLocalDbUpdateMsg({
+          type: 'error',
+          text: `Local PostgreSQL is unreachable: ${data.error || 'Connection refused'}`
+        });
+      }
+    } catch (err: any) {
+      setLocalDbTestResult({
+        connected: false,
+        error: err.message
+      });
+      setLocalDbUpdateMsg({
+        type: 'error',
+        text: `Error initiating connection check: ${err.message}`
+      });
+    } finally {
+      setLocalDbTesting(false);
+    }
+  };
+
+  // Save Local PostgreSQL DB Configuration
+  const handleSaveLocalDb = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalDbUpdating(true);
+    setLocalDbUpdateMsg(null);
+
+    try {
+      const { ok, status: statusCode, data } = await safeFetchJson('/api/connectionadmin/local-db/update', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          host: localDbHost.trim(),
+          port: parseInt(localDbPort) || 5432,
+          user: localDbUser.trim(),
+          password: localDbPassword,
+          database: localDbName.trim()
+        })
+      });
+
+      if (!ok) {
+        setLocalDbUpdateMsg({
+          type: 'error',
+          text: data?.error || `Failed to update local DB config (HTTP ${statusCode})`
+        });
+        return;
+      }
+
+      if (data.connected) {
+        setLocalDbUpdateMsg({
+          type: 'success',
+          text: `Local PostgreSQL connected & saved successfully! Latency: ${data.latencyMs}ms. Table count: ${data.tableCount}. Written to app_config.json.`
+        });
+      } else {
+        setLocalDbUpdateMsg({
+          type: 'error',
+          text: `Configuration saved to app_config.json, but local PostgreSQL is currently standby/offline: ${data.error || 'Connection refused'}`
+        });
+      }
+
+      if (localDbPassword) {
+        setLocalDbPassword('');
+      }
+
+      await fetchStatus();
+      await fetchLogs();
+    } catch (err: any) {
+      setLocalDbUpdateMsg({
+        type: 'error',
+        text: err.message || 'Failed to update local DB config'
+      });
+    } finally {
+      setLocalDbUpdating(false);
     }
   };
 
@@ -572,7 +763,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       const { data } = await safeFetchJson('/api/connectionadmin/db/execute-query', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ sql: sqlQuery })
+        body: JSON.stringify({ sql: sqlQuery, target: queryTarget })
       });
       setQueryResult(data);
     } catch (err: any) {
@@ -910,7 +1101,59 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
 
         {/* TAB 1: DATABASE & LIVE CONFIG */}
         {activeTab === 'db' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="space-y-6">
+            {/* Database Switcher Subtabs */}
+            <div className="flex items-center justify-between flex-wrap gap-4 pb-2 border-b border-slate-800/80">
+              <div className="flex items-center gap-2 p-1.5 bg-slate-900 border border-slate-800 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setDbSubTab('primary')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
+                    dbSubTab === 'primary'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                  }`}
+                >
+                  <Cloud className="w-4 h-4" />
+                  Primary Database (Supabase)
+                  <span className={`w-2 h-2 rounded-full ${status?.database?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDbSubTab('local')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
+                    dbSubTab === 'local'
+                      ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                  }`}
+                >
+                  <Server className="w-4 h-4 text-amber-300" />
+                  Local PostgreSQL DB (Fallback)
+                  <span className={`w-2 h-2 rounded-full ${status?.database?.fallbackConfig?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                </button>
+              </div>
+
+              <div className="text-xs text-slate-400 font-mono flex items-center gap-2">
+                <span>Active Tier:</span>
+                <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border ${
+                  status?.database?.activeSource === 'primary_postgres'
+                    ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300'
+                    : status?.database?.activeSource === 'local_postgres_fallback'
+                    ? 'bg-amber-950/80 border-amber-700 text-amber-300'
+                    : 'bg-indigo-950/80 border-indigo-700 text-indigo-300'
+                }`}>
+                  {status?.database?.activeSource === 'primary_postgres'
+                    ? 'Tier 1: Supabase (Primary)'
+                    : status?.database?.activeSource === 'local_postgres_fallback'
+                    ? 'Tier 2: Local PostgreSQL'
+                    : 'Tier 3: Resilient JSON Store'}
+                </span>
+              </div>
+            </div>
+
+            {/* Sub-tab 1: Primary Database (Supabase) */}
+            {dbSubTab === 'primary' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Left: DB Health & Details */}
             <div className="lg:col-span-5 space-y-6">
               <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-5">
@@ -1139,6 +1382,411 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             </div>
           </div>
         )}
+
+        {/* Sub-tab 2: Local PostgreSQL DB (Fallback) */}
+        {dbSubTab === 'local' && (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Local DB Health & Details */}
+            <div className="lg:col-span-5 space-y-6">
+              <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 space-y-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-black uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <Server className="w-4 h-4 text-amber-400" />
+                    Local PostgreSQL Health
+                  </h2>
+                  <span className={`px-2.5 py-0.5 text-[10px] font-black uppercase rounded-full border ${
+                    status?.database?.fallbackConfig?.connected 
+                      ? 'bg-emerald-950 border-emerald-700 text-emerald-300' 
+                      : 'bg-amber-950/80 border-amber-700 text-amber-300'
+                  }`}>
+                    {status?.database?.fallbackConfig?.connected ? 'CONNECTED (READY)' : 'STANDBY / OFFLINE'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-2xl">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Local Host</span>
+                    <span className="font-mono text-slate-200 break-all font-bold">
+                      {status?.database?.fallbackConfig?.host || localDbHost || '127.0.0.1'}
+                    </span>
+                  </div>
+                  <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-2xl">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Port</span>
+                    <span className="font-mono text-slate-200 font-bold">
+                      {status?.database?.fallbackConfig?.port || localDbPort || 5432}
+                    </span>
+                  </div>
+                  <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-2xl">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Database</span>
+                    <span className="font-mono text-slate-200 font-bold">
+                      {status?.database?.fallbackConfig?.database || localDbName || 'Errandly'}
+                    </span>
+                  </div>
+                  <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-2xl">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block mb-1">User</span>
+                    <span className="font-mono text-slate-200 font-bold">
+                      {status?.database?.fallbackConfig?.user || localDbUser || 'postgres'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 bg-slate-950/40 border border-slate-800 rounded-xl">
+                    <span className="text-[10px] text-slate-500 block">Socket Latency</span>
+                    <span className="font-mono text-white font-bold">
+                      {status?.database?.fallbackConfig?.latencyMs !== null && status?.database?.fallbackConfig?.latencyMs !== undefined
+                        ? `${status.database.fallbackConfig.latencyMs} ms`
+                        : 'N/A'}
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-950/40 border border-slate-800 rounded-xl">
+                    <span className="text-[10px] text-slate-500 block">Password Status</span>
+                    <span className="font-mono text-white font-bold">
+                      {status?.database?.fallbackConfig?.hasPassword ? 'Password Set' : 'None / Not Set'}
+                    </span>
+                  </div>
+                </div>
+
+                {status?.database?.fallbackConfig?.version && (
+                  <div className="p-3 bg-slate-950/70 border border-slate-800/80 rounded-2xl text-[11px] font-mono text-slate-400">
+                    <span className="text-[10px] uppercase text-slate-500 block font-bold mb-0.5">PostgreSQL Engine</span>
+                    <p className="truncate text-slate-300" title={status.database.fallbackConfig.version}>
+                      {status.database.fallbackConfig.version}
+                    </p>
+                  </div>
+                )}
+
+                {status?.database?.fallbackConfig?.error && (
+                  <div className="p-4 bg-amber-950/40 border border-amber-800/60 rounded-2xl text-xs text-amber-200 space-y-1">
+                    <span className="font-bold flex items-center gap-1.5 text-amber-300">
+                      <AlertTriangle className="w-4 h-4" /> Standby Status / Error:
+                    </span>
+                    <p className="font-mono text-[11px] break-all">{status.database.fallbackConfig.error}</p>
+                    <p className="text-[10px] text-amber-400/80 pt-1">
+                      If running in a Docker container or local VM, ensure your PostgreSQL service is accepting connections on all IP interfaces (listen_addresses = '*') or use 127.0.0.1 / host.docker.internal.
+                    </p>
+                  </div>
+                )}
+
+                {/* Table Schema Count & Badges for Local DB */}
+                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-amber-400" />
+                      Local Tables ({status?.database?.fallbackConfig?.tableCount ?? (status?.database?.fallbackConfig?.tables?.length || 0)})
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">public schema</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1">
+                    {status?.database?.fallbackConfig?.tables && status.database.fallbackConfig.tables.length > 0 ? (
+                      status.database.fallbackConfig.tables.map(tbl => (
+                        <span 
+                          key={tbl}
+                          onClick={() => {
+                            setQueryTarget('local');
+                            setSqlQuery(`SELECT * FROM ${tbl} LIMIT 10;`);
+                            setActiveTab('query');
+                          }}
+                          title="Click to query table in Console"
+                          className="px-2 py-1 bg-slate-800 hover:bg-amber-600 hover:text-white transition cursor-pointer text-[11px] font-mono text-slate-300 rounded-lg border border-slate-700"
+                        >
+                          {tbl}
+                        </span>
+                      ))
+                    ) : (
+                      <div className="text-slate-500 text-xs py-2 w-full text-center">
+                        No local tables detected yet. Once local PostgreSQL connects, schemas are initialized automatically.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* High-Availability Architecture Notice */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 space-y-3">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  3-Tier Resilient Persistence Model
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Errandly utilizes an automated multi-tier failover mechanism:
+                </p>
+                <div className="space-y-2 text-xs font-mono">
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-300">Tier 1: Cloud Supabase</span>
+                    <span className={status?.database?.connected ? 'text-emerald-400 font-bold' : 'text-slate-500'}>
+                      {status?.database?.connected ? '● Active Primary' : 'Offline'}
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-300">Tier 2: Local PostgreSQL</span>
+                    <span className={status?.database?.fallbackConfig?.connected ? 'text-amber-400 font-bold' : 'text-slate-500'}>
+                      {status?.database?.fallbackConfig?.connected ? '● Online Standby' : 'Standby'}
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-300">Tier 3: Local JSON Store</span>
+                    <span className="text-sky-400 font-bold">● Active Fail-Safe</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Configure & Check Local PostgreSQL DB */}
+            <div className="lg:col-span-7 space-y-6">
+              <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                  <div>
+                    <h2 className="text-base font-black tracking-tight text-white flex items-center gap-2">
+                      <Server className="w-5 h-5 text-amber-400" />
+                      Configure & Check Local PostgreSQL DB
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Test credentials in real-time or save them live to <code className="text-amber-300 font-mono">app_config.json</code> (<code className="text-slate-300 font-mono">localDatabase</code>).
+                    </p>
+                  </div>
+                </div>
+
+                {/* Quick Presets */}
+                <div className="space-y-1.5">
+                  <span className="text-xs font-bold text-slate-400 block">Host Presets:</span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocalDbHost('127.0.0.1');
+                        setLocalDbPort('5432');
+                        setLocalDbUser('postgres');
+                      }}
+                      className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 text-slate-300 rounded-xl text-xs font-mono border border-slate-800 transition cursor-pointer"
+                    >
+                      127.0.0.1:5432 (Localhost)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocalDbHost('localhost');
+                        setLocalDbPort('5432');
+                        setLocalDbUser('postgres');
+                      }}
+                      className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 text-slate-300 rounded-xl text-xs font-mono border border-slate-800 transition cursor-pointer"
+                    >
+                      localhost:5432
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLocalDbHost('host.docker.internal');
+                        setLocalDbPort('5432');
+                        setLocalDbUser('postgres');
+                      }}
+                      className="px-3 py-1.5 bg-slate-950 hover:bg-slate-800 text-slate-300 rounded-xl text-xs font-mono border border-slate-800 transition cursor-pointer"
+                    >
+                      host.docker.internal:5432 (Docker Host)
+                    </button>
+                  </div>
+                </div>
+
+                {localDbUpdateMsg && (
+                  <div className={`p-4 rounded-2xl border text-xs flex items-start gap-3 ${
+                    localDbUpdateMsg.type === 'success'
+                      ? 'bg-emerald-950/60 border-emerald-800 text-emerald-200'
+                      : 'bg-amber-950/60 border-amber-800 text-amber-200'
+                  }`}>
+                    {localDbUpdateMsg.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                    )}
+                    <span>{localDbUpdateMsg.text}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleSaveLocalDb} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="sm:col-span-2 space-y-1.5">
+                      <label className="text-xs font-bold text-slate-400 block">Local Host (IP / Hostname)</label>
+                      <input
+                        type="text"
+                        value={localDbHost}
+                        onChange={(e) => setLocalDbHost(e.target.value)}
+                        placeholder="127.0.0.1 or localhost"
+                        required
+                        className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-400 block">Port</label>
+                      <input
+                        type="number"
+                        value={localDbPort}
+                        onChange={(e) => setLocalDbPort(e.target.value)}
+                        placeholder="5432"
+                        required
+                        className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-400 block">Local Database User</label>
+                      <input
+                        type="text"
+                        value={localDbUser}
+                        onChange={(e) => setLocalDbUser(e.target.value)}
+                        placeholder="postgres"
+                        required
+                        className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-400 block">Local Database Name</label>
+                      <input
+                        type="text"
+                        value={localDbName}
+                        onChange={(e) => setLocalDbName(e.target.value)}
+                        placeholder="Errandly or postgres"
+                        required
+                        className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-400 block">
+                      Local Database Password {status?.database?.fallbackConfig?.hasPassword && <span className="text-emerald-400 font-normal">(Password is currently set)</span>}
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showLocalDbPassword ? 'text' : 'password'}
+                        value={localDbPassword}
+                        onChange={(e) => setLocalDbPassword(e.target.value)}
+                        placeholder="Leave blank to preserve existing password or enter password..."
+                        className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-white outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowLocalDbPassword(!showLocalDbPassword)}
+                        className="absolute right-3 top-3 text-slate-500 hover:text-slate-300"
+                      >
+                        {showLocalDbPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleTestLocalDb()}
+                      disabled={localDbTesting || localDbUpdating}
+                      className="w-full py-3.5 bg-slate-800 hover:bg-slate-700 active:scale-[0.99] text-sky-300 border border-slate-700 rounded-xl text-xs font-black uppercase tracking-wider shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                    >
+                      {localDbTesting ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-sky-400" />
+                          Checking Connection...
+                        </>
+                      ) : (
+                        <>
+                          <Wifi className="w-4 h-4 text-sky-400" />
+                          Check Connection (Dry Run)
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="submit"
+                      disabled={localDbUpdating || localDbTesting}
+                      className="w-full py-3.5 bg-amber-600 hover:bg-amber-500 active:scale-[0.99] text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                    >
+                      {localDbUpdating ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Saving & Initializing Local Pool...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          Save & Connect Local DB
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Detailed Test Results Box */}
+                {localDbTestResult && (
+                  <div className={`p-4 rounded-2xl border text-xs space-y-3 ${
+                    localDbTestResult.connected
+                      ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200'
+                      : 'bg-slate-950 border-slate-800 text-slate-300'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold flex items-center gap-1.5">
+                        {localDbTestResult.connected ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-red-400" />
+                        )}
+                        Connection Diagnostic Check Results
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                        localDbTestResult.connected ? 'bg-emerald-900/80 text-emerald-200' : 'bg-red-950 text-red-300 border border-red-800'
+                      }`}>
+                        {localDbTestResult.connected ? 'SUCCESS' : 'UNREACHABLE'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                      <div className="p-2 bg-slate-900/80 rounded-lg">
+                        <span className="text-slate-500 block text-[9px] uppercase">Latency</span>
+                        <span className="text-white font-bold">{localDbTestResult.latencyMs !== null && localDbTestResult.latencyMs !== undefined ? `${localDbTestResult.latencyMs} ms` : 'N/A'}</span>
+                      </div>
+                      <div className="p-2 bg-slate-900/80 rounded-lg">
+                        <span className="text-slate-500 block text-[9px] uppercase">Tables</span>
+                        <span className="text-white font-bold">{localDbTestResult.tableCount ?? 0}</span>
+                      </div>
+                      <div className="p-2 bg-slate-900/80 rounded-lg sm:col-span-2">
+                        <span className="text-slate-500 block text-[9px] uppercase">Host:Port</span>
+                        <span className="text-white font-bold truncate block">{localDbHost}:{localDbPort}</span>
+                      </div>
+                    </div>
+
+                    {localDbTestResult.version && (
+                      <div className="text-[11px] font-mono text-slate-400 truncate">
+                        <span className="text-slate-500">Version: </span>{localDbTestResult.version}
+                      </div>
+                    )}
+
+                    {localDbTestResult.error && (
+                      <div className="p-2.5 bg-red-950/60 border border-red-800/80 rounded-xl text-red-300 font-mono text-[11px] break-all">
+                        {localDbTestResult.error}
+                      </div>
+                    )}
+
+                    {localDbTestResult.connected && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQueryTarget('local');
+                          setSqlQuery('SELECT NOW(), version();');
+                          setActiveTab('query');
+                        }}
+                        className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-amber-300 rounded-xl text-xs font-bold border border-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Terminal className="w-3.5 h-3.5" />
+                        Open in Live DB Query Console (Target: Local DB)
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
 
         {/* TAB 2: ACTION SERVER & DB TEST */}
         {activeTab === 'actionserver' && (
@@ -1793,19 +2441,55 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setQueryViewMode('table')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${queryViewMode === 'table' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                  >
-                    Table View
-                  </button>
-                  <button
-                    onClick={() => setQueryViewMode('json')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${queryViewMode === 'json' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
-                  >
-                    JSON View
-                  </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Query Target Selector */}
+                  <div className="flex items-center gap-1 p-1 bg-slate-950 border border-slate-800 rounded-xl">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 px-2">Target:</span>
+                    <button
+                      type="button"
+                      onClick={() => setQueryTarget('auto')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        queryTarget === 'auto' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Auto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueryTarget('primary')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        queryTarget === 'primary' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Cloud className="w-3 h-3" />
+                      Primary (Cloud)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueryTarget('local')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                        queryTarget === 'local' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Server className="w-3 h-3 text-amber-300" />
+                      Local DB
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setQueryViewMode('table')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${queryViewMode === 'table' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                    >
+                      Table View
+                    </button>
+                    <button
+                      onClick={() => setQueryViewMode('json')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${queryViewMode === 'json' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                    >
+                      JSON View
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1885,6 +2569,15 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                       {queryResult.rowCount !== undefined && (
                         <span className="text-slate-400 text-[11px]">
                           ({queryResult.rowCount} {queryResult.rowCount === 1 ? 'row' : 'rows'})
+                        </span>
+                      )}
+                      {queryResult.poolUsed && (
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase font-mono border ${
+                          queryResult.poolUsed === 'local'
+                            ? 'bg-amber-950/80 border-amber-800 text-amber-300'
+                            : 'bg-indigo-950/80 border-indigo-800 text-indigo-300'
+                        }`}>
+                          Pool: {queryResult.poolUsed === 'local' ? 'Local PostgreSQL' : 'Primary (Cloud)'}
                         </span>
                       )}
                     </div>

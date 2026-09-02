@@ -134,14 +134,21 @@ try {
   console.warn("Could not read local env-overrides.json on boot:", err.message);
 }
 
-let appConfig = {
+let appConfig: any = {
   actionServerUrl: process.env.VITE_ACTION_SERVER_URL || process.env.VITE_GATEWAY_URL || "https://gateway.errandly.site",
   database: {
-    host: process.env.PGHOST || "db.hvvhdfucejsuileacvjo.supabase.co",
+    host: process.env.PGHOST || "db.ksflmdvqvseiprebgrcp.supabase.co",
     port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
     user: process.env.PGUSER || "postgres",
     password: process.env.PGPASSWORD || "Company1.Codexict",
     name: process.env.PGDATABASE || "postgres"
+  },
+  localDatabase: {
+    host: process.env.LOCAL_PGHOST || "127.0.0.1",
+    port: process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : 5432,
+    user: process.env.LOCAL_PGUSER || "postgres",
+    password: process.env.LOCAL_PGPASSWORD || "admin",
+    name: process.env.LOCAL_PGDATABASE || "Errandly"
   }
 };
 
@@ -152,6 +159,15 @@ try {
   if (configSource && fs.existsSync(configSource)) {
     const loaded = JSON.parse(fs.readFileSync(configSource, "utf-8"));
     appConfig = { ...appConfig, ...loaded };
+    if (!appConfig.localDatabase) {
+      appConfig.localDatabase = {
+        host: process.env.LOCAL_PGHOST || "127.0.0.1",
+        port: process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : 5432,
+        user: process.env.LOCAL_PGUSER || "postgres",
+        password: process.env.LOCAL_PGPASSWORD || "admin",
+        name: process.env.LOCAL_PGDATABASE || "Errandly"
+      };
+    }
     console.log("[App Config] Loaded config file app_config.json successfully.");
   } else {
     safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
@@ -174,11 +190,13 @@ let dbConfig = {
 
 // Fallback Local PostgreSQL Configuration
 let localDbConfig = {
-  host: process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
-  port: process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432),
-  user: process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
-  password: process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : (process.env.FALLBACK_PGPASSWORD !== undefined ? process.env.FALLBACK_PGPASSWORD : "admin"),
-  database: process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
+  host: appConfig.localDatabase?.host || process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
+  port: appConfig.localDatabase?.port || (process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432)),
+  user: appConfig.localDatabase?.user || process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
+  password: appConfig.localDatabase?.password !== undefined && appConfig.localDatabase?.password !== ""
+    ? appConfig.localDatabase.password 
+    : (process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : (process.env.FALLBACK_PGPASSWORD !== undefined ? process.env.FALLBACK_PGPASSWORD : "admin")),
+  database: appConfig.localDatabase?.name || process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
   connectionString: process.env.LOCAL_DATABASE_URL || process.env.FALLBACK_DATABASE_URL || undefined
 };
 
@@ -315,20 +333,21 @@ async function initLocalPgPool(forceReconnect = false) {
     }
   }
 
-  // Refresh config from process.env if available
+  // Refresh config while respecting saved appConfig and existing localDbConfig
   localDbConfig = {
-    host: process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
-    port: process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432),
-    user: process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
-    password: process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : (process.env.FALLBACK_PGPASSWORD !== undefined ? process.env.FALLBACK_PGPASSWORD : "admin"),
-    database: process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
-    connectionString: process.env.LOCAL_DATABASE_URL || process.env.FALLBACK_DATABASE_URL || undefined
+    host: localDbConfig.host || appConfig.localDatabase?.host || process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
+    port: localDbConfig.port || appConfig.localDatabase?.port || (process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432)),
+    user: localDbConfig.user || appConfig.localDatabase?.user || process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
+    password: localDbConfig.password !== undefined ? localDbConfig.password : (appConfig.localDatabase?.password !== undefined ? appConfig.localDatabase.password : (process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : "admin")),
+    database: localDbConfig.database || appConfig.localDatabase?.name || process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
+    connectionString: localDbConfig.connectionString || process.env.LOCAL_DATABASE_URL || process.env.FALLBACK_DATABASE_URL || undefined
   };
 
+  const isRemoteHost = localDbConfig.host && !localDbConfig.host.includes('127.0.0.1') && !localDbConfig.host.includes('localhost');
   const poolOpts: any = localDbConfig.connectionString ? {
     connectionString: localDbConfig.connectionString,
     max: isVercelEnv ? 2 : 10,
-    connectionTimeoutMillis: 3000,
+    connectionTimeoutMillis: 4000,
     idleTimeoutMillis: 10000
   } : {
     host: localDbConfig.host,
@@ -337,9 +356,13 @@ async function initLocalPgPool(forceReconnect = false) {
     password: localDbConfig.password,
     database: localDbConfig.database,
     max: isVercelEnv ? 2 : 10,
-    connectionTimeoutMillis: 3000,
+    connectionTimeoutMillis: 4000,
     idleTimeoutMillis: 10000
   };
+
+  if (isRemoteHost && !localDbConfig.connectionString) {
+    poolOpts.ssl = { rejectUnauthorized: false };
+  }
 
   localPgPool = new Pool(poolOpts);
 
@@ -4875,7 +4898,11 @@ Please proceed with the task according to safety guidelines and update milestone
           database: localDbConfig.database,
           connected: localPgConnected,
           error: localPgError,
-          latencyMs: localDbLatencyMs
+          latencyMs: localDbLatencyMs,
+          tables: localDbTables,
+          tableCount: localDbTables.length,
+          version: localDbVersion,
+          hasPassword: !!localDbConfig.password
         },
         tables: primaryPgConnected ? dbTables : localDbTables,
         tableCount: primaryPgConnected ? dbTables.length : localDbTables.length,
@@ -4987,6 +5014,167 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   });
 
+  // 3b. Check Local PostgreSQL DB Connection (Dry Run / Test without modifying config)
+  app.post("/api/connectionadmin/local-db/check", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const { host, port, user, password, database } = req.body;
+      const targetHost = (host || localDbConfig.host || "127.0.0.1").trim();
+      const targetPort = parseInt(String(port || localDbConfig.port || 5432)) || 5432;
+      const targetUser = (user || localDbConfig.user || "postgres").trim();
+      const targetDatabase = (database || localDbConfig.database || "Errandly").trim();
+      const targetPassword = password !== undefined && password !== "" ? String(password).trim() : localDbConfig.password;
+
+      const isRemoteHost = targetHost && !targetHost.includes('127.0.0.1') && !targetHost.includes('localhost');
+      const testPoolOpts: any = {
+        host: targetHost,
+        port: targetPort,
+        user: targetUser,
+        password: targetPassword,
+        database: targetDatabase,
+        max: 1,
+        connectionTimeoutMillis: 4000,
+        idleTimeoutMillis: 2000
+      };
+
+      if (isRemoteHost) {
+        testPoolOpts.ssl = { rejectUnauthorized: false };
+      }
+
+      const testPool = new Pool(testPoolOpts);
+      const t0 = Date.now();
+      try {
+        const client = await testPool.connect();
+        const serverTimeRes = await client.query("SELECT NOW() as server_time, version();");
+        const latencyMs = Date.now() - t0;
+        const tblRes = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;");
+        client.release();
+        await testPool.end();
+
+        const tables = tblRes.rows.map(r => r.table_name);
+        const version = serverTimeRes.rows[0]?.version || "PostgreSQL";
+        const serverTime = serverTimeRes.rows[0]?.server_time;
+
+        return res.json({
+          success: true,
+          connected: true,
+          latencyMs,
+          version,
+          serverTime,
+          tables,
+          tableCount: tables.length,
+          config: {
+            host: targetHost,
+            port: targetPort,
+            user: targetUser,
+            database: targetDatabase,
+            hasPassword: !!targetPassword
+          }
+        });
+      } catch (connErr: any) {
+        try { await testPool.end(); } catch (_e) { /* ignore cleanup error */ }
+        const latencyMs = Date.now() - t0;
+        return res.json({
+          success: false,
+          connected: false,
+          latencyMs,
+          error: connErr.message,
+          config: {
+            host: targetHost,
+            port: targetPort,
+            user: targetUser,
+            database: targetDatabase,
+            hasPassword: !!targetPassword
+          }
+        });
+      }
+    } catch (err: any) {
+      console.error("[ConnectionAdmin Local DB Check Exception]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 3c. Update Local PostgreSQL DB Configuration & Live Connect
+  app.post("/api/connectionadmin/local-db/update", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const { host, port, user, password, database } = req.body;
+
+      if (!host || !port || !user || !database) {
+        return res.status(400).json({ success: false, error: "Host, port, user, and database name are required." });
+      }
+
+      const newLocalConfig = {
+        host: host.trim(),
+        port: parseInt(String(port)) || 5432,
+        user: user.trim(),
+        password: password !== undefined && password !== "" ? String(password).trim() : localDbConfig.password,
+        database: database.trim()
+      };
+
+      // Update app_config.json
+      appConfig.localDatabase = {
+        host: newLocalConfig.host,
+        port: newLocalConfig.port,
+        user: newLocalConfig.user,
+        password: newLocalConfig.password,
+        name: newLocalConfig.database
+      };
+      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
+
+      // Update in-memory localDbConfig
+      localDbConfig = {
+        ...localDbConfig,
+        ...newLocalConfig
+      };
+      console.log(`[ConnectionAdmin] Live Local DB credentials updated in ${APP_CONFIG_FILE}`);
+
+      // Re-initialize local pool in memory immediately
+      await initLocalPgPool(true);
+
+      let latencyMs: number | null = null;
+      let tables: string[] = [];
+      let version: string | undefined = undefined;
+      let serverTime: any = undefined;
+
+      if (localPgPool && localPgConnected) {
+        try {
+          const t0 = Date.now();
+          const client = await localPgPool.connect();
+          const qRes = await client.query("SELECT NOW() as server_time, version();");
+          latencyMs = Date.now() - t0;
+          version = qRes.rows[0]?.version;
+          serverTime = qRes.rows[0]?.server_time;
+
+          const tblRes = await client.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY table_name;");
+          client.release();
+          tables = tblRes.rows.map(r => r.table_name);
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      res.json({
+        success: localPgConnected,
+        connected: localPgConnected,
+        latencyMs,
+        tables,
+        tableCount: tables.length,
+        version,
+        serverTime,
+        error: localPgError,
+        config: {
+          host: localDbConfig.host,
+          port: localDbConfig.port,
+          user: localDbConfig.user,
+          database: localDbConfig.database,
+          hasPassword: !!localDbConfig.password
+        }
+      });
+    } catch (err: any) {
+      console.error("[ConnectionAdmin Local DB Update Exception]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // 4. Update Action Server & Write Live Config
   app.post("/api/connectionadmin/action-server/update", requireConnectionAdminAuth, async (req, res) => {
     try {
@@ -5040,12 +5228,35 @@ Please proceed with the task according to safety guidelines and update milestone
 
   // 7. Execute Custom DB SQL Query Live
   app.post("/api/connectionadmin/db/execute-query", requireConnectionAdminAuth, async (req, res) => {
-    const { sql } = req.body;
+    const { sql, target } = req.body;
     if (!sql || typeof sql !== 'string' || !sql.trim()) {
       return res.status(400).json({ success: false, error: "SQL query statement is required." });
     }
 
-    const activePool = (primaryPgPool && primaryPgConnected) ? primaryPgPool : (localPgPool && localPgConnected ? localPgPool : null);
+    let activePool: any = null;
+    let targetName = "Primary / Auto";
+    if (target === 'local') {
+      targetName = "Local PostgreSQL Fallback";
+      activePool = (localPgPool && localPgConnected) ? localPgPool : null;
+      if (!activePool) {
+        return res.status(200).json({
+          success: false,
+          error: localPgError || "Local PostgreSQL fallback is not connected. Check local connection details."
+        });
+      }
+    } else if (target === 'primary') {
+      targetName = "Primary PostgreSQL (Supabase)";
+      activePool = (primaryPgPool && primaryPgConnected) ? primaryPgPool : null;
+      if (!activePool) {
+        return res.status(200).json({
+          success: false,
+          error: primaryPgError || "Primary PostgreSQL is not connected. Check database settings."
+        });
+      }
+    } else {
+      activePool = (primaryPgPool && primaryPgConnected) ? primaryPgPool : (localPgPool && localPgConnected ? localPgPool : null);
+      targetName = primaryPgConnected ? "Primary PostgreSQL" : "Local PostgreSQL Fallback";
+    }
 
     if (!activePool) {
       return res.status(200).json({

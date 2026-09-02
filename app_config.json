@@ -1,7 +1,7 @@
 {
   "actionServerUrl": "https://gateway.errandly.site",
   "database": {
-    "host": "db.hvvhdfucejsuileacvjo.supabase.co",
+    "host": "db.ksflmdvqvseiprebgrcp.supabase.co",
     "port": 5432,
     "user": "postgres",
     "password": "Company1.Codexict",
