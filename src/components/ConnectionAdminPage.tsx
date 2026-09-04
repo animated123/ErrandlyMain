@@ -205,6 +205,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     return !!sessionStorage.getItem('connectionadmin_token');
   });
   const [passwordInput, setPasswordInput] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
@@ -875,17 +876,47 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                Admin Password
-              </label>
-              <input
-                type="password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="••••••••••••••••"
-                className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-200 outline-none focus:border-indigo-500 transition font-mono"
-                autoFocus
-              />
+              <div className="flex items-center justify-between">
+                <label htmlFor="connectionadmin-password-input" className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                  Admin Password
+                </label>
+                {passwordInput && (
+                  <button
+                    type="button"
+                    id="connectionadmin-toggle-password-top"
+                    onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    className="text-[11px] text-slate-400 hover:text-indigo-400 transition flex items-center gap-1"
+                  >
+                    {showLoginPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{showLoginPassword ? 'Hide' : 'View'}</span>
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <input
+                  id="connectionadmin-password-input"
+                  type={showLoginPassword ? 'text' : 'password'}
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  placeholder="••••••••••••••••"
+                  className="w-full pl-4 pr-11 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm text-slate-200 outline-none focus:border-indigo-500 transition font-mono"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  id="connectionadmin-toggle-password-btn"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-800/60 transition focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  title={showLoginPassword ? 'Hide password' : 'View password'}
+                  aria-label={showLoginPassword ? 'Hide password' : 'View password'}
+                >
+                  {showLoginPassword ? (
+                    <EyeOff className="w-4 h-4 text-indigo-400" />
+                  ) : (
+                    <Eye className="w-4 h-4 text-slate-400 hover:text-slate-200" />
+                  )}
+                </button>
+              </div>
             </div>
 
             {authError && (
