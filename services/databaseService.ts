@@ -4,20 +4,29 @@ import { API_BASE_URL } from './apiConfig';
 const parseProfile = (data: any) => {
   const hasAdminRights = (
     data.it_admin === true || data.it_admin === 'true' || data.it_admin === 1 ||
-    data.is_admin === true || data.is_admin === 'true' || data.is_admin === 1
+    data.is_admin === true || data.is_admin === 'true' || data.is_admin === 1 ||
+    data.role === 'admin' || data.role === 'ADMIN'
   );
+
+  const rawW = data.wallet_balance !== undefined && data.wallet_balance !== null ? Number(data.wallet_balance) : 0;
+  const rawB = data.balance !== undefined && data.balance !== null ? Number(data.balance) : 0;
+  const rawWBal = data.walletBalance !== undefined && data.walletBalance !== null ? Number(data.walletBalance) : 0;
+  const finalBalance = Math.max(rawW, rawB, rawWBal);
 
   return {
     id: data.id,
-    walletBalance: data.balance !== undefined && data.balance !== null ? data.balance : (data.wallet_balance || 0),
+    walletBalance: finalBalance,
+    balance: finalBalance,
+    wallet_balance: finalBalance,
     rating: data.rating,
-    ratingCount: data.rating_count,
+    ratingCount: data.rating_count || data.ratingCount,
     phone: data.phone,
-    name: data.username,
+    name: data.username || data.name || data.full_name || 'User',
+    email: data.email,
     it_admin: data.it_admin,
     is_admin: data.is_admin,
     isAdmin: hasAdminRights,
-    role: hasAdminRights ? 'admin' : undefined
+    role: data.role ? String(data.role).toLowerCase() : (hasAdminRights ? 'admin' : 'client')
   };
 };
 
@@ -67,49 +76,44 @@ export const databaseService = {
    * Fetch current user's profile from local DB via Express API
    */
   getProfile: async (userId: string, email?: string): Promise<Partial<User> | null> => {
-    if (!userId) {
-      console.warn('[DatabaseService] getProfile: userId is required');
+    if (!userId && !email) {
+      console.warn('[DatabaseService] getProfile: userId or email is required');
       return null;
     }
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/db/profiles/select`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          match: { id: userId }
-        })
-      });
+      let data = null;
 
-      if (!response.ok) {
-        throw new Error(`Profile query returned status: ${response.status}`);
-      }
-
-      const resData = await response.json();
-      let data = resData.data?.[0];
-
-      if (!data) {
-        console.log('[DatabaseService] Profile not found, creating default profile...');
-        const syncResponse = await fetch(`${API_BASE_URL}/api/db/profiles/upsert`, {
+      // 1. Try finding by userId
+      if (userId) {
+        const response = await fetch(`${API_BASE_URL}/api/db/profiles/select`, {
           method: 'POST',
           headers: getHeaders(),
           body: JSON.stringify({
-            body: {
-              id: userId,
-              email: email || '',
-              wallet_balance: 0,
-              balance: 0,
-              updated_at: new Date().toISOString()
-            }
+            match: { id: userId }
           })
         });
 
-        if (!syncResponse.ok) {
-          throw new Error(`Upsert profile failed: ${syncResponse.status}`);
+        if (response.ok) {
+          const resData = await response.json();
+          data = resData.data?.[0];
         }
+      }
 
-        const syncData = await syncResponse.json();
-        data = syncData.data?.[0];
+      // 2. If not found by userId, try finding by email
+      if (!data && email) {
+        const emailResponse = await fetch(`${API_BASE_URL}/api/db/profiles/select`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify({
+            match: { email: email.toLowerCase().trim() }
+          })
+        });
+
+        if (emailResponse.ok) {
+          const emailResData = await emailResponse.json();
+          data = emailResData.data?.[0];
+        }
       }
       
       if (!data) return null;

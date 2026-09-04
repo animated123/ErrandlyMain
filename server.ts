@@ -12,6 +12,37 @@ import pg from 'pg';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
+// Load .env or .env1 file if present into process.env before anything else
+try {
+  const envPath = fs.existsSync(path.join(process.cwd(), '.env'))
+    ? path.join(process.cwd(), '.env')
+    : (fs.existsSync(path.join(process.cwd(), '.env1')) ? path.join(process.cwd(), '.env1') : null);
+  if (envPath) {
+    if (typeof (process as any).loadEnvFile === 'function') {
+      (process as any).loadEnvFile(envPath);
+    } else {
+      const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx > 0) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          let val = trimmed.slice(eqIdx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (!process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    }
+  }
+} catch (envErr: any) {
+  console.warn('[Env] Notice loading env file:', envErr?.message);
+}
+
 // Global captured logs tracker
 interface LogEntry {
   timestamp: string;
@@ -177,15 +208,29 @@ try {
 }
 
 // Build dbConfig with priority given to saved appConfig/legacy database_config if present, then process.env, then defaults
+const isValidPgUrl = (url?: string): boolean => {
+  if (!url || typeof url !== 'string') return false;
+  const lower = url.toLowerCase().trim();
+  return (lower.startsWith('postgresql://') || lower.startsWith('postgres://')) && !lower.includes('localhost') && !lower.includes('127.0.0.1');
+};
+
+const isRemoteHostCheck = (h?: string): boolean => {
+  if (!h || typeof h !== 'string') return false;
+  const lower = h.toLowerCase().trim();
+  return !lower.includes('127.0.0.1') && !lower.includes('localhost') && !lower.includes('0.0.0.0');
+};
+
 let dbConfig = {
-  host: appConfig.database?.host || process.env.PGHOST || "127.0.0.1",
+  host: appConfig.database?.host || (isRemoteHostCheck(process.env.PGHOST) ? process.env.PGHOST : "db.ksflmdvqvseiprebgrcp.supabase.co"),
   port: appConfig.database?.port || (process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432),
   user: appConfig.database?.user || process.env.PGUSER || "postgres",
   password: appConfig.database?.password !== undefined && appConfig.database?.password !== ""
     ? appConfig.database.password 
-    : (process.env.PGPASSWORD !== undefined ? process.env.PGPASSWORD : "admin"),
-  database: appConfig.database?.name || process.env.PGDATABASE || "Errandly",
-  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL || undefined
+    : (process.env.PGPASSWORD !== undefined ? process.env.PGPASSWORD : "Company1.Codexict"),
+  database: appConfig.database?.name || process.env.PGDATABASE || "postgres",
+  connectionString: isValidPgUrl(appConfig.database?.connectionString) 
+    ? appConfig.database.connectionString 
+    : (isValidPgUrl(process.env.DATABASE_URL) ? process.env.DATABASE_URL : (isValidPgUrl(process.env.POSTGRES_URL) ? process.env.POSTGRES_URL : undefined))
 };
 
 // Fallback Local PostgreSQL Configuration
@@ -293,7 +338,7 @@ async function initPrimaryPgPool(forceReconnect = false) {
     idleTimeoutMillis: isVercelEnv ? 5000 : 10000
   };
 
-  if (isRemoteHost && !dbConfig.connectionString) {
+  if (isRemoteHost) {
     poolOpts.ssl = { rejectUnauthorized: false };
   }
 
@@ -815,6 +860,24 @@ async function executePostgresOperation(targetPool: any, tableName: string, chai
   const params: any[] = [];
   let paramIdx = 1;
 
+  const normalizeProfileFields = (map: Record<string, any>) => {
+    if (tableName === 'profiles') {
+      if (map['role']) {
+        const r = String(map['role']).toLowerCase().trim();
+        if (r === 'admin') map['role'] = 'admin';
+        else if (r === 'runner') map['role'] = 'runner';
+        else map['role'] = 'client';
+      }
+      const rawWallet = map['wallet_balance'] !== undefined && map['wallet_balance'] !== null ? Number(map['wallet_balance']) : undefined;
+      const rawBal = map['balance'] !== undefined && map['balance'] !== null ? Number(map['balance']) : undefined;
+      if (rawWallet !== undefined || rawBal !== undefined) {
+        const unified = Math.max(rawWallet || 0, rawBal || 0);
+        map['wallet_balance'] = unified;
+        map['balance'] = unified;
+      }
+    }
+  };
+
   if (isWrite) {
     if (writeAction === 'insert') {
       const bodies = Array.isArray(writeBody) ? writeBody : [writeBody];
@@ -839,6 +902,7 @@ async function executePostgresOperation(targetPool: any, tableName: string, chai
         for (const [k, v] of Object.entries(dbRowObj)) {
           snakeMap[camelToSnake(k)] = v;
         }
+        normalizeProfileFields(snakeMap);
 
         const keys = Object.keys(snakeMap);
         const cols = keys.map(k => `"${k}"`).join(", ");
@@ -867,6 +931,7 @@ async function executePostgresOperation(targetPool: any, tableName: string, chai
         if (camelToSnake(k) === 'id') continue;
         snakeMap[camelToSnake(k)] = v === undefined ? null : v;
       }
+      normalizeProfileFields(snakeMap);
 
       const setClauses: string[] = [];
       const vals: any[] = [];
@@ -900,6 +965,7 @@ async function executePostgresOperation(targetPool: any, tableName: string, chai
         for (const [k, v] of Object.entries(upsertObj)) {
           snakeMap[camelToSnake(k)] = v;
         }
+        normalizeProfileFields(snakeMap);
 
         const keys = Object.keys(snakeMap);
         const cols = keys.map(k => `"${k}"`).join(", ");
@@ -999,6 +1065,17 @@ async function executePostgresOperation(targetPool: any, tableName: string, chai
 
   const res = await targetPool.query(queryStr, params);
   const rows = res.rows.map(convertToSupabaseRow);
+
+  if (tableName === 'profiles' && Array.isArray(rows)) {
+    for (const r of rows) {
+      const rawWallet = r.wallet_balance !== null && r.wallet_balance !== undefined ? Number(r.wallet_balance) : 0;
+      const rawBal = r.balance !== null && r.balance !== undefined ? Number(r.balance) : 0;
+      const maxB = Math.max(rawWallet, rawBal);
+      r.wallet_balance = maxB;
+      r.balance = maxB;
+      r.walletBalance = maxB;
+    }
+  }
 
   if (isSingle) {
     return { data: rows.length > 0 ? rows[0] : null, error: null };
@@ -3672,41 +3749,55 @@ Please proceed with the task according to safety guidelines and update milestone
         input.toLowerCase().startsWith('supaadmin@')
       );
 
-      if (!user && isSuperAdmin) {
-        // Auto-provision super admin profile
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const userId = `usr_admin_${Math.random().toString(36).substr(2, 9)}`;
-        const profilePayload = {
-          id: userId,
-          email: input.toLowerCase(),
-          username: 'Super Admin',
-          phone: '254700000000',
-          role: 'ADMIN',
-          is_runner: false,
-          is_admin: true,
-          backend_admin: true,
-          password_hash: hashedPassword,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          wallet_balance: 10000,
-          balance: 10000,
-          completed_errands: 0,
-          total_tasks: 0,
-          theme: 'light',
-          phone_verified: true,
-          email_verified: true,
-          is_verified: true
-        };
-        const { data: insertedUser, error: insertErr } = await supabase
-          .from('profiles')
-          .upsert(profilePayload, { onConflict: 'email' })
-          .select('*')
-          .maybeSingle();
+      if (isSuperAdmin) {
+        if (!user) {
+          // Auto-provision super admin profile
+          const hashedPassword = await bcrypt.hash(password, 10);
+          const userId = `usr_admin_${Math.random().toString(36).substr(2, 9)}`;
+          const profilePayload = {
+            id: userId,
+            email: input.toLowerCase(),
+            username: 'Super Admin',
+            phone: '254700000000',
+            role: 'admin',
+            is_runner: false,
+            is_admin: true,
+            it_admin: true,
+            backend_admin: 'yes',
+            password_hash: hashedPassword,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            wallet_balance: 10000,
+            balance: 10000,
+            completed_errands: 0,
+            total_tasks: 0,
+            theme: 'light',
+            phone_verified: true,
+            email_verified: true,
+            is_verified: true
+          };
+          const { data: insertedUser, error: insertErr } = await supabase
+            .from('profiles')
+            .upsert(profilePayload, { onConflict: 'email' })
+            .select('*')
+            .maybeSingle();
 
-        if (insertErr) {
-          console.error("[Super Admin Auto-Provision Upsert Error]:", insertErr.message);
+          if (insertErr) {
+            console.error("[Super Admin Auto-Provision Upsert Error]:", insertErr.message);
+          }
+          user = insertedUser || profilePayload;
+        } else if (!user.password_hash) {
+          const hashedPassword = await bcrypt.hash(password, 10);
+          await supabase.from('profiles').update({
+            password_hash: hashedPassword,
+            is_admin: true,
+            it_admin: true,
+            role: 'admin'
+          }).eq('id', user.id);
+          user.password_hash = hashedPassword;
+          user.is_admin = true;
+          user.role = 'admin';
         }
-        user = insertedUser || profilePayload;
       }
 
       if (!user) {
@@ -3722,6 +3813,14 @@ Please proceed with the task according to safety guidelines and update milestone
       if (!isMatch) {
          return res.status(401).json({ error: "Incorrect password. Please check your password and try again." });
       }
+
+      // Normalize balance on user object
+      const rawW = user.wallet_balance !== null && user.wallet_balance !== undefined ? Number(user.wallet_balance) : 0;
+      const rawB = user.balance !== null && user.balance !== undefined ? Number(user.balance) : 0;
+      const finalBal = Math.max(rawW, rawB);
+      user.wallet_balance = finalBal;
+      user.balance = finalBal;
+      user.walletBalance = finalBal;
 
       // Sign JWT token
       const token = jwt.sign(
@@ -3770,15 +3869,35 @@ Please proceed with the task according to safety guidelines and update milestone
         return res.status(500).json({ error: "Database interface offline" });
       }
 
-      const { data: user, error } = await supabase
+      let { data: user, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', req.user.userId)
         .maybeSingle();
 
+      if ((error || !user) && req.user.email) {
+        const { data: userByEmail } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', req.user.email.toLowerCase().trim())
+          .maybeSingle();
+        if (userByEmail) {
+          user = userByEmail;
+          error = null;
+        }
+      }
+
       if (error || !user) {
         return res.status(401).json({ error: "Unauthorized: User not found" });
       }
+
+      // Synchronize and normalize balance
+      const rawW = user.wallet_balance !== null && user.wallet_balance !== undefined ? Number(user.wallet_balance) : 0;
+      const rawB = user.balance !== null && user.balance !== undefined ? Number(user.balance) : 0;
+      const finalBal = Math.max(rawW, rawB);
+      user.wallet_balance = finalBal;
+      user.balance = finalBal;
+      user.walletBalance = finalBal;
 
       res.json({ success: true, user });
     } catch (err: any) {
@@ -4072,7 +4191,10 @@ Please proceed with the task according to safety guidelines and update milestone
             let newBalance = Number(amount);
             const { data: profile } = await supabase.from('profiles').select('wallet_balance, balance, phone, name, username, full_name').eq('id', userId).maybeSingle();
             if (profile) {
-              const currentBalance = profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : Number(profile.wallet_balance || 0);
+              const currentBalance = Math.max(
+                profile.wallet_balance !== null && profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : 0,
+                profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : 0
+              );
               newBalance = currentBalance + Number(amount);
               await supabase.from('profiles').update({ wallet_balance: newBalance, balance: newBalance }).eq('id', userId);
             }
@@ -4193,7 +4315,10 @@ Please proceed with the task according to safety guidelines and update milestone
               let newBalance = Number(amount);
               const { data: profile } = await supabase.from('profiles').select('wallet_balance, balance, phone, name, username, full_name').eq('id', userId).maybeSingle();
               if (profile) {
-                const currentBalance = profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : Number(profile.wallet_balance || 0);
+                const currentBalance = Math.max(
+                  profile.wallet_balance !== null && profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : 0,
+                  profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : 0
+                );
                 newBalance = currentBalance + Number(amount);
                 await supabase.from('profiles').update({ wallet_balance: newBalance, balance: newBalance }).eq('id', userId);
                 await supabase.from('transactions').update({ status: 'success' }).eq('id', transactionId);
@@ -4300,7 +4425,10 @@ Please proceed with the task according to safety guidelines and update milestone
 
             let newBalance = amountNum;
             if (!profileFetchError && profile) {
-              const currentBalance = profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : Number(profile.wallet_balance || 0);
+              const currentBalance = Math.max(
+                profile.wallet_balance !== null && profile.wallet_balance !== undefined ? Number(profile.wallet_balance) : 0,
+                profile.balance !== null && profile.balance !== undefined ? Number(profile.balance) : 0
+              );
               newBalance = currentBalance + amountNum;
               const { error: balanceError } = await supabase
                 .from('profiles')

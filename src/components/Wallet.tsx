@@ -49,11 +49,16 @@ export default function WalletModal({ isOpen, onClose, user, onUpdateUser }: Wal
     try {
       console.log('[Wallet] Refreshing data from local database...');
       // 1. Fetch Profile/Balance
-      const profile = await databaseService.getProfile(user.id);
-      if (profile?.walletBalance !== undefined) {
-        setWalletBalance(profile.walletBalance);
+      const profile = await databaseService.getProfile(user.id, user.email);
+      if (profile) {
+        const bal = Math.max(
+          profile.walletBalance !== undefined ? Number(profile.walletBalance) : 0,
+          (profile as any).balance !== undefined ? Number((profile as any).balance) : 0,
+          (profile as any).wallet_balance !== undefined ? Number((profile as any).wallet_balance) : 0
+        );
+        setWalletBalance(bal);
         if (onUpdateUser) {
-          onUpdateUser({ walletBalance: profile.walletBalance });
+          onUpdateUser({ walletBalance: bal, balance: bal } as any);
         }
       }
       
@@ -85,7 +90,17 @@ export default function WalletModal({ isOpen, onClose, user, onUpdateUser }: Wal
       setIsRefreshing(false);
       setLoading(false);
     }
-  }, [user?.id, onUpdateUser]);
+  }, [user?.id, user?.email, onUpdateUser]);
+
+  const userBalance = (user as any)?.balance;
+  const userWalletBalance = user?.walletBalance;
+
+  useEffect(() => {
+    if (user) {
+      const b = Math.max(Number(userWalletBalance || 0), Number(userBalance || 0));
+      setWalletBalance(b);
+    }
+  }, [user, userWalletBalance, userBalance]);
 
   useEffect(() => {
     if (!user?.id || !isOpen) return;

@@ -35,6 +35,74 @@
         "emailVerified": true,
         "theme": "light"
       }
+    },
+    {
+      "id": "usr_pkv99ugi1",
+      "email": "codexthika@gmail.com",
+      "username": "Mbuvi",
+      "phone": "254752269301",
+      "role": "REQUESTER",
+      "is_runner": false,
+      "is_admin": false,
+      "password_hash": "$2b$10$e1jG.BjWTXfBroTrpB.yuOPByWkLIkAQg7dIhZ3hJzcnMuub.C6ue",
+      "created_at": "2026-09-04T19:25:57.868Z",
+      "updated_at": "2026-09-04T19:25:57.869Z",
+      "wallet_balance": 0,
+      "balance": 0,
+      "completed_errands": 0,
+      "total_tasks": 0,
+      "theme": "light",
+      "phone_verified": false,
+      "email_verified": false,
+      "extra_data": {
+        "emailVerificationCode": "920593",
+        "emailVerificationExpires": "2026-09-04T20:26:45.314Z",
+        "lastKnownLocation": {
+          "lat": -1.2864087168166458,
+          "lng": 36.95301082709942
+        },
+        "isOnline": true
+      },
+      "is_online": true,
+      "last_known_location": {
+        "lat": -1.2864087168166458,
+        "lng": 36.95301082709942
+      }
+    },
+    {
+      "id": "491c571f-dc4e-4428-a9af-748fd9e15a52",
+      "email": "ngugimaina4@gmail.com",
+      "username": "Super Admin",
+      "phone": "254722603149",
+      "role": "admin",
+      "is_runner": false,
+      "is_admin": true,
+      "backend_admin": true,
+      "password_hash": "$2b$10$IcbB/BWLjr8h2VrBvARCieIzXhUh7ZgFYbBzAfR9jzKZ4qHfYftRm",
+      "created_at": "2026-09-04T19:35:45.594Z",
+      "updated_at": "2026-09-04T19:35:45.594Z",
+      "wallet_balance": 10,
+      "balance": 10,
+      "completed_errands": 0,
+      "total_tasks": 0,
+      "theme": "light",
+      "phone_verified": true,
+      "email_verified": true,
+      "is_verified": true,
+      "is_online": true,
+      "last_known_location": {
+        "lat": -1.2864087168166458,
+        "lng": 36.95301082709942
+      },
+      "extra_data": {
+        "lastKnownLocation": {
+          "lat": -1.2864087168166458,
+          "lng": 36.95301082709942
+        },
+        "isOnline": true
+      },
+      "name": "Super Admin",
+      "it_admin": true
     }
   ],
   "transactions": [
@@ -49,6 +117,19 @@
       "created_at": "2026-05-30T08:42:34.238Z",
       "reference": "b48b796e-1da3-42b3-b87e-50927d60286b-1",
       "phone_number": "254722603149"
+    },
+    {
+      "id": "79aba5a6-cf20-4092-b819-f55a972e00c3",
+      "user_id": "491c571f-dc4e-4428-a9af-748fd9e15a52",
+      "amount": 1,
+      "status": "success",
+      "type": "deposit",
+      "provider": "paystack",
+      "description": "Wallet Deposit via M-Pesa",
+      "created_at": "2026-09-04T19:47:52.678Z",
+      "reference": "79aba5a6-cf20-4092-b819-f55a972e00c3-1",
+      "phone_number": "254722603149",
+      "userid": "491c571f-dc4e-4428-a9af-748fd9e15a52"
     }
   ],
   "otp_codes": [
@@ -67,6 +148,14 @@
       "expires_at": "2026-05-30T09:50:58.423Z",
       "created_at": "2026-05-30T08:50:58.423Z",
       "is_used": true
+    },
+    {
+      "id": "codexthika@gmail.com",
+      "phone_number": "codexthika@gmail.com",
+      "code": "920593",
+      "expires_at": "2026-09-04T20:26:45.155Z",
+      "created_at": "2026-09-04T19:26:45.155Z",
+      "is_used": false
     }
   ],
   "errands": [
@@ -184,6 +273,36 @@
         "bids": [],
         "checklist": []
       }
+    }
+  ],
+  "settings": [
+    {
+      "id": "app",
+      "primary_color": "#2891e2",
+      "logo_url": "https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png",
+      "icon_url": "https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png",
+      "dashboard_hero_url": "https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png",
+      "default_ui_scale": 1.1,
+      "logo_scale": 3,
+      "logo_variant": "original",
+      "saka_keja_base_fee": 1200,
+      "saka_keja_percentage": 8,
+      "created_at": "2026-09-04T19:20:24.219Z",
+      "updated_at": "2026-09-04T19:20:24.219Z"
+    },
+    {
+      "id": "android",
+      "primary_color": "#2891e2",
+      "logo_url": "https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png",
+      "icon_url": "https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png",
+      "dashboard_hero_url": "https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png",
+      "default_ui_scale": 1.1,
+      "logo_scale": 3,
+      "logo_variant": "original",
+      "saka_keja_base_fee": 1200,
+      "saka_keja_percentage": 8,
+      "created_at": "2026-09-04T19:20:24.219Z",
+      "updated_at": "2026-09-04T19:20:24.219Z"
     }
   ]
 }

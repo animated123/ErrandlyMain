@@ -396,11 +396,11 @@ export default function App() {
   }, [appSettings.defaultUiScale]);
 
   // Fetch profile with retry logic
-  const fetchProfileWithRetry = useCallback(async (uid: string, attempts = 3) => {
+  const fetchProfileWithRetry = useCallback(async (uid: string, attempts = 3, email?: string) => {
     for (let i = 0; i < attempts; i++) {
       try {
         console.log(`[ProfileSync] Attempt ${i + 1} for ${uid}`);
-        const profile = await databaseService.getProfile(uid);
+        const profile = await databaseService.getProfile(uid, email);
         if (profile) return profile;
       } catch (err) {
         console.error(`[ProfileSync] Attempt ${i + 1} failed:`, err);
@@ -419,9 +419,19 @@ export default function App() {
         
         // Sync profile balance immediately on login
         try {
-          const profile = await fetchProfileWithRetry(u.id);
-          if (profile && profile.walletBalance !== undefined) {
-            setUser(prev => prev ? { ...prev, walletBalance: profile.walletBalance } : null);
+          const profile = await fetchProfileWithRetry(u.id, 3, u.email);
+          if (profile && (profile.walletBalance !== undefined || (profile as any).balance !== undefined)) {
+            const b = Math.max(Number(profile.walletBalance || 0), Number((profile as any).balance || 0));
+            setUser(prev => {
+              if (!prev) return null;
+              const next = { ...prev, walletBalance: b, balance: b };
+              try {
+                localStorage.setItem('errand_runner_user_profile', JSON.stringify(next));
+              } catch (err) {
+                console.debug('[App] Local profile update ignored:', err);
+              }
+              return next;
+            });
           }
         } catch (err) {
           console.error('[App] Profile initial sync failed:', err);
@@ -2620,7 +2630,18 @@ export default function App() {
           isOpen={showWallet}
           user={user} 
           onClose={() => setShowWallet(false)} 
-          onUpdateUser={(updates) => setUser(prev => prev ? { ...prev, ...updates } : null)}
+          onUpdateUser={(updates) => {
+            setUser(prev => {
+              if (!prev) return null;
+              const next = { ...prev, ...updates };
+              try {
+                localStorage.setItem('errand_runner_user_profile', JSON.stringify(next));
+              } catch (err) {
+                console.debug('[App] Local profile update ignored:', err);
+              }
+              return next;
+            });
+          }}
         />
       )}
 

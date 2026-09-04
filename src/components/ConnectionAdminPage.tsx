@@ -209,7 +209,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [authLoading, setAuthLoading] = useState(false);
 
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'db' | 'actionserver' | 'logs' | 'query' | 'apicall' | 'sync'>('sync');
+  const [activeTab, setActiveTab] = useState<'db' | 'localdb' | 'actionserver' | 'logs' | 'query' | 'apicall' | 'sync'>('sync');
 
   // Overall status data
   const [status, setStatus] = useState<ConnectionAdminStatus | null>(null);
@@ -1015,15 +1015,34 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       <main className="max-w-7xl mx-auto px-4 sm:px-8 mt-6 space-y-6">
         <div className="flex border-b border-slate-800 gap-2 overflow-x-auto pb-2">
           <button
-            onClick={() => setActiveTab('db')}
+            onClick={() => {
+              setActiveTab('db');
+              setDbSubTab('primary');
+            }}
             className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shrink-0 ${
-              activeTab === 'db'
+              activeTab === 'db' && dbSubTab === 'primary'
                 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
                 : 'text-slate-400 hover:text-white hover:bg-slate-900'
             }`}
           >
             <Database className="w-4 h-4" />
-            1. Database & Live Config
+            1. Primary DB (Cloud)
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('localdb');
+              setDbSubTab('local');
+            }}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shrink-0 ${
+              activeTab === 'localdb' || (activeTab === 'db' && dbSubTab === 'local')
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Server className="w-4 h-4 text-amber-400" />
+            2. Local PostgreSQL DB
+            <span className={`w-2 h-2 rounded-full ${status?.database?.fallbackConfig?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
           </button>
 
           <button
@@ -1035,7 +1054,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             }`}
           >
             <Zap className="w-4 h-4 text-amber-400" />
-            2. Action Server & DB Test
+            3. Action Server & DB Test
           </button>
 
           <button
@@ -1047,7 +1066,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             }`}
           >
             <Activity className="w-4 h-4" />
-            3. Live Detailed Logs ({logs.length})
+            4. Live Detailed Logs ({logs.length})
           </button>
 
           <button
@@ -1059,7 +1078,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             }`}
           >
             <Terminal className="w-4 h-4" />
-            4. Live DB Query Console
+            5. Live DB Query Console
           </button>
 
           <button
@@ -1071,7 +1090,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             }`}
           >
             <Send className="w-4 h-4" />
-            5. Action Server / API Caller
+            6. Action Server / API Caller
           </button>
 
           <button
@@ -1086,7 +1105,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             }`}
           >
             <RefreshCw className={`w-4 h-4 text-emerald-400 ${syncLoading ? 'animate-spin' : ''}`} />
-            6. DB Sync & Auto-Reconcile
+            7. DB Sync & Auto-Reconcile
             {syncStatus && (
               <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
                 syncStatus.synced 
@@ -1099,8 +1118,8 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
           </button>
         </div>
 
-        {/* TAB 1: DATABASE & LIVE CONFIG */}
-        {activeTab === 'db' && (
+        {/* TAB 1 & 2: DATABASE & LIVE CONFIG / LOCAL POSTGRESQL DB */}
+        {(activeTab === 'db' || activeTab === 'localdb') && (
           <div className="space-y-6">
             {/* Database Switcher Subtabs */}
             <div className="flex items-center justify-between flex-wrap gap-4 pb-2 border-b border-slate-800/80">

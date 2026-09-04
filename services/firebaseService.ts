@@ -183,8 +183,15 @@ const mapSupabaseToProfile = (row: any): User => {
   const extra = row.extra_data || {};
   const rootIsAdmin = (
     row.it_admin === true || row.it_admin === 'true' || row.it_admin === 1 ||
-    row.is_admin === true || row.is_admin === 'true' || row.is_admin === 1
+    row.is_admin === true || row.is_admin === 'true' || row.is_admin === 1 ||
+    row.role === 'admin' || row.role === 'ADMIN'
   );
+
+  const rawWallet = row.wallet_balance !== null && row.wallet_balance !== undefined ? Number(row.wallet_balance) : 0;
+  const rawBal = row.balance !== null && row.balance !== undefined ? Number(row.balance) : 0;
+  const rawWBal = row.walletBalance !== null && row.walletBalance !== undefined ? Number(row.walletBalance) : 0;
+  const finalBalance = Math.max(rawWallet, rawBal, rawWBal);
+
   return {
     ...extra,
     id: row.id,
@@ -205,8 +212,8 @@ const mapSupabaseToProfile = (row: any): User => {
     isVerified: row.is_verified || false,
     rating: row.rating !== null ? Number(row.rating) : 5,
     ratingCount: row.rating_count !== null ? Number(row.rating_count) : 0,
-    walletBalance: row.wallet_balance !== null ? Number(row.wallet_balance) : 0,
-    balance: row.balance !== null ? Number(row.balance) : 0,
+    walletBalance: finalBalance,
+    balance: finalBalance,
     completedErrands: row.completed_errands !== null ? Number(row.completed_errands) : 0,
     totalTasks: row.total_tasks !== null ? Number(row.total_tasks) : 0,
     notificationSettings: row.notification_settings || { push: true, email: true, sms: true },
@@ -1532,29 +1539,33 @@ export const firebaseService = {
   subscribeToAuthChanges: (callback: (user: User | null) => void) => {
     firebaseService._jwtListeners.add(callback);
 
-    // If cache is empty but we have a token, do an initial async fetch to hydrate
     const token = localStorage.getItem('errand_runner_jwt_token');
-    if (token && !firebaseService._currentUserCache) {
-      // First do a fast callback with the cached local storage model (if available)
-      try {
-        const cached = localStorage.getItem('errand_runner_user_profile');
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          firebaseService._currentUserCache = parsed;
-          callback(parsed);
+    if (token) {
+      // 1. Immediately provide cached user if available
+      let initialUser = firebaseService._currentUserCache;
+      if (!initialUser) {
+        try {
+          const cached = localStorage.getItem('errand_runner_user_profile');
+          if (cached) {
+            initialUser = JSON.parse(cached);
+            firebaseService._currentUserCache = initialUser;
+          }
+        } catch (err: any) {
+          console.warn('[JWT Auth] Local cache subscriber parsing error:', err.message);
         }
-      } catch (err: any) {
-        console.warn('[JWT Auth] Local cache subscriber parsing error:', err.message);
+      }
+      if (initialUser) {
+        callback(initialUser);
       }
 
-      // Then trigger background refresh
-      firebaseService.getCurrentUser().then(user => {
-        if (user) {
-          callback(user);
+      // 2. ALWAYS fetch fresh user profile from backend to ensure balance & account state are up to date
+      firebaseService.getCurrentUser().then(freshUser => {
+        if (freshUser) {
+          callback(freshUser);
         }
       });
     } else {
-      callback(firebaseService._currentUserCache);
+      callback(null);
     }
 
     return () => {
