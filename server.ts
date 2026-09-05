@@ -7,7 +7,6 @@ import nodemailer from "nodemailer";
 import cors from "cors";
 import admin from "firebase-admin";
 import axios from "axios";
-import { Resend } from 'resend';
 import pg from 'pg';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -1673,6 +1672,47 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
           }
         }
 
+        // Special handling for profiles: intelligently reconcile balances, permissions, and passwords
+        if (tableName === 'profiles') {
+          const maxWallet = Math.max(
+            ...candidates.map(c => Number(c.wallet_balance !== undefined && c.wallet_balance !== null ? c.wallet_balance : (c.balance || c.walletBalance || 0)))
+          );
+          if (!isNaN(maxWallet) && maxWallet > 0) {
+            bestRecord = {
+              ...bestRecord,
+              wallet_balance: maxWallet,
+              balance: maxWallet
+            };
+          }
+
+          const userEmail = String(bestRecord.email || '').toLowerCase().trim();
+          const isSuperAdminEmail = userEmail === 'ngugimaina4@gmail.com' || userEmail === 'errands@codexict.co.ke' || userEmail.includes('supaadmin');
+          const anyAdmin = candidates.some(c => (
+            c.is_admin === true || c.is_admin === 'true' || c.is_admin === 1 ||
+            c.it_admin === true || c.it_admin === 'true' || c.it_admin === 1 ||
+            c.role === 'admin' || c.role === 'ADMIN'
+          ));
+          if (anyAdmin || isSuperAdminEmail) {
+            bestRecord = {
+              ...bestRecord,
+              is_admin: true,
+              it_admin: true,
+              backend_admin: true,
+              role: 'admin'
+            };
+          }
+
+          if (!bestRecord.password_hash) {
+            const candWithPw = candidates.find(c => !!c.password_hash);
+            if (candWithPw) {
+              bestRecord = {
+                ...bestRecord,
+                password_hash: candWithPw.password_hash
+              };
+            }
+          }
+        }
+
         // Check if missing or outdated across available tiers
         const primaryNeedsSync = isPrimaryOnline && (!inPrimary || (inPrimary && recPrimary.updated_at && bestRecord.updated_at && new Date(recPrimary.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
         const localPgNeedsSync = isLocalPgOnline && (!inLocalPg || (inLocalPg && recLocalPg.updated_at && bestRecord.updated_at && new Date(recLocalPg.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
@@ -1810,14 +1850,6 @@ setTimeout(async () => {
     console.warn("[Auto-Sync Engine] Initial sync check notice:", e?.message);
   }
 }, 3000);
-
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-
-if (resend) {
-  console.log("[Resend] Initialized and ready as fallback.");
-} else {
-  console.warn("[Resend] RESEND_API_KEY is missing. Action Server fallback will be limited.");
-}
 
 // Use global fetch (built-in in stable Node 18+)
 const getFetch = () => {
@@ -4729,34 +4761,13 @@ Please proceed with the task according to safety guidelines and update milestone
       };
 
       const sendViaFallback = async () => {
-        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
+        const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || "Errand Runner <notifications@ais-errands.app>";
         const targetSubject = subject || "Notification from Errand Runner";
 
-        // Try Resend first as requested
-        if (resend) {
-          try {
-            console.log(`[Proxy] Attempting fallback to Resend for ${targetTo}`);
-            const resendData = await resend.emails.send({
-                from: fromEmail,
-                to: targetTo,
-                subject: targetSubject,
-                html: targetHtml,
-            });
-            
-            if (resendData.error) {
-              throw new Error(`Resend API error: ${resendData.error.message}`);
-            }
-
-            return { success: true, id: resendData.data?.id, method: "Resend" };
-          } catch (resendErr: any) {
-            console.warn(`[Proxy] Resend failed: ${resendErr.message}`);
-          }
-        }
-
-        // Final Fallback to SMTP
+        // Dispatch via Configured SMTP
         const transporter = getSmtpTransporter();
         if (transporter) {
-          console.log(`[Proxy] Attempting final fallback to SMTP for ${targetTo}`);
+          console.log(`[Proxy] Sending email via configured SMTP for ${targetTo}`);
           const info = await transporter.sendMail({
             from: fromEmail,
             to: targetTo,
@@ -4767,7 +4778,7 @@ Please proceed with the task according to safety guidelines and update milestone
           return { success: true, messageId: info.messageId, method: "SMTP" };
         }
         
-        throw new Error("No fallback email provider available (Resend/SMTP)");
+        throw new Error("SMTP is not configured (missing SMTP_HOST, SMTP_USER, or SMTP_PASS)");
       };
 
       try {
@@ -4776,12 +4787,12 @@ Please proceed with the task according to safety guidelines and update milestone
             const result = await sendViaActionServer();
             return res.json({ success: true, data: result, method: "Action Server" });
           } catch (actionError: any) {
-            console.warn(`[Proxy] Action Server failed for supported type: ${actionError.message}. Trying fallback.`);
+            console.warn(`[Proxy] Action Server failed for supported type: ${actionError.message}. Trying SMTP fallback.`);
             const result = await sendViaFallback();
             return res.json(result);
           }
         } else {
-          console.log(`[Proxy] Custom email type "${targetType}" detected. Using Resend/SMTP directly.`);
+          console.log(`[Proxy] Custom email type "${targetType}" detected. Using SMTP directly.`);
           const result = await sendViaFallback();
           return res.json(result);
         }
@@ -5617,7 +5628,6 @@ Please proceed with the task according to safety guidelines and update milestone
       user: process.env.SMTP_USER || null,
       from: process.env.SMTP_FROM || "Errand Runner <notifications@ais-errands.app>",
       secure: process.env.SMTP_SECURE === "true" || process.env.SMTP_PORT === "465",
-      resendConfigured: !!process.env.RESEND_API_KEY,
       verified: false,
       latencyMs: null,
       error: null
@@ -5639,13 +5649,9 @@ Please proceed with the task according to safety guidelines and update milestone
         smtpResult.verified = true;
         smtpResult.latencyMs = Date.now() - smtpStart;
         smtpResult.status = "operational";
-      } else if (smtpResult.resendConfigured) {
-        smtpResult.status = "operational";
-        smtpResult.verified = true;
-        smtpResult.note = "Resend API configured as active email service";
       } else {
         smtpResult.status = "not_configured";
-        smtpResult.error = "SMTP_HOST / SMTP_USER not set in environment";
+        smtpResult.error = "SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) not set in environment";
       }
     } catch (smtpErr: any) {
       smtpResult.isConfigured = true;
@@ -5684,7 +5690,6 @@ Please proceed with the task according to safety guidelines and update milestone
         return res.json({
           success: false,
           isConfigured: false,
-          resendConfigured: !!process.env.RESEND_API_KEY,
           error: "SMTP credentials (SMTP_HOST, SMTP_USER, SMTP_PASS) are not set in environment."
         });
       }
@@ -5952,24 +5957,17 @@ Please proceed with the task according to safety guidelines and update milestone
           </div>
         `;
 
-        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
-        if (resend) {
-          await resend.emails.send({
+        const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || "Errand Runner <notifications@ais-errands.app>";
+        const transporter = getSmtpTransporter();
+        if (transporter) {
+          await transporter.sendMail({
             from: fromEmail,
             to: emailLower,
             subject: "Your Runner Verification OTP",
             html: htmlContent
-          }).catch(err => console.error("Resend OTP error:", err));
+          }).catch(err => console.error("SMTP OTP error:", err));
         } else {
-          const transporter = getSmtpTransporter();
-          if (transporter) {
-            await transporter.sendMail({
-              from: fromEmail,
-              to: emailLower,
-              subject: "Your Runner Verification OTP",
-              html: htmlContent
-            }).catch(err => console.error("SMTP OTP error:", err));
-          }
+          console.warn("[Runner OTP] SMTP not configured; unable to dispatch email OTP");
         }
       }
 
@@ -6131,24 +6129,17 @@ Please proceed with the task according to safety guidelines and update milestone
           </div>
         `;
 
-        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
-        if (resend) {
-          await resend.emails.send({
+        const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || "Errand Runner <notifications@ais-errands.app>";
+        const transporter = getSmtpTransporter();
+        if (transporter) {
+          await transporter.sendMail({
             from: fromEmail,
             to: emailLower,
             subject: "Your Errand Runner Account Credentials",
             html: welcomeHtml
-          }).catch(err => console.error("Resend welcome email error:", err));
+          }).catch(err => console.error("SMTP welcome email error:", err));
         } else {
-          const transporter = getSmtpTransporter();
-          if (transporter) {
-            await transporter.sendMail({
-              from: fromEmail,
-              to: emailLower,
-              subject: "Your Errand Runner Account Credentials",
-              html: welcomeHtml
-            }).catch(err => console.error("SMTP welcome email error:", err));
-          }
+          console.warn("[Runner Welcome] SMTP not configured; unable to dispatch welcome email");
         }
       }
 
@@ -6405,24 +6396,17 @@ Please proceed with the task according to safety guidelines and update milestone
         </div>
       `;
 
-      const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
-      if (resend) {
-        await resend.emails.send({
+      const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || "Errand Runner <notifications@ais-errands.app>";
+      const transporter = getSmtpTransporter();
+      if (transporter) {
+        await transporter.sendMail({
           from: fromEmail,
           to: targetEmail,
           subject: "Your Runner Application is Approved!",
           html: guideHtml
-        }).catch(err => console.error("Resend approval error:", err));
+        }).catch(err => console.error("SMTP approval error:", err));
       } else {
-        const transporter = getSmtpTransporter();
-        if (transporter) {
-          await transporter.sendMail({
-            from: fromEmail,
-            to: targetEmail,
-            subject: "Your Runner Application is Approved!",
-            html: guideHtml
-          }).catch(err => console.error("SMTP approval error:", err));
-        }
+        console.warn("[Runner Approve] SMTP not configured; unable to dispatch approval email");
       }
 
       // Send Instant SMS Notification
@@ -6563,24 +6547,17 @@ Please proceed with the task according to safety guidelines and update milestone
       `;
 
       if (targetEmail) {
-        const fromEmail = process.env.SMTP_FROM || "Errand Runner <onboarding@resend.dev>";
-        if (resend) {
-          await resend.emails.send({
+        const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER || "Errand Runner <notifications@ais-errands.app>";
+        const transporter = getSmtpTransporter();
+        if (transporter) {
+          await transporter.sendMail({
             from: fromEmail,
             to: targetEmail,
             subject: "Update Required: Your Runner Application",
             html: returnHtml
-          }).catch(err => console.error("Resend return email error:", err));
+          }).catch(err => console.error("SMTP return email error:", err));
         } else {
-          const transporter = getSmtpTransporter();
-          if (transporter) {
-            await transporter.sendMail({
-              from: fromEmail,
-              to: targetEmail,
-              subject: "Update Required: Your Runner Application",
-              html: returnHtml
-            }).catch(err => console.error("SMTP return email error:", err));
-          }
+          console.warn("[Runner Return] SMTP not configured; unable to dispatch return email");
         }
       }
 

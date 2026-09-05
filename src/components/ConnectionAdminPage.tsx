@@ -67,7 +67,6 @@ export interface CheckAllSystemsResult {
     user: string | null;
     from: string;
     secure: boolean;
-    resendConfigured: boolean;
     verified: boolean;
     latencyMs: number | null;
     error: string | null;
@@ -1997,7 +1996,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                       Gateway: {diagnosticResults.actionServer.online ? `${diagnosticResults.actionServer.latencyMs}ms` : 'FAIL'}
                     </span>
                     <span className="px-3 py-1 bg-slate-950/60 border border-slate-800 rounded-xl">
-                      SMTP: {diagnosticResults.emailSmtp.status === 'operational' ? `${diagnosticResults.emailSmtp.latencyMs ?? 0}ms` : diagnosticResults.emailSmtp.resendConfigured ? 'Resend API' : 'Off'}
+                      SMTP: {diagnosticResults.emailSmtp.status === 'operational' ? `${diagnosticResults.emailSmtp.latencyMs ?? 0}ms` : 'Off'}
                     </span>
                   </div>
                 </div>
@@ -2143,11 +2142,11 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                       <span className={`px-2 py-0.5 text-[10px] font-black uppercase rounded-full border ${
                         diagnosticResults.emailSmtp.status === 'operational'
                           ? 'bg-emerald-950 border-emerald-700 text-emerald-300'
-                          : diagnosticResults.emailSmtp.resendConfigured
-                          ? 'bg-sky-950 border-sky-700 text-sky-300'
+                          : diagnosticResults.emailSmtp.isConfigured
+                          ? 'bg-amber-950 border-amber-700 text-amber-300'
                           : 'bg-slate-800 border-slate-700 text-slate-400'
                       }`}>
-                        {diagnosticResults.emailSmtp.status === 'operational' ? 'VERIFIED' : diagnosticResults.emailSmtp.resendConfigured ? 'RESEND API' : 'NOT CONFIGURED'}
+                        {diagnosticResults.emailSmtp.status === 'operational' ? 'VERIFIED' : diagnosticResults.emailSmtp.isConfigured ? 'FAILED' : 'NOT CONFIGURED'}
                       </span>
                     </div>
 
@@ -2155,7 +2154,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                       <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
                         <span className="text-slate-400 font-medium">Transport Mode</span>
                         <span className="font-mono font-bold text-white">
-                          {diagnosticResults.emailSmtp.isConfigured ? (diagnosticResults.emailSmtp.secure ? 'SSL (465)' : `STARTTLS (${diagnosticResults.emailSmtp.port})`) : (diagnosticResults.emailSmtp.resendConfigured ? 'Resend HTTPS API' : 'Fallback / Mock')}
+                          {diagnosticResults.emailSmtp.isConfigured ? (diagnosticResults.emailSmtp.secure ? 'SSL (465)' : `STARTTLS (${diagnosticResults.emailSmtp.port})`) : 'Not Configured'}
                         </span>
                       </div>
                       <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
@@ -2173,7 +2172,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                       <div className="flex justify-between items-center py-1">
                         <span className="text-slate-400 font-medium">Handshake Status</span>
                         <span className="font-mono text-slate-300">
-                          {diagnosticResults.emailSmtp.verified ? 'Verified & Ready' : (diagnosticResults.emailSmtp.resendConfigured ? 'Resend Key Active' : 'Unconfigured')}
+                          {diagnosticResults.emailSmtp.verified ? 'Verified & Ready' : (diagnosticResults.emailSmtp.isConfigured ? 'Connection Failed' : 'Unconfigured')}
                         </span>
                       </div>
                     </div>
@@ -2186,7 +2185,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                       <div className="p-2.5 bg-slate-950/60 border border-slate-800/80 rounded-xl flex items-center justify-between text-[11px]">
                         <span className="text-slate-400">Gateway Status:</span>
                         <span className="font-mono text-emerald-400 truncate max-w-[150px]">
-                          {diagnosticResults.emailSmtp.verified ? 'Socket Ready' : (diagnosticResults.emailSmtp.resendConfigured ? 'Ready via Resend' : 'Development Mode')}
+                          {diagnosticResults.emailSmtp.verified ? 'Socket Ready' : 'Standby'}
                         </span>
                       </div>
                     )}
