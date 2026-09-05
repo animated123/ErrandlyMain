@@ -10,6 +10,7 @@ import axios from "axios";
 import pg from 'pg';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 // Load .env or .env1 file if present into process.env before anything else
 try {
@@ -220,16 +221,14 @@ const isRemoteHostCheck = (h?: string): boolean => {
 };
 
 let dbConfig = {
-  host: appConfig.database?.host || (isRemoteHostCheck(process.env.PGHOST) ? process.env.PGHOST : "db.ksflmdvqvseiprebgrcp.supabase.co"),
+  host: appConfig.database?.host || process.env.PGHOST || "db.ksflmdvqvseiprebgrcp.supabase.co",
   port: appConfig.database?.port || (process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432),
   user: appConfig.database?.user || process.env.PGUSER || "postgres",
   password: appConfig.database?.password !== undefined && appConfig.database?.password !== ""
     ? appConfig.database.password 
     : (process.env.PGPASSWORD !== undefined ? process.env.PGPASSWORD : "Company1.Codexict"),
   database: appConfig.database?.name || process.env.PGDATABASE || "postgres",
-  connectionString: isValidPgUrl(appConfig.database?.connectionString) 
-    ? appConfig.database.connectionString 
-    : (isValidPgUrl(process.env.DATABASE_URL) ? process.env.DATABASE_URL : (isValidPgUrl(process.env.POSTGRES_URL) ? process.env.POSTGRES_URL : undefined))
+  connectionString: appConfig.database?.connectionString || process.env.DATABASE_URL || process.env.POSTGRES_URL || undefined
 };
 
 // Fallback Local PostgreSQL Configuration
@@ -275,16 +274,82 @@ function convertToFirestoreDocument(obj: any): any {
   return result;
 }
 
+function unwindAndSanitizeExtraData(val: any): Record<string, any> {
+  if (!val) return {};
+  let curr = val;
+  let depth = 0;
+  while (depth < 30) {
+    depth++;
+    if (typeof curr === 'string') {
+      try {
+        curr = JSON.parse(curr);
+      } catch {
+        return {};
+      }
+    } else if (typeof curr === 'object' && curr !== null) {
+      if (Array.isArray(curr)) {
+        if (curr.length > 0 && typeof curr[0] === 'string') {
+          try {
+            curr = JSON.parse(curr.join(''));
+            continue;
+          } catch {
+            return {};
+          }
+        }
+        return {};
+      }
+      const keys = Object.keys(curr);
+      const numericKeys = keys.filter(k => /^\d+$/.test(k));
+      if (numericKeys.length > 0 && (numericKeys.length > 5 || numericKeys.length > keys.length * 0.6)) {
+        const chars: string[] = [];
+        for (let i = 0; i < numericKeys.length; i++) {
+          chars.push(curr[i] !== undefined ? curr[i] : '');
+        }
+        try {
+          curr = JSON.parse(chars.join(''));
+          continue;
+        } catch {
+          return {};
+        }
+      } else {
+        const clean: Record<string, any> = {};
+        for (const [k, v] of Object.entries(curr)) {
+          if (!/^\d+$/.test(k) && typeof v !== 'function') {
+            clean[k] = v;
+          }
+        }
+        return clean;
+      }
+    } else {
+      return {};
+    }
+  }
+  if (typeof curr === 'object' && curr !== null && !Array.isArray(curr)) {
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(curr)) {
+      if (!/^\d+$/.test(k) && typeof v !== 'function') {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  }
+  return {};
+}
+
 function convertToSupabaseRow(obj: any): any {
   if (!obj || typeof obj !== 'object') return obj;
   if (Array.isArray(obj)) return obj.map(convertToSupabaseRow);
   const result: any = {};
   for (const [key, value] of Object.entries(obj)) {
-    result[key] = value;
+    let val = value;
+    if (key === 'extra_data' || key === 'extraData') {
+      val = unwindAndSanitizeExtraData(value);
+    }
+    result[key] = val;
     const snake = camelToSnake(key);
-    if (snake !== key) result[snake] = value;
+    if (snake !== key) result[snake] = val;
     const camel = snakeToCamel(key);
-    if (camel !== key) result[camel] = value;
+    if (camel !== key) result[camel] = val;
   }
   return result;
 }
@@ -786,6 +851,24 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
     await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS return_reason TEXT;`);
     await client.query(`ALTER TABLE public.runner_applications ADD COLUMN IF NOT EXISTS reviewed_by_name TEXT;`);
 
+    // Automatic migration to sanitize any historically corrupted extra_data strings/objects in profiles
+    try {
+      const profRes = await client.query(`SELECT id, extra_data FROM public.profiles WHERE extra_data IS NOT NULL;`);
+      for (const row of profRes.rows) {
+        if (row.extra_data) {
+          const raw = row.extra_data;
+          const isCorrupted = typeof raw === 'string' || (typeof raw === 'object' && Object.keys(raw).some(k => /^\d+$/.test(k)));
+          if (isCorrupted) {
+            const clean = unwindAndSanitizeExtraData(raw);
+            await client.query(`UPDATE public.profiles SET extra_data = $1::jsonb WHERE id = $2;`, [JSON.stringify(clean), row.id]);
+            console.log(`[PostgreSQL Migration] Auto-sanitized extra_data for user ${row.id}`);
+          }
+        }
+      }
+    } catch (migErr: any) {
+      console.warn("[PostgreSQL Migration] Notice during extra_data check:", migErr.message);
+    }
+
     await client.query("COMMIT;");
     console.log("[PostgreSQL] Tables, constraints, alterations, and seed data checked/configured successfully.");
   } catch (error) {
@@ -860,6 +943,12 @@ async function executePostgresOperation(targetPool: any, tableName: string, chai
   let paramIdx = 1;
 
   const normalizeProfileFields = (map: Record<string, any>) => {
+    if (map['extra_data'] !== undefined) {
+      map['extra_data'] = unwindAndSanitizeExtraData(map['extra_data']);
+    }
+    if (map['extraData'] !== undefined) {
+      map['extraData'] = unwindAndSanitizeExtraData(map['extraData']);
+    }
     if (tableName === 'profiles') {
       if (map['role']) {
         const r = String(map['role']).toLowerCase().trim();
@@ -1145,13 +1234,34 @@ function buildMockPostgrestBuilder(tableName: string, chainCalls: any[] = []): a
   return builder;
 }
 
+const SUPABASE_SERVER_URL = process.env.VITE_SUPABASE_URL || 'https://ksflmdvqvseiprebgrcp.supabase.co';
+const SUPABASE_SERVER_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+
+const supabaseAdminClient = createSupabaseClient(SUPABASE_SERVER_URL, SUPABASE_SERVER_SERVICE_KEY, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  }
+});
+
 const supabase: any = {
   from: function(tableName: string) {
     return buildMockPostgrestBuilder(tableName);
   },
+  client: supabaseAdminClient,
   auth: {
+    ...supabaseAdminClient.auth,
     admin: {
+      ...supabaseAdminClient.auth.admin,
       listUsers: async () => {
+        try {
+          const res = await supabaseAdminClient.auth.admin.listUsers();
+          if (res?.data?.users && res.data.users.length > 0) {
+            return res;
+          }
+        } catch (e) {
+          console.warn('[Supabase Auth Admin listUsers Notice]:', e);
+        }
         try {
           const listResult = await supabase.from('profiles').select('*');
           const usersList = listResult.data || [];
@@ -1174,10 +1284,13 @@ const supabase: any = {
       },
       updateUserById: async (uid: string, attrs: any) => {
         try {
+          if (attrs.password) {
+            await supabaseAdminClient.auth.admin.updateUserById(uid, { password: attrs.password });
+          }
           const updates: any = {};
           if (attrs.email !== undefined) updates.email = attrs.email;
-          if (attrs.password !== undefined) {
-            updates.password_hash = await bcrypt.hash(attrs.password, 10);
+          if (attrs.user_metadata) {
+            if (attrs.user_metadata.name) updates.username = attrs.user_metadata.name;
           }
           await supabase.from('profiles').update(updates).eq('id', uid);
           return { data: { user: { id: uid } }, error: null };
@@ -3595,11 +3708,26 @@ Please proceed with the task according to safety guidelines and update milestone
         return res.status(400).json({ error: "This phone number is already registered to another account." });
       }
 
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, 10);
+      // Provision user in Supabase GoTrue Auth
+      let authUserId = null;
+      try {
+        const { data: supaAuth, error: supaErr } = await supabaseAdminClient.auth.admin.createUser({
+          email: lowercaseEmail,
+          password: password,
+          email_confirm: true,
+          user_metadata: { name, username: name, phone: formattedPhone }
+        });
+        if (supaAuth?.user) {
+          authUserId = supaAuth.user.id;
+        } else if (supaErr) {
+          console.warn('[Supabase Auth Admin Create Notice]:', supaErr.message);
+        }
+      } catch (authErr: any) {
+        console.warn('[Supabase Auth Admin Create Error]:', authErr?.message || authErr);
+      }
 
-      // Generate unique user ID
-      const userId = `usr_${Math.random().toString(36).substr(2, 9)}`;
+      // Generate unique user ID (use Supabase auth ID if created)
+      const userId = authUserId || `usr_${Math.random().toString(36).substr(2, 9)}`;
 
       const isSuperAdmin = lowercaseEmail === 'errands@codexict.co.ke' || 
                            lowercaseEmail === 'ngugimaina4@gmail.com' || 
@@ -3614,7 +3742,6 @@ Please proceed with the task according to safety guidelines and update milestone
         role: isSuperAdmin ? 'ADMIN' : 'REQUESTER',
         is_runner: false,
         is_admin: isSuperAdmin,
-        password_hash: hashedPassword,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         wallet_balance: 0,
@@ -3623,7 +3750,7 @@ Please proceed with the task according to safety guidelines and update milestone
         total_tasks: 0,
         theme: 'light',
         phone_verified: false,
-        email_verified: false
+        email_verified: true
       };
 
       const result = await supabase.from('profiles').insert(profilePayload);
@@ -3742,6 +3869,13 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   });
 
+  app.get("/api/config/auth", (req, res) => {
+    res.json({
+      supabaseUrl: process.env.VITE_SUPABASE_URL || 'https://ksflmdvqvseiprebgrcp.supabase.co',
+      supabaseAnonKey: process.env.VITE_SUPABASE_ANON_KEY || ''
+    });
+  });
+
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
@@ -3781,11 +3915,28 @@ Please proceed with the task according to safety guidelines and update milestone
         input.toLowerCase().startsWith('supaadmin@')
       );
 
+      // Try Supabase GoTrue Auth first
+      let authUser: any = null;
+      const targetEmail = (user?.email || (isPhoneInput ? '' : input)).toLowerCase();
+
+      if (targetEmail) {
+        try {
+          const { data: supaAuth, error: supaAuthErr } = await supabaseAdminClient.auth.signInWithPassword({
+            email: targetEmail,
+            password: password
+          });
+          if (!supaAuthErr && supaAuth?.user) {
+            authUser = supaAuth.user;
+          }
+        } catch (authErr) {
+          console.debug('[Supabase GoTrue Auth Check]:', authErr);
+        }
+      }
+
       if (isSuperAdmin) {
         if (!user) {
           // Auto-provision super admin profile
-          const hashedPassword = await bcrypt.hash(password, 10);
-          const userId = `usr_admin_${Math.random().toString(36).substr(2, 9)}`;
+          const userId = authUser?.id || `usr_admin_${Math.random().toString(36).substr(2, 9)}`;
           const profilePayload = {
             id: userId,
             email: input.toLowerCase(),
@@ -3796,7 +3947,6 @@ Please proceed with the task according to safety guidelines and update milestone
             is_admin: true,
             it_admin: true,
             backend_admin: 'yes',
-            password_hash: hashedPassword,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
             wallet_balance: 10000,
@@ -3818,17 +3968,32 @@ Please proceed with the task according to safety guidelines and update milestone
             console.error("[Super Admin Auto-Provision Upsert Error]:", insertErr.message);
           }
           user = insertedUser || profilePayload;
-        } else if (!user.password_hash) {
-          const hashedPassword = await bcrypt.hash(password, 10);
-          await supabase.from('profiles').update({
-            password_hash: hashedPassword,
-            is_admin: true,
-            it_admin: true,
-            role: 'admin'
-          }).eq('id', user.id);
-          user.password_hash = hashedPassword;
+        } else {
           user.is_admin = true;
           user.role = 'admin';
+        }
+      }
+
+      // If user profile is not yet in profiles table but Supabase Auth succeeded:
+      if (!user && authUser) {
+        const { data: foundUser } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authUser.id)
+          .maybeSingle();
+        user = foundUser;
+        if (!user) {
+          const fallbackProfile = {
+            id: authUser.id,
+            email: authUser.email,
+            username: authUser.user_metadata?.name || authUser.email?.split('@')[0] || 'User',
+            phone: authUser.user_metadata?.phone || '254700000000',
+            role: 'REQUESTER',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          await supabase.from('profiles').upsert(fallbackProfile);
+          user = fallbackProfile;
         }
       }
 
@@ -3836,14 +4001,14 @@ Please proceed with the task according to safety guidelines and update milestone
         return res.status(404).json({ error: "No account found matching this email/phone. Please register first." });
       }
 
-      if (!user.password_hash) {
-        return res.status(401).json({ error: "This account does not have a password set. Please use password reset." });
+      // Verify credentials: Either Supabase Auth passed OR fallback legacy bcrypt check passes
+      let isVerified = Boolean(authUser);
+      if (!isVerified && user.password_hash) {
+        isVerified = await bcrypt.compare(password, user.password_hash);
       }
 
-      // Verify password
-      const isMatch = await bcrypt.compare(password, user.password_hash);
-      if (!isMatch) {
-         return res.status(401).json({ error: "Incorrect password. Please check your password and try again." });
+      if (!isVerified) {
+        return res.status(401).json({ error: "Incorrect password. Please check your password and try again." });
       }
 
       // Normalize balance on user object

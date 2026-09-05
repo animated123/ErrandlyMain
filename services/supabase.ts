@@ -1,4 +1,20 @@
+import { createClient } from '@supabase/supabase-js';
 import { API_BASE_URL } from './apiConfig';
+
+const SUPABASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || 
+  'https://ksflmdvqvseiprebgrcp.supabase.co';
+
+const SUPABASE_ANON_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) || 
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzZmxtZHZxdnNlaXByZWJncmNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5ODI1MzIsImV4cCI6MjA5MDU1ODUzMn0.kugwrWw_J8qXY9b037qOgvMLTcyTRu4Wo0Ji13YFA8c';
+
+export const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+  }
+});
 
 const getHeaders = () => {
   const token = localStorage.getItem('errand_runner_jwt_token');
@@ -114,17 +130,18 @@ function buildClientPostgrestBuilder(tableName: string, chainCalls: any[] = []):
   return builder;
 }
 
-export const supabase: any = {
-  from: function(tableName: string) {
-    return buildClientPostgrestBuilder(tableName);
-  },
-  channel: () => {
-    // Return empty mock channels for realtime listeners
-    return {
-      on: function() { return this; },
-      subscribe: function() { return this; },
-      unsubscribe: function() { return this; }
-    };
-  },
-  removeChannel: () => {}
-};
+export const supabase: any = new Proxy(supabaseClient, {
+  get(target: any, prop: string | symbol) {
+    if (prop === 'from') {
+      return function(tableName: string) {
+        return buildClientPostgrestBuilder(tableName);
+      };
+    }
+    const val = target[prop];
+    if (typeof val === 'function') {
+      return val.bind(target);
+    }
+    return val;
+  }
+});
+

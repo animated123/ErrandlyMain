@@ -77,65 +77,98 @@ export function initClientRateLimiter() {
     const sessionId = getSessionId();
     const options: RequestInit = init ? { ...init } : {};
 
-    const headers = new Headers(options.headers || {});
-    if (!headers.has('x-session-id')) {
-      headers.set('x-session-id', sessionId);
+    const urlStr = input.toString();
+    const isLocalApi = urlStr.startsWith('/') || urlStr.startsWith(window.location.origin) || urlStr.includes('/api/');
+
+    if (isLocalApi) {
+      const headers = new Headers(options.headers || {});
+      if (!headers.has('x-session-id')) {
+        headers.set('x-session-id', sessionId);
+      }
+      options.headers = headers;
     }
-    options.headers = headers;
 
     try {
       const response = await originalFetch(input, options);
 
-      if (response.status === 429) {
+      if (isLocalApi && response.status === 429) {
         const data = await response.clone().json().catch(() => ({}));
         const retryAfter = data.retryAfterSeconds || parseInt(response.headers.get('Retry-After') || '15', 10);
         
-        console.warn(`[RateLimiter] Rate limit exceeded. Queueing request for ${input}`);
+        const isSelect = urlStr.includes('/select') || (options.method && options.method.toUpperCase() === 'GET');
 
-        // Queue the request for background sync
-        requestQueue.push({
-          input,
-          init: options,
-          retryAfter,
-          attempts: 1
-        });
+        if (!isSelect) {
+          console.warn(`[RateLimiter] Rate limit exceeded. Queueing mutative request for ${input}`);
+          // Queue the request for background sync
+          requestQueue.push({
+            input,
+            init: options,
+            retryAfter,
+            attempts: 1
+          });
 
-        // Start background processing
-        if (!isProcessingQueue) {
-          setTimeout(processQueue, 100);
+          // Start background processing
+          if (!isProcessingQueue) {
+            setTimeout(processQueue, 100);
+          }
+
+          // Return a "fake" successful response to the UI to avoid errors, 
+          // since we've queued it for eventual success.
+          return new Response(JSON.stringify({ 
+            status: 'queued', 
+            message: 'Request rate limited, queued for background sync',
+            retryAfter 
+          }), {
+            status: 202,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } else {
+          console.warn(`[RateLimiter] Rate limit exceeded for read request ${input}. Returning safe empty state.`);
+          // For reads, return a safe empty array to prevent UI crashes on .map()
+          return new Response(JSON.stringify({ 
+            data: [], 
+            count: 0,
+            error: { message: `Rate limit exceeded. Please wait ${retryAfter}s.` },
+            retryAfter 
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
-
-        // Return a "fake" successful response to the UI to avoid errors, 
-        // since we've queued it for eventual success.
-        // Or return a 202 Accepted style response.
-        return new Response(JSON.stringify({ 
-          status: 'queued', 
-          message: 'Request rate limited, queued for background sync',
-          retryAfter 
-        }), {
-          status: 202,
-          headers: { 'Content-Type': 'application/json' }
-        });
       }
 
       return response;
     } catch (err) {
       // If it's a network error, we could also queue it
-      if (err instanceof TypeError && err.message === 'Failed to fetch') {
-        console.warn(`[RateLimiter] Connection lost. Queueing request for ${input}`);
-        requestQueue.push({
-          input,
-          init: options,
-          retryAfter: 5,
-          attempts: 1
-        });
-        if (!isProcessingQueue) {
-          setTimeout(processQueue, 5000);
+      if (isLocalApi && err instanceof TypeError && err.message === 'Failed to fetch') {
+        const isSelect = urlStr.includes('/select') || (options.method && options.method.toUpperCase() === 'GET');
+
+        if (!isSelect) {
+          console.warn(`[RateLimiter] Connection lost. Queueing mutative request for ${input}`);
+          requestQueue.push({
+            input,
+            init: options,
+            retryAfter: 5,
+            attempts: 1
+          });
+          if (!isProcessingQueue) {
+            setTimeout(processQueue, 5000);
+          }
+          return new Response(JSON.stringify({ status: 'queued', message: 'Offline, queued for sync' }), {
+            status: 202,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } else {
+          console.warn(`[RateLimiter] Connection lost for read request ${input}. Returning safe empty state.`);
+          return new Response(JSON.stringify({ 
+            data: [], 
+            count: 0,
+            error: { message: `You appear to be offline.` }
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
-        return new Response(JSON.stringify({ status: 'queued', message: 'Offline, queued for sync' }), {
-          status: 202,
-          headers: { 'Content-Type': 'application/json' }
-        });
       }
       throw err;
     }

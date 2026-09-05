@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { auth } from './firebase';
+import { auth, db } from './firebase';
 // Removed direct Supabase import for Android compatibility - using fetch() proxy instead
 import { getEmailTemplate } from './emailTemplates';
 import { calculateDistance, formatPhoneDisplay } from '../src/lib/utils';
@@ -78,6 +78,80 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+export const safeParseExtraData = (val: any): Record<string, any> => {
+  if (!val) return {};
+  let curr = val;
+  let depth = 0;
+  while (depth < 30) {
+    depth++;
+    if (typeof curr === 'string') {
+      try {
+        curr = JSON.parse(curr);
+      } catch {
+        return {};
+      }
+    } else if (typeof curr === 'object' && curr !== null) {
+      if (Array.isArray(curr)) {
+        if (curr.length > 0 && typeof curr[0] === 'string') {
+          try {
+            curr = JSON.parse(curr.join(''));
+            continue;
+          } catch {
+            return {};
+          }
+        }
+        return {};
+      }
+      const keys = Object.keys(curr);
+      const numericKeys = keys.filter(k => /^\d+$/.test(k));
+      if (numericKeys.length > 0 && (numericKeys.length > 5 || numericKeys.length > keys.length * 0.6)) {
+        const chars: string[] = [];
+        for (let i = 0; i < numericKeys.length; i++) {
+          chars.push(curr[i] !== undefined ? curr[i] : '');
+        }
+        try {
+          curr = JSON.parse(chars.join(''));
+          continue;
+        } catch {
+          return {};
+        }
+      } else {
+        const clean: Record<string, any> = {};
+        for (const [k, v] of Object.entries(curr)) {
+          if (!/^\d+$/.test(k) && typeof v !== 'function') {
+            clean[k] = v;
+          }
+        }
+        return clean;
+      }
+    } else {
+      return {};
+    }
+  }
+  if (typeof curr === 'object' && curr !== null && !Array.isArray(curr)) {
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(curr)) {
+      if (!/^\d+$/.test(k) && typeof v !== 'function') {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  }
+  return {};
+};
+
+export const safeMergeExtraData = (existing: any, updates: any): Record<string, any> => {
+  const base = safeParseExtraData(existing);
+  const up = safeParseExtraData(updates);
+  const merged: Record<string, any> = { ...base };
+  for (const [k, v] of Object.entries(up)) {
+    if (!/^\d+$/.test(k) && typeof v !== 'function') {
+      merged[k] = v;
+    }
+  }
+  return merged;
+};
+
 /**
  * Recursively removes undefined values from an object or array.
  * Firestore does not support undefined values.
@@ -87,12 +161,13 @@ function sanitizeData(data: any): any {
   if (Array.isArray(data)) return data.map(v => v === undefined ? null : sanitizeData(v));
   if (typeof data === 'object' && data.constructor === Object) {
     const sanitized: any = {};
-    for (const key in data) {
-      if (Object.prototype.hasOwnProperty.call(data, key)) {
-        const value = data[key];
-        if (value !== undefined) {
-          sanitized[key] = sanitizeData(value);
-        }
+    const keys = Object.keys(data);
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      if (/^\d+$/.test(key) && keys.length > 5) continue;
+      const value = data[key];
+      if (value !== undefined) {
+        sanitized[key] = sanitizeData(value);
       }
     }
     return sanitized;
@@ -175,12 +250,15 @@ const mapProfileToSupabase = (user: Partial<User>) => {
   if (user.profilePhoto || user.avatar) data.profile_photo = user.profilePhoto || user.avatar;
   if (user.biography) data.biography = user.biography;
 
-  data.extra_data = user;
+  const extra = safeParseExtraData((user as any).extra_data || (user as any).extraData || user);
+  delete (extra as any).extra_data;
+  delete (extra as any).extraData;
+  data.extra_data = extra;
   return data;
 };
 
 const mapSupabaseToProfile = (row: any): User => {
-  const extra = row.extra_data || {};
+  const extra = safeParseExtraData(row?.extra_data || row?.extraData);
   const rootIsAdmin = (
     row.it_admin === true || row.it_admin === 'true' || row.it_admin === 1 ||
     row.is_admin === true || row.is_admin === 'true' || row.is_admin === 1 ||
@@ -267,12 +345,15 @@ const mapErrandToSupabase = (errand: Partial<Errand>) => {
   if (errand.dropoffPhotoUrl) data.dropoff_photo_url = errand.dropoffPhotoUrl;
   if (errand.lastSyncLocationAt) data.last_sync_location_at = errand.lastSyncLocationAt;
 
-  data.extra_data = errand;
+  const extra = safeParseExtraData((errand as any).extra_data || (errand as any).extraData || errand);
+  delete (extra as any).extra_data;
+  delete (extra as any).extraData;
+  data.extra_data = extra;
   return data;
 };
 
 const mapSupabaseToErrand = (row: any): Errand => {
-  const extra = row.extra_data || {};
+  const extra = safeParseExtraData(row?.extra_data || row?.extraData);
   return {
     ...extra,
     id: row.id,
@@ -592,8 +673,8 @@ export const firebaseService = {
         .eq('id', id)
         .maybeSingle();
 
-      const existingExtra = row?.extra_data || {};
-      const mergedExtra = { ...existingExtra, ...updates };
+      const existingExtra = safeParseExtraData(row?.extra_data || row?.extraData);
+      const mergedExtra = safeMergeExtraData(existingExtra, updates);
 
       const mapped = mapErrandToSupabase(updates);
       mapped.extra_data = mergedExtra;
@@ -1331,167 +1412,384 @@ export const firebaseService = {
     });
   },
 
-  login: async (email: string, pass: string): Promise<User> => {
+  _authListenersInitialized: false,
+  _initAuthListenersOnce: () => {
+    if (firebaseService._authListenersInitialized) return;
+    firebaseService._authListenersInitialized = true;
+
+    // 1. Listen to Supabase Auth state changes (handles OAuth redirect returns & sessions)
     try {
-      // 1. Authenticate with Firebase first (if configured)
-      if (auth && auth.app) {
-        try {
-           const { signInWithEmailAndPassword } = await import('firebase/auth');
-           await signInWithEmailAndPassword(auth, email, pass);
-        } catch (fbErr) {
-           console.warn('Firebase auth failed, continuing to internal auth:', fbErr);
+      if (supabase && supabase.auth && typeof supabase.auth.onAuthStateChange === 'function') {
+        supabase.auth.onAuthStateChange(async (event: string, session: any) => {
+          console.log('[Supabase Auth Event]:', event, session?.user?.email);
+          if (session?.user) {
+            try {
+              const user = await firebaseService.syncUserSession(session.user, 'supabase', session);
+              firebaseService._broadcastAuthChange(user);
+            } catch (syncErr) {
+              console.warn('[Supabase Auth] Session sync error:', syncErr);
+            }
+          } else if (event === 'SIGNED_OUT') {
+            firebaseService._currentUserCache = null;
+            firebaseService._broadcastAuthChange(null);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('[Supabase Auth] onAuthStateChange setup notice:', err);
+    }
+
+    // 2. Check existing active Supabase session
+    try {
+      if (supabase && supabase.auth && typeof supabase.auth.getSession === 'function') {
+        supabase.auth.getSession().then(async ({ data: { session } }: any) => {
+          if (session?.user && !firebaseService._currentUserCache) {
+            try {
+              const user = await firebaseService.syncUserSession(session.user, 'supabase', session);
+              firebaseService._broadcastAuthChange(user);
+            } catch (e) {
+              console.debug('[Supabase Auth] initial getSession sync error:', e);
+            }
+          }
+        }).catch((e: any) => console.debug('[Supabase Auth] getSession check:', e));
+      }
+    } catch (e) {
+      console.debug('[Supabase Auth] getSession listener check:', e);
+    }
+
+    // 3. Firebase Auth listener (secondary fallback)
+    if (auth && auth.app) {
+      try {
+        import('firebase/auth').then(({ onAuthStateChanged }) => {
+          onAuthStateChanged(auth, async (fbUser) => {
+            if (fbUser && !firebaseService._currentUserCache) {
+              try {
+                const user = await firebaseService.syncUserSession(fbUser, 'firebase');
+                firebaseService._broadcastAuthChange(user);
+              } catch (e) {
+                console.debug('[Firebase Auth] sync error:', e);
+              }
+            }
+          });
+        }).catch(() => {});
+      } catch (e) {
+        console.debug('[Firebase Auth] listener registration error:', e);
+      }
+    }
+  },
+
+  syncUserSession: async (authUser: any, source: 'supabase' | 'firebase', session?: any): Promise<User> => {
+    try {
+      const authId = authUser.id || authUser.uid;
+      const email = (authUser.email || '').toLowerCase().trim();
+      const userMeta = authUser.user_metadata || {};
+      const name = userMeta.full_name || 
+                   userMeta.name || 
+                   authUser.displayName || 
+                   (email ? email.split('@')[0] : 'User');
+      const avatar = userMeta.avatar_url || 
+                     userMeta.picture || 
+                     authUser.photoURL || '';
+      const phone = userMeta.phone || authUser.phone || authUser.phoneNumber || '';
+
+      const isSuperAdmin = email === 'errands@codexict.co.ke' ||
+                           email === 'ngugimaina4@gmail.com' ||
+                           email.includes('supaadmin') ||
+                           email.startsWith('supaadmin@');
+
+      // 1. Fetch existing profile from database if present
+      let dbUser: any = null;
+      if (supabase) {
+        if (authId) {
+          const { data } = await supabase.from('profiles').select('*').eq('id', authId).maybeSingle();
+          dbUser = data;
+        }
+        if (!dbUser && email) {
+          const { data } = await supabase.from('profiles').select('*').eq('email', email).maybeSingle();
+          dbUser = data;
         }
       }
 
-      // 2. Authenticate with internal backend (which issues JWT)
-      let resData: any = null;
-      try {
-        resData = await firebaseService._callAuthApi('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password: pass })
-        });
-      } catch (apiErr: any) {
-        const isConnOrFormatErr = !apiErr.message ||
-          apiErr.message.includes('invalid response format') ||
-          apiErr.message.includes('Failed to fetch') ||
-          apiErr.message.includes('NetworkError') ||
-          apiErr.message.includes('Unable to connect') ||
-          apiErr.message.includes('Load failed');
+      const finalId = dbUser?.id || authId;
+      const existingExtra = safeParseExtraData(dbUser?.extra_data || dbUser?.extraData);
 
-        if (!isConnOrFormatErr) {
-          throw apiErr;
+      const profilePayload: any = {
+        id: finalId,
+        email: email || dbUser?.email || '',
+        username: dbUser?.username || name,
+        phone: dbUser?.phone || (phone ? actionService.formatPhoneNumber(phone) : '254700000000'),
+        role: isSuperAdmin ? 'admin' : (dbUser?.role || userMeta.role || 'REQUESTER'),
+        is_runner: dbUser ? Boolean(dbUser.is_runner) : (userMeta.role === 'RUNNER'),
+        is_admin: isSuperAdmin || (dbUser ? Boolean(dbUser.is_admin) : false),
+        wallet_balance: dbUser ? Number(dbUser.wallet_balance || 0) : (isSuperAdmin ? 10000 : 0),
+        balance: dbUser ? Number(dbUser.balance || 0) : (isSuperAdmin ? 10000 : 0),
+        avatar: dbUser?.avatar || avatar,
+        profile_photo: dbUser?.profile_photo || avatar,
+        created_at: dbUser?.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        extra_data: existingExtra
+      };
+
+      // 2. Direct copy/upsert to database profiles table (no password_hash or bcrypt)
+      if (supabase) {
+        try {
+          await supabase.from('profiles').upsert(profilePayload);
+        } catch (dbErr) {
+          console.warn('[syncUserSession] Profiles table upsert note:', dbErr);
         }
+      }
 
-        console.warn('Backend login API connection failed, checking database fallback:', apiErr.message);
+      // 3. Sync to Firebase Firestore /users/${finalId}
+      if (db) {
+        try {
+          const { doc, setDoc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'users', finalId), profilePayload, { merge: true });
+        } catch (fbErr) {
+          console.debug('[syncUserSession] Firestore sync skipped:', fbErr);
+        }
+      }
+
+      // 4. Save session token
+      const token = session?.access_token || `session_token_${finalId}_${Date.now()}`;
+      localStorage.setItem('errand_runner_jwt_token', token);
+
+      const mappedUser = mapSupabaseToProfile(profilePayload);
+      localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
+      firebaseService._currentUserCache = mappedUser;
+
+      return mappedUser;
+    } catch (err) {
+      console.error('[syncUserSession] Error syncing user profile:', err);
+      throw err;
+    }
+  },
+
+  signInWithOAuth: async (provider: 'google' | 'github' = 'google'): Promise<void> => {
+    try {
+      const redirectUrl = window.location.origin;
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: redirectUrl
+        }
+      });
+      if (error) {
+        throw error;
+      }
+      if (data?.url) {
+        window.location.href = data.url;
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[Supabase OAuth] Failed, attempting Firebase OAuth fallback:', err?.message || err);
+      if (auth && auth.app && provider === 'google') {
+        const { GoogleAuthProvider, signInWithPopup } = await import('firebase/auth');
+        const fbProvider = new GoogleAuthProvider();
+        const cred = await signInWithPopup(auth, fbProvider);
+        if (cred?.user) {
+          const mappedUser = await firebaseService.syncUserSession(cred.user, 'firebase');
+          firebaseService._broadcastAuthChange(mappedUser);
+          return;
+        }
+      }
+      throw err;
+    }
+  },
+
+  login: async (emailOrPhone: string, pass: string): Promise<User> => {
+    try {
+      const input = emailOrPhone.trim();
+      let targetEmail = input.toLowerCase();
+
+      // Resolve phone to email if phone was entered
+      if (!input.includes('@')) {
+        const formattedPhone = actionService.formatPhoneNumber(input);
         if (supabase) {
-          const input = email.trim();
-          const isPhoneInput = !input.includes('@');
-          let query = supabase.from('profiles').select('*');
-          if (isPhoneInput) {
-            query = query.eq('phone', actionService.formatPhoneNumber(input));
-          } else {
-            query = query.eq('email', input.toLowerCase());
+          const { data: userRow } = await supabase
+            .from('profiles')
+            .select('email')
+            .eq('phone', formattedPhone)
+            .maybeSingle();
+          if (userRow?.email) {
+            targetEmail = userRow.email.toLowerCase();
           }
-          const { data: dbUser } = await query.maybeSingle();
-          if (dbUser) {
-            const mappedUser = mapSupabaseToProfile(dbUser);
-            const token = `fallback_token_${dbUser.id}_${Date.now()}`;
-            localStorage.setItem('errand_runner_jwt_token', token);
+        }
+      }
+
+      // Fastest / Most Recent service race: Run Supabase Auth & Firebase Auth in parallel
+      const trySupabase = async () => {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: targetEmail,
+          password: pass
+        });
+        if (error) throw error;
+        if (!data?.user) throw new Error('No user returned from Supabase Auth');
+        return { source: 'supabase' as const, authUser: data.user, session: data.session };
+      };
+
+      const tryFirebase = async () => {
+        if (!auth || !auth.app) throw new Error('Firebase Auth not available');
+        const { signInWithEmailAndPassword } = await import('firebase/auth');
+        const cred = await signInWithEmailAndPassword(auth, targetEmail, pass);
+        if (!cred?.user) throw new Error('No user returned from Firebase Auth');
+        return { source: 'firebase' as const, authUser: cred.user, session: null };
+      };
+
+      let authResult: { source: 'supabase' | 'firebase'; authUser: any; session: any } | null = null;
+
+      try {
+        // Promise.any resolves with the fastest successful service!
+        authResult = await Promise.any([trySupabase(), tryFirebase()]);
+      } catch (raceErr) {
+        // Fallback: check direct backend auth endpoint if existing custom account
+        try {
+          const resData = await firebaseService._callAuthApi('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: targetEmail, password: pass })
+          });
+          if (resData?.success && resData?.user) {
+            const mappedUser = mapSupabaseToProfile(resData.user);
+            localStorage.setItem('errand_runner_jwt_token', resData.token);
             localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
             firebaseService._broadcastAuthChange(mappedUser);
             return mappedUser;
           }
+        } catch (apiErr) {
+          throw new Error('Invalid email/phone or password. Please verify your credentials.');
         }
-        throw apiErr;
       }
 
-      if (!resData || !resData.success || !resData.user) {
-        throw new Error(resData?.error || resData?.message || 'Authentication failed');
+      if (!authResult) {
+        throw new Error('Authentication failed');
       }
 
-      const mappedUser = mapSupabaseToProfile(resData.user);
-      localStorage.setItem('errand_runner_jwt_token', resData.token);
-      localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
-
+      // Copy directly to database profiles & sync to Firebase
+      const mappedUser = await firebaseService.syncUserSession(authResult.authUser, authResult.source, authResult.session);
       firebaseService._broadcastAuthChange(mappedUser);
       return mappedUser;
     } catch (error: any) {
-      console.error('Login error:', error?.message || error);
+      console.error('[Auth Login Error]:', error?.message || error);
       throw error;
     }
   },
 
-  register: async (name: string, email: string, phone: string, pass: string): Promise<User> => {
+  register: async (name: string, email: string, phone: string, pass: string, role?: UserRole): Promise<User> => {
     try {
       const formattedPhone = actionService.formatPhoneNumber(phone);
       if (formattedPhone.length !== 12) {
         throw new Error('Please enter a valid 10-digit phone number (e.g. 0712...)');
       }
 
-      // 1. Register with Firebase first (if configured)
+      const lowercaseEmail = email.toLowerCase().trim();
+
+      // 1. Create in Supabase Auth
+      let supaUser: any = null;
+      let supaSession: any = null;
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: lowercaseEmail,
+          password: pass,
+          options: {
+            data: {
+              name,
+              username: name,
+              phone: formattedPhone,
+              role: role || UserRole.REQUESTER
+            }
+          }
+        });
+        if (error) {
+          console.warn('[Register] Supabase signUp note:', error.message);
+        } else {
+          supaUser = data.user;
+          supaSession = data.session;
+        }
+      } catch (err: any) {
+        console.warn('[Register] Supabase auth error:', err.message);
+      }
+
+      // 2. Dual-sync: Create in Firebase Auth as fallback
+      let fbUser: any = null;
       if (auth && auth.app) {
         try {
-           const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
-           const userCred = await createUserWithEmailAndPassword(auth, email, pass);
-           if (userCred.user) {
-              await updateProfile(userCred.user, { displayName: name });
-           }
+          const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
+          const cred = await createUserWithEmailAndPassword(auth, lowercaseEmail, pass);
+          if (cred.user) {
+            await updateProfile(cred.user, { displayName: name });
+            fbUser = cred.user;
+          }
+        } catch (fbErr: any) {
+          console.warn('[Register] Firebase auth dual-sync note:', fbErr.message);
+        }
+      }
+
+      // 3. Copy user profile directly to database profiles table (no bcrypt, no password_hash in DB!)
+      const userId = supaUser?.id || fbUser?.uid || `usr_${Math.random().toString(36).substring(2, 11)}`;
+      const isSuperAdmin = lowercaseEmail === 'errands@codexict.co.ke' ||
+                           lowercaseEmail === 'ngugimaina4@gmail.com' ||
+                           lowercaseEmail.includes('supaadmin') ||
+                           lowercaseEmail.startsWith('supaadmin@');
+
+      const profilePayload = {
+        id: userId,
+        email: lowercaseEmail,
+        username: name,
+        phone: formattedPhone,
+        role: isSuperAdmin ? 'admin' : (role || 'REQUESTER'),
+        is_runner: (role === UserRole.RUNNER),
+        is_admin: isSuperAdmin,
+        wallet_balance: isSuperAdmin ? 10000 : 0,
+        balance: isSuperAdmin ? 10000 : 0,
+        completed_errands: 0,
+        total_tasks: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      if (supabase) {
+        await supabase.from('profiles').upsert(profilePayload);
+      }
+
+      // 4. Dual-sync to Firestore
+      if (db) {
+        try {
+          const { doc, setDoc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'users', userId), profilePayload, { merge: true });
         } catch (fbErr) {
-           console.warn('Firebase registration failed or user already exists:', fbErr);
+          console.debug('[Register] Firestore sync skipped:', fbErr);
         }
       }
 
-      // 2. Register with internal backend
-      let resData: any = null;
-      try {
-        resData = await firebaseService._callAuthApi('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name,
-            email,
-            phone: formattedPhone,
-            password: pass
-          })
-        });
-      } catch (apiErr: any) {
-        const isConnOrFormatErr = !apiErr.message ||
-          apiErr.message.includes('invalid response format') ||
-          apiErr.message.includes('Failed to fetch') ||
-          apiErr.message.includes('NetworkError') ||
-          apiErr.message.includes('Unable to connect') ||
-          apiErr.message.includes('Load failed');
-
-        if (!isConnOrFormatErr) {
-          throw apiErr;
-        }
-
-        console.warn('Backend register API connection failed, checking database fallback:', apiErr.message);
-        if (supabase) {
-          const userId = `usr_${Math.random().toString(36).substring(2, 11)}`;
-          const profilePayload = {
-            id: userId,
-            email: email.toLowerCase(),
-            username: name,
-            phone: formattedPhone,
-            role: 'REQUESTER',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          const { data: dbUser } = await supabase.from('profiles').upsert(profilePayload).select('*').maybeSingle();
-          const target = dbUser || profilePayload;
-          const mappedUser = mapSupabaseToProfile(target);
-          const token = `fallback_token_${target.id}_${Date.now()}`;
-          localStorage.setItem('errand_runner_jwt_token', token);
-          localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
-          firebaseService._broadcastAuthChange(mappedUser);
-          return mappedUser;
-        }
-        throw apiErr;
-      }
-
-      if (!resData || !resData.success || !resData.user) {
-        throw new Error(resData?.error || resData?.message || 'Registration failed');
-      }
-
-      const mappedUser = mapSupabaseToProfile(resData.user);
-      localStorage.setItem('errand_runner_jwt_token', resData.token);
+      const mappedUser = mapSupabaseToProfile(profilePayload);
+      const token = supaSession?.access_token || `token_${userId}_${Date.now()}`;
+      localStorage.setItem('errand_runner_jwt_token', token);
       localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
 
       firebaseService._broadcastAuthChange(mappedUser);
       return mappedUser;
     } catch (error: any) {
-      console.error('Registration error:', error?.message || error);
+      console.error('[Auth Register Error]:', error?.message || error);
       throw error;
     }
   },
 
   logout: async () => {
     try {
+      try {
+        if (supabase && supabase.auth) {
+          await supabase.auth.signOut();
+        }
+      } catch (e) {
+        console.warn('[Supabase Auth] signOut error:', e);
+      }
       if (auth && auth.app) {
-        const { signOut } = await import('firebase/auth');
-        await signOut(auth).catch(() => {});
+        try {
+          const { signOut } = await import('firebase/auth');
+          await signOut(auth).catch(() => {});
+        } catch (e) {
+          console.debug('[Firebase Auth] signOut error:', e);
+        }
       }
       localStorage.removeItem('errand_runner_jwt_token');
       localStorage.removeItem('errand_runner_user_profile');
@@ -1503,25 +1801,20 @@ export const firebaseService = {
   },
 
   getCurrentUser: async (): Promise<User | null> => {
+    // 1. Check active Supabase Auth session first
     try {
-      const token = localStorage.getItem('errand_runner_jwt_token');
-      if (!token) return null;
-
-      const resData = await firebaseService._callAuthApi('/api/auth/me', {
-        method: 'POST',
-        headers: firebaseService._getAuthHeaders()
-      });
-
-      if (resData && resData.success && resData.user) {
-        const mappedUser = mapSupabaseToProfile(resData.user);
-        localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
-        firebaseService._currentUserCache = mappedUser;
-        return mappedUser;
+      if (supabase && supabase.auth) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const user = await firebaseService.syncUserSession(session.user, 'supabase', session);
+          return user;
+        }
       }
-    } catch (e) {
-      console.warn('[JWT Auth] getCurrentUser fresh lookup failed, falling back to cache:', e);
+    } catch (err) {
+      console.debug('[getCurrentUser] Supabase getSession check:', err);
     }
 
+    // 2. Fallback to cached profile
     try {
       const cached = localStorage.getItem('errand_runner_user_profile');
       if (cached) {
@@ -1530,7 +1823,7 @@ export const firebaseService = {
         return parsed;
       }
     } catch (err: any) {
-      console.warn('[JWT Auth] Cached user format invalid:', err.message);
+      console.warn('[Auth] Cached user format invalid:', err.message);
     }
 
     return null;
@@ -1538,35 +1831,34 @@ export const firebaseService = {
 
   subscribeToAuthChanges: (callback: (user: User | null) => void) => {
     firebaseService._jwtListeners.add(callback);
+    firebaseService._initAuthListenersOnce();
 
-    const token = localStorage.getItem('errand_runner_jwt_token');
-    if (token) {
-      // 1. Immediately provide cached user if available
-      let initialUser = firebaseService._currentUserCache;
-      if (!initialUser) {
-        try {
-          const cached = localStorage.getItem('errand_runner_user_profile');
-          if (cached) {
-            initialUser = JSON.parse(cached);
-            firebaseService._currentUserCache = initialUser;
-          }
-        } catch (err: any) {
-          console.warn('[JWT Auth] Local cache subscriber parsing error:', err.message);
+    // 1. Immediately provide cached user if available
+    let initialUser = firebaseService._currentUserCache;
+    if (!initialUser) {
+      try {
+        const cached = localStorage.getItem('errand_runner_user_profile');
+        if (cached) {
+          initialUser = JSON.parse(cached);
+          firebaseService._currentUserCache = initialUser;
         }
+      } catch (err: any) {
+        console.warn('[Auth] Local cache subscriber parsing error:', err.message);
       }
-      if (initialUser) {
-        callback(initialUser);
-      }
-
-      // 2. ALWAYS fetch fresh user profile from backend to ensure balance & account state are up to date
-      firebaseService.getCurrentUser().then(freshUser => {
-        if (freshUser) {
-          callback(freshUser);
-        }
-      });
-    } else {
-      callback(null);
     }
+
+    if (initialUser) {
+      callback(initialUser);
+    }
+
+    // 2. Fetch fresh user session and update
+    firebaseService.getCurrentUser().then(freshUser => {
+      if (freshUser) {
+        callback(freshUser);
+      } else if (!initialUser) {
+        callback(null);
+      }
+    });
 
     return () => {
       firebaseService._jwtListeners.delete(callback);
@@ -1575,75 +1867,73 @@ export const firebaseService = {
 
   updateUserProfile: async (userId: string, updates: Partial<User>) => {
     try {
-      if (!supabase) return;
-
-      // 1. Fetch current profile via backend proxy first to avoid RLS/session decoupling issues
-      let row: any = null;
+      // 1. Dual-sync: Sync to Supabase Auth metadata
       try {
-        const response = await fetch(`${API_BASE_URL}/api/db/profiles/select`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            match: { id: userId }
-          })
-        });
-        if (response.ok) {
-          const resJson = await response.json();
-          row = resJson.data?.[0] || null;
+        if (supabase && supabase.auth) {
+          const metaUpdates: any = {};
+          if (updates.name) metaUpdates.name = updates.name;
+          if (updates.username) metaUpdates.username = updates.username;
+          if (updates.phone) metaUpdates.phone = updates.phone;
+          if (updates.avatar) metaUpdates.avatar_url = updates.avatar;
+          if (Object.keys(metaUpdates).length > 0) {
+            await supabase.auth.updateUser({ data: metaUpdates });
+          }
         }
-      } catch (err) {
-        console.warn(`[updateUserProfile] Proxy profile select failed, falling back to direct SDK select:`, err);
+      } catch (supaErr) {
+        console.debug('[updateUserProfile] Supabase auth metadata sync note:', supaErr);
       }
 
-      if (!row) {
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
-        row = data;
-      }
-
-      const existingExtra = row?.extra_data || {};
-      const sanitizedUpdates = sanitizeData(updates);
-      if (sanitizedUpdates.phone) {
-        sanitizedUpdates.phone = actionService.formatPhoneNumber(sanitizedUpdates.phone);
-        if (sanitizedUpdates.phone.length !== 12) {
-          throw new Error('Please enter a valid 10-digit number (e.g. 0712...)');
+      // 2. Dual-sync: Sync to Firebase Auth profile
+      if (auth && auth.currentUser) {
+        try {
+          const { updateProfile } = await import('firebase/auth');
+          await updateProfile(auth.currentUser, {
+            displayName: updates.name || updates.username || auth.currentUser.displayName,
+            photoURL: updates.avatar || updates.profilePhoto || auth.currentUser.photoURL
+          });
+        } catch (fbErr) {
+          console.debug('[updateUserProfile] Firebase auth profile sync note:', fbErr);
         }
       }
 
-      const mergedExtra = { ...existingExtra, ...updates };
-      const mapped = mapProfileToSupabase(updates);
-      mapped.extra_data = mergedExtra;
-
-      // 2. Try proxy update first for WebView RLS safety & session independence
-      let updateSuccess = false;
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/db/profiles/update`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            match: { id: userId },
-            body: mapped
-          })
-        });
-        if (response.ok) {
-          updateSuccess = true;
-          console.log(`[Supabase UpdateUserProfile] Profile mapped properties updated successfully via proxy API for user: ${userId}`);
+      // 3. Direct update in database profiles table
+      if (supabase) {
+        let row: any = null;
+        try {
+          const { data } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+          row = data;
+        } catch (e) {
+          console.debug('[updateUserProfile] existing profile lookup notice:', e);
         }
-      } catch (err) {
-        console.warn(`[Supabase UpdateUserProfile] Proxy update failed, falling back to direct SDK update:`, err);
+
+        const existingExtra = safeParseExtraData(row?.extra_data || row?.extraData);
+        const sanitizedUpdates = sanitizeData(updates);
+        if (sanitizedUpdates?.phone) {
+          sanitizedUpdates.phone = actionService.formatPhoneNumber(sanitizedUpdates.phone);
+        }
+        const mergedExtra = safeMergeExtraData(existingExtra, updates);
+        const mapped = mapProfileToSupabase(updates);
+        mapped.extra_data = mergedExtra;
+
+        await supabase.from('profiles').update(mapped).eq('id', userId);
       }
 
-      // 3. Fallback to direct client-side update if proxy update did not succeed
-      if (!updateSuccess) {
-        const { error } = await supabase
-          .from('profiles')
-          .update(mapped)
-          .eq('id', userId);
-        if (error) throw error;
-        console.log(`[Supabase UpdateUserProfile] Profile mapped properties updated successfully via direct SDK for user: ${userId}`);
+      // 4. Dual-sync to Firestore /users/${userId}
+      if (db) {
+        try {
+          const { doc, setDoc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'users', userId), updates, { merge: true });
+        } catch (fbErr) {
+          console.debug('[updateUserProfile] Firestore sync note:', fbErr);
+        }
+      }
+
+      // 5. Update local cache and notify listeners
+      if (firebaseService._currentUserCache && firebaseService._currentUserCache.id === userId) {
+        const updatedUser = { ...firebaseService._currentUserCache, ...updates };
+        firebaseService._currentUserCache = updatedUser;
+        localStorage.setItem('errand_runner_user_profile', JSON.stringify(updatedUser));
+        firebaseService._broadcastAuthChange(updatedUser);
       }
     } catch (error) {
       console.error('[Supabase UpdateUserProfile] Error updating:', error);
@@ -1755,7 +2045,7 @@ export const firebaseService = {
       const { data, error } = await supabase.from('runner_applications').select('*');
       if (error) throw error;
       return (data || []).map(row => {
-        const extra = row.extra_data || {};
+        const extra = safeParseExtraData(row.extra_data || row.extraData);
         return {
           fullName: row.full_name || extra.fullName || '',
           email: row.email || extra.email || '',
@@ -1793,7 +2083,7 @@ export const firebaseService = {
 
       if (error) throw error;
       if (data) {
-        const extra = data.extra_data || {};
+        const extra = safeParseExtraData(data.extra_data || data.extraData);
         return {
           fullName: data.full_name || extra.fullName || '',
           email: data.email || extra.email || '',
@@ -1830,7 +2120,7 @@ export const firebaseService = {
 
       if (error) throw error;
       return (data || []).map(row => {
-        const extra = row.extra_data || {};
+        const extra = safeParseExtraData(row.extra_data || row.extraData);
         return {
           fullName: row.full_name || extra.fullName || '',
           email: row.email || extra.email || '',
@@ -2155,8 +2445,8 @@ export const firebaseService = {
         .maybeSingle();
 
       if (row) {
-        const existingExtra = row.extra_data || {};
-        const mergedExtra = { ...existingExtra, ...updates };
+        const existingExtra = safeParseExtraData(row.extra_data || row.extraData);
+        const mergedExtra = safeMergeExtraData(existingExtra, updates);
         const payload: any = { extra_data: mergedExtra };
         if (updates.status) payload.status = updates.status;
         if (updates.reviewedByName) payload.reviewed_by_name = updates.reviewedByName;
