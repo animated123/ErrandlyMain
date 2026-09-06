@@ -13,6 +13,7 @@ if (!firebaseConfig || !firebaseConfig.apiKey) {
     const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
     const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
     const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET;
+    const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || firebaseAppletConfig?.firestoreDatabaseId;
     
     if (apiKey && authDomain && projectId) {
       firebaseConfig = {
@@ -22,23 +23,9 @@ if (!firebaseConfig || !firebaseConfig.apiKey) {
         storageBucket,
         messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
         appId: import.meta.env.VITE_FIREBASE_APP_ID,
-        measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+        measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+        firestoreDatabaseId
       };
-    } else {
-      const promptApiKey = window.prompt("Missing Firebase Config. Please enter VITE_FIREBASE_API_KEY:");
-      const promptAuthDomain = window.prompt("Please enter VITE_FIREBASE_AUTH_DOMAIN:");
-      const promptProjectId = window.prompt("Please enter VITE_FIREBASE_PROJECT_ID:");
-      
-      if (promptApiKey && promptAuthDomain && promptProjectId) {
-        firebaseConfig = {
-          apiKey: promptApiKey,
-          authDomain: promptAuthDomain,
-          projectId: promptProjectId,
-          storageBucket: window.prompt("Enter VITE_FIREBASE_STORAGE_BUCKET (optional):") || undefined,
-          messagingSenderId: window.prompt("Enter VITE_FIREBASE_MESSAGING_SENDER_ID (optional):") || undefined,
-          appId: window.prompt("Enter VITE_FIREBASE_APP_ID (optional):") || undefined,
-        };
-      }
     }
   } catch (e) {
     console.warn("Failed to read firebase config:", e);
@@ -55,7 +42,9 @@ export const googleProvider = new GoogleAuthProvider();
 if (firebaseConfig && firebaseConfig.apiKey) {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
-  db = getFirestore(app);
+  db = firebaseConfig.firestoreDatabaseId 
+    ? getFirestore(app, firebaseConfig.firestoreDatabaseId) 
+    : getFirestore(app);
   storage = getStorage(app);
 } else {
   console.error("Firebase is not initialized due to missing configuration.");

@@ -421,8 +421,10 @@ async function initPrimaryPgPool(forceReconnect = false) {
   const poolOpts: any = dbConfig.connectionString ? {
     connectionString: dbConfig.connectionString,
     max: isVercelEnv ? 2 : 10,
-    connectionTimeoutMillis: isVercelEnv ? 4000 : 7000,
-    idleTimeoutMillis: isVercelEnv ? 5000 : 10000
+    connectionTimeoutMillis: isVercelEnv ? 3000 : 3500,
+    idleTimeoutMillis: isVercelEnv ? 5000 : 10000,
+    query_timeout: 4000,
+    statement_timeout: 4000
   } : {
     host: dbConfig.host,
     port: dbConfig.port,
@@ -430,8 +432,10 @@ async function initPrimaryPgPool(forceReconnect = false) {
     password: dbConfig.password,
     database: dbConfig.database,
     max: isVercelEnv ? 2 : 10,
-    connectionTimeoutMillis: isVercelEnv ? 4000 : 7000,
-    idleTimeoutMillis: isVercelEnv ? 5000 : 10000
+    connectionTimeoutMillis: isVercelEnv ? 3000 : 3500,
+    idleTimeoutMillis: isVercelEnv ? 5000 : 10000,
+    query_timeout: 4000,
+    statement_timeout: 4000
   };
 
   if (isRemoteHost) {
@@ -469,8 +473,10 @@ async function initPrimaryPgPool(forceReconnect = false) {
           database: 'postgres',
           ssl: { rejectUnauthorized: false },
           max: isVercelEnv ? 2 : 10,
-          connectionTimeoutMillis: 5000,
-          idleTimeoutMillis: 10000
+          connectionTimeoutMillis: 3500,
+          idleTimeoutMillis: 10000,
+          query_timeout: 4000,
+          statement_timeout: 4000
         });
         const fallbackClient = await fallbackPool.connect();
         primaryPgPool = fallbackPool;
@@ -1243,11 +1249,14 @@ async function executePostgresOperation(targetPool: any, tableName: string, chai
 
 let forceDatabaseMode = true; // Force database write attempts before resilient JSON fallback
 
+let primaryPgCooldownUntil = 0;
+
 async function executeDbOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
   const isWriteOp = chainCalls.some(c => ['insert', 'update', 'upsert', 'delete'].includes(c.method));
 
   // Tier 1: Try Primary PostgreSQL
-  if (primaryPgPool && primaryPgConnected) {
+  const now = Date.now();
+  if (primaryPgPool && primaryPgConnected && now >= primaryPgCooldownUntil) {
     try {
       const res = await executePostgresOperation(primaryPgPool, tableName, chainCalls);
       if (isWriteOp) {
@@ -1256,6 +1265,10 @@ async function executeDbOperation(tableName: string, chainCalls: Array<{ method:
       return res;
     } catch (err: any) {
       console.warn(`[Database Tier 1] Primary PostgreSQL operation on '${tableName}' failed: ${err.message}. Trying Local PostgreSQL fallback...`);
+      if (err.message && (err.message.includes('timeout') || err.message.includes('connect') || err.message.includes('Connection terminated') || err.message.includes('closed'))) {
+        primaryPgCooldownUntil = Date.now() + 20000;
+        console.warn(`[Database Tier 1] Primary PostgreSQL temporary cooldown activated (20s) to prevent request latency stalls.`);
+      }
     }
   }
 
@@ -2166,7 +2179,7 @@ const rateLimitConfig = {
   enabled: true,
   general: {
     windowMs: parseInt(process.env.RATE_LIMIT_GENERAL_WINDOW_MS || "60000"), // 1 min window
-    maxRequests: parseInt(process.env.RATE_LIMIT_GENERAL_MAX || "1000") // 1000 requests per session/min (generous for active SPAs)
+    maxRequests: parseInt(process.env.RATE_LIMIT_GENERAL_MAX || "3000") // 3000 requests per session/min (generous for active SPAs)
   },
   ai: {
     windowMs: parseInt(process.env.RATE_LIMIT_AI_WINDOW_MS || "60000"), // 1 min window
@@ -2215,11 +2228,13 @@ function sessionRateLimiter(req: express.Request, res: express.Response, next: e
     return next();
   }
 
-  // Exempt health checks and admin rate-limit control endpoints from rate limiting
+  // Exempt health checks, admin control endpoints, and internal DB read queries
   if (
     req.path === "/health" || 
     req.path.startsWith("/admin/rate-limit") || 
-    req.path === "/admin/config-status"
+    req.path === "/admin/config-status" ||
+    (req.path.startsWith("/db/") && req.path.endsWith("/select")) ||
+    (req.path.startsWith("/api/db/") && req.path.endsWith("/select"))
   ) {
     return next();
   }

@@ -585,22 +585,33 @@ export default function App() {
     }
   }, []); // Run only once to establish watch, use refs/setState callbacks for values
 
+  const isRunnerOnlineRef = useRef(false);
   useEffect(() => {
-    if (user && user.role === UserRole.RUNNER) {
-      // Track online status in Supabase
-      firebaseService.adminUpdateUser(user.id, { isOnline: true });
+    const currentUserId = user?.id;
+    const isRunner = user?.role === UserRole.RUNNER;
+
+    if (currentUserId && isRunner) {
+      if (!isRunnerOnlineRef.current) {
+        isRunnerOnlineRef.current = true;
+        firebaseService.adminUpdateUser(currentUserId, { isOnline: true });
+      }
       
       // Set offline on tab close
       const handleBeforeUnload = () => {
-        firebaseService.adminUpdateUser(user.id, { isOnline: false });
+        firebaseService.adminUpdateUser(currentUserId, { isOnline: false });
       };
       window.addEventListener('beforeunload', handleBeforeUnload);
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
-        firebaseService.adminUpdateUser(user.id, { isOnline: false });
+        if (isRunnerOnlineRef.current) {
+          isRunnerOnlineRef.current = false;
+          firebaseService.adminUpdateUser(currentUserId, { isOnline: false });
+        }
       };
+    } else {
+      isRunnerOnlineRef.current = false;
     }
-  }, [user]);
+  }, [user?.id, user?.role]);
 
   useEffect(() => {
     if (isDarkMode) {
@@ -611,23 +622,26 @@ export default function App() {
   }, [isDarkMode]);
 
   useEffect(() => {
-    if (!user) {
+    const currentUserId = user?.id;
+    const currentRole = user?.role;
+
+    if (!currentUserId) {
       setUserApplication(null);
       return;
     }
     
-    // Fetch application status
-    firebaseService.fetchRunnerApplicationByUserId(user.id).then(setUserApplication);
+    // Fetch application status once per user
+    firebaseService.fetchRunnerApplicationByUserId(currentUserId).then(setUserApplication);
     
-    const unsubErrands = firebaseService.subscribeToUserErrands(user.id, user.role, (list) => {
+    const unsubErrands = firebaseService.subscribeToUserErrands(currentUserId, currentRole, (list) => {
       setErrands(list);
       setIsLoadingErrands(false);
     });
 
-    const unsubNotifs = firebaseService.subscribeToNotifications(user.id, setNotifications);
+    const unsubNotifs = firebaseService.subscribeToNotifications(currentUserId, setNotifications);
 
     let unsubAvailable: any = null;
-    if (user.role === UserRole.RUNNER) {
+    if (currentRole === UserRole.RUNNER) {
       unsubAvailable = firebaseService.subscribeToAvailableErrands((list) => {
         setAvailableErrands(list);
         setIsLoadingAvailable(false);
@@ -641,7 +655,7 @@ export default function App() {
       unsubNotifs();
       if (unsubAvailable) unsubAvailable();
     };
-  }, [user]);
+  }, [user?.id, user?.role]);
 
   useEffect(() => {
     if (!selectedErrand) return;
@@ -676,7 +690,7 @@ export default function App() {
   }, [errands, availableErrands, allErrands, selectedErrand?.id]);
 
   useEffect(() => {
-    if (!user || !user.isAdmin) return;
+    if (!user?.id || !user?.isAdmin) return;
     
     const unsubErrands = firebaseService.subscribeToAllErrands(setAllErrands);
     const unsubRunners = firebaseService.subscribeToOnlineRunners(setOnlineRunners);
@@ -685,7 +699,7 @@ export default function App() {
       unsubErrands();
       unsubRunners();
     };
-  }, [user]);
+  }, [user?.id, user?.isAdmin]);
 
   const filteredErrands = useMemo(() => {
     if (!proximityFilter || !currentLocation) return availableErrands;

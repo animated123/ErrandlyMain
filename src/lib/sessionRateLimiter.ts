@@ -128,7 +128,7 @@ export function initClientRateLimiter() {
           return new Response(JSON.stringify({ 
             data: [], 
             count: 0,
-            error: { message: `Rate limit exceeded. Please wait ${retryAfter}s.` },
+            error: null,
             retryAfter 
           }), {
             status: 200,

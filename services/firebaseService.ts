@@ -1182,7 +1182,18 @@ export const firebaseService = {
 
   adminUpdateUser: async (userId: string, updates: Partial<User>) => {
     try {
-      await firebaseService.updateUserProfile(userId, updates);
+      if (supabase) {
+        const mapped = mapProfileToSupabase(updates);
+        await supabase.from('profiles').update(mapped).eq('id', userId);
+      }
+      if (db) {
+        try {
+          const { doc, setDoc } = await import('firebase/firestore');
+          await setDoc(doc(db, 'users', userId), updates, { merge: true });
+        } catch (err) {
+          console.debug('[adminUpdateUser] Firestore dual-sync skipped:', err);
+        }
+      }
     } catch (error) {
       console.error('[Supabase adminUpdateUser Error]:', error);
     }
