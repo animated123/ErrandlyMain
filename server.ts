@@ -211,7 +211,23 @@ try {
 const isValidPgUrl = (url?: string): boolean => {
   if (!url || typeof url !== 'string') return false;
   const lower = url.toLowerCase().trim();
-  return (lower.startsWith('postgresql://') || lower.startsWith('postgres://')) && !lower.includes('localhost') && !lower.includes('127.0.0.1');
+  return (lower.startsWith('postgresql://') || lower.startsWith('postgres://')) && lower.includes('@');
+};
+
+const sanitizePgUser = (u?: string): string => {
+  if (!u || typeof u !== 'string') return 'postgres';
+  const trimmed = u.trim();
+  if (trimmed.toLowerCase() === 'postres') return 'postgres';
+  return trimmed;
+};
+
+const sanitizePgDatabase = (db?: string, host?: string): string => {
+  if (!db || typeof db !== 'string') return 'postgres';
+  const trimmed = db.trim();
+  if (host && host.includes('supabase.co') && (trimmed.toLowerCase() === 'errandly' || !trimmed)) {
+    return 'postgres';
+  }
+  return trimmed;
 };
 
 const isRemoteHostCheck = (h?: string): boolean => {
@@ -221,31 +237,40 @@ const isRemoteHostCheck = (h?: string): boolean => {
 };
 
 let dbConfig = {
-  host: appConfig.database?.host || process.env.PGHOST || "db.ksflmdvqvseiprebgrcp.supabase.co",
+  host: appConfig.database?.host || (isRemoteHostCheck(process.env.PGHOST) ? process.env.PGHOST : "db.ksflmdvqvseiprebgrcp.supabase.co"),
   port: appConfig.database?.port || (process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432),
-  user: appConfig.database?.user || process.env.PGUSER || "postgres",
+  user: sanitizePgUser(appConfig.database?.user || process.env.PGUSER),
   password: appConfig.database?.password !== undefined && appConfig.database?.password !== ""
     ? appConfig.database.password 
     : (process.env.PGPASSWORD !== undefined ? process.env.PGPASSWORD : "Company1.Codexict"),
-  database: appConfig.database?.name || process.env.PGDATABASE || "postgres",
-  connectionString: appConfig.database?.connectionString || process.env.DATABASE_URL || process.env.POSTGRES_URL || undefined
+  database: sanitizePgDatabase(appConfig.database?.name || process.env.PGDATABASE, appConfig.database?.host || process.env.PGHOST),
+  connectionString: isValidPgUrl(appConfig.database?.connectionString) 
+    ? appConfig.database.connectionString 
+    : (isValidPgUrl(process.env.DATABASE_URL) ? process.env.DATABASE_URL : (isValidPgUrl(process.env.POSTGRES_URL) ? process.env.POSTGRES_URL : undefined))
 };
 
 // Fallback Local PostgreSQL Configuration
 let localDbConfig = {
   host: appConfig.localDatabase?.host || process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
   port: appConfig.localDatabase?.port || (process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432)),
-  user: appConfig.localDatabase?.user || process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
+  user: sanitizePgUser(appConfig.localDatabase?.user || process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER),
   password: appConfig.localDatabase?.password !== undefined && appConfig.localDatabase?.password !== ""
     ? appConfig.localDatabase.password 
     : (process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : (process.env.FALLBACK_PGPASSWORD !== undefined ? process.env.FALLBACK_PGPASSWORD : "admin")),
   database: appConfig.localDatabase?.name || process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
-  connectionString: process.env.LOCAL_DATABASE_URL || process.env.FALLBACK_DATABASE_URL || undefined
+  connectionString: isValidPgUrl(process.env.LOCAL_DATABASE_URL) 
+    ? process.env.LOCAL_DATABASE_URL 
+    : (isValidPgUrl(process.env.FALLBACK_DATABASE_URL) ? process.env.FALLBACK_DATABASE_URL : undefined)
 };
 
 try {
   if (fs.existsSync(CONFIG_FILE)) {
     const legacyConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    if (legacyConfig.user) legacyConfig.user = sanitizePgUser(legacyConfig.user);
+    if (legacyConfig.database) legacyConfig.database = sanitizePgDatabase(legacyConfig.database, legacyConfig.host || dbConfig.host);
+    if (legacyConfig.connectionString && !isValidPgUrl(legacyConfig.connectionString)) {
+      delete legacyConfig.connectionString;
+    }
     dbConfig = { ...dbConfig, ...legacyConfig };
   }
 } catch (err) {
@@ -385,6 +410,13 @@ async function initPrimaryPgPool(forceReconnect = false) {
     }
   }
 
+  // Validate and sanitize dbConfig
+  if (dbConfig.connectionString && !isValidPgUrl(dbConfig.connectionString)) {
+    dbConfig.connectionString = undefined;
+  }
+  dbConfig.user = sanitizePgUser(dbConfig.user);
+  dbConfig.database = sanitizePgDatabase(dbConfig.database, dbConfig.host);
+
   const isRemoteHost = dbConfig.host && !dbConfig.host.includes('127.0.0.1') && !dbConfig.host.includes('localhost');
   const poolOpts: any = dbConfig.connectionString ? {
     connectionString: dbConfig.connectionString,
@@ -424,6 +456,40 @@ async function initPrimaryPgPool(forceReconnect = false) {
     pgConnected = false;
     pgError = err.message;
     console.warn(`[Primary PostgreSQL] Live connection failed: ${err.message}.`);
+
+    // Resilient fallback to Supabase cloud PostgreSQL if host is misconfigured, offline, or base resolution failed
+    if (dbConfig.host !== 'db.ksflmdvqvseiprebgrcp.supabase.co' || dbConfig.connectionString) {
+      console.log("[Primary PostgreSQL] Attempting fallback to Supabase cloud PostgreSQL (db.ksflmdvqvseiprebgrcp.supabase.co)...");
+      try {
+        const fallbackPool = new Pool({
+          host: 'db.ksflmdvqvseiprebgrcp.supabase.co',
+          port: 5432,
+          user: 'postgres',
+          password: 'Company1.Codexict',
+          database: 'postgres',
+          ssl: { rejectUnauthorized: false },
+          max: isVercelEnv ? 2 : 10,
+          connectionTimeoutMillis: 5000,
+          idleTimeoutMillis: 10000
+        });
+        const fallbackClient = await fallbackPool.connect();
+        primaryPgPool = fallbackPool;
+        pgPool = fallbackPool;
+        primaryPgConnected = true;
+        primaryPgError = null;
+        pgConnected = true;
+        pgError = null;
+        dbConfig.host = 'db.ksflmdvqvseiprebgrcp.supabase.co';
+        dbConfig.user = 'postgres';
+        dbConfig.database = 'postgres';
+        dbConfig.connectionString = undefined;
+        console.log("[Primary PostgreSQL] Fallback connection to Supabase cloud PostgreSQL established successfully.");
+        fallbackClient.release();
+        await ensurePostgreSqlSchema(primaryPgPool);
+      } catch (fallbackErr: any) {
+        console.warn(`[Primary PostgreSQL] Fallback to Supabase also failed: ${fallbackErr.message}`);
+      }
+    }
   }
 }
 
@@ -446,10 +512,12 @@ async function initLocalPgPool(forceReconnect = false) {
   localDbConfig = {
     host: localDbConfig.host || appConfig.localDatabase?.host || process.env.LOCAL_PGHOST || process.env.FALLBACK_PGHOST || process.env.PGHOST_FALLBACK || "127.0.0.1",
     port: localDbConfig.port || appConfig.localDatabase?.port || (process.env.LOCAL_PGPORT ? parseInt(process.env.LOCAL_PGPORT) : (process.env.FALLBACK_PGPORT ? parseInt(process.env.FALLBACK_PGPORT) : 5432)),
-    user: localDbConfig.user || appConfig.localDatabase?.user || process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER || "postgres",
+    user: sanitizePgUser(localDbConfig.user || appConfig.localDatabase?.user || process.env.LOCAL_PGUSER || process.env.FALLBACK_PGUSER),
     password: localDbConfig.password !== undefined ? localDbConfig.password : (appConfig.localDatabase?.password !== undefined ? appConfig.localDatabase.password : (process.env.LOCAL_PGPASSWORD !== undefined ? process.env.LOCAL_PGPASSWORD : "admin")),
     database: localDbConfig.database || appConfig.localDatabase?.name || process.env.LOCAL_PGDATABASE || process.env.FALLBACK_PGDATABASE || "Errandly",
-    connectionString: localDbConfig.connectionString || process.env.LOCAL_DATABASE_URL || process.env.FALLBACK_DATABASE_URL || undefined
+    connectionString: isValidPgUrl(localDbConfig.connectionString) 
+      ? localDbConfig.connectionString 
+      : (isValidPgUrl(process.env.LOCAL_DATABASE_URL) ? process.env.LOCAL_DATABASE_URL : (isValidPgUrl(process.env.FALLBACK_DATABASE_URL) ? process.env.FALLBACK_DATABASE_URL : undefined))
   };
 
   const isRemoteHost = localDbConfig.host && !localDbConfig.host.includes('127.0.0.1') && !localDbConfig.host.includes('localhost');
@@ -603,6 +671,8 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS accepted_price NUMERIC;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]'::jsonb;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS bids JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
     `);
 
     // Notifications Table
@@ -5258,9 +5328,9 @@ Please proceed with the task according to safety guidelines and update milestone
       const newConfig = {
         host: host.trim(),
         port: parseInt(String(port)) || 5432,
-        user: user.trim(),
+        user: sanitizePgUser(user),
         password: password !== undefined && password !== "" ? String(password).trim() : dbConfig.password,
-        database: database.trim()
+        database: sanitizePgDatabase(database, host.trim())
       };
 
       // Write to database_config.json

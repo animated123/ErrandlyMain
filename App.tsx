@@ -59,8 +59,9 @@ import MapComponent from './src/components/MapComponent';
 import UserAvatar from './src/components/UserAvatar';
 import WalletModal from './src/components/Wallet';
 import RunnerRegistrationModal from './src/components/RunnerRegistrationModal';
-import { FAQModal, PrivacyPolicyModal } from './src/components/LegalModals';
+import { FAQModal, PrivacyPolicyModal, TermsOfServiceModal } from './src/components/LegalModals';
 import { LandingPage } from './src/components/LandingPage';
+import { PublicLegalPage } from './src/components/PublicLegalPage';
 import RunnerApplicationPage from './src/components/RunnerApplicationPage';
 import ConnectionAdminPage from './src/components/ConnectionAdminPage';
 
@@ -138,16 +139,32 @@ export default function App() {
   const [showRunnerRegistration, setShowRunnerRegistration] = useState(false);
   const [showFAQ, setShowFAQ] = useState(false);
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  const [showTermsOfService, setShowTermsOfService] = useState(false);
   const [activeTab, _setActiveTab] = useState('dashboard');
   
-  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+  const getNormalizedPath = () => {
+    if (typeof window === 'undefined') return '/';
+    const params = new URLSearchParams(window.location.search);
+    const pageParam = params.get('page');
+    if (pageParam === 'privacy' || pageParam === 'privacy-policy') return '/privacy';
+    if (pageParam === 'terms' || pageParam === 'terms-of-service') return '/terms';
+    if (window.location.hash === '#/privacy' || window.location.hash === '#privacy') return '/privacy';
+    if (window.location.hash === '#/terms' || window.location.hash === '#terms') return '/terms';
+    return window.location.pathname;
+  };
+
+  const [currentPath, setCurrentPath] = useState(getNormalizedPath);
 
   useEffect(() => {
     const handleLocationChange = () => {
-      setCurrentPath(window.location.pathname);
+      setCurrentPath(getNormalizedPath());
     };
     window.addEventListener('popstate', handleLocationChange);
-    return () => window.removeEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
   }, []);
 
   const navigateTo = (path: string) => {
@@ -951,6 +968,32 @@ export default function App() {
     );
   }
 
+  if (currentPath === '/privacy' || currentPath === '/privacy-policy') {
+    return (
+      <ErrorBoundary>
+        <PublicLegalPage 
+          type="privacy" 
+          appSettings={appSettings} 
+          onBackToHome={() => navigateTo('/')}
+          onNavigateTo={(p) => navigateTo(p)}
+        />
+      </ErrorBoundary>
+    );
+  }
+
+  if (currentPath === '/terms' || currentPath === '/terms-of-service') {
+    return (
+      <ErrorBoundary>
+        <PublicLegalPage 
+          type="terms" 
+          appSettings={appSettings} 
+          onBackToHome={() => navigateTo('/')}
+          onNavigateTo={(p) => navigateTo(p)}
+        />
+      </ErrorBoundary>
+    );
+  }
+
   if (currentPath === '/application-runner') {
     return (
       <ErrorBoundary>
@@ -981,6 +1024,9 @@ export default function App() {
               setShowAuthModal(true);
             }}
             appSettings={appSettings}
+            onOpenPrivacyPolicy={() => setShowPrivacyPolicy(true)}
+            onOpenTermsOfService={() => setShowTermsOfService(true)}
+            onNavigateTo={(path) => navigateTo(path)}
           />
           {selectedErrand && (
             <ErrandDetailScreenLocal 
@@ -1757,6 +1803,7 @@ export default function App() {
                   <ProfileMenuItem icon={<Calculator size={16} />} label="Errand Price Guide" onClick={() => setShowPriceGuideModal(true)} />
                   <ProfileMenuItem icon={<Phone size={16} />} label="Contact Helpline" onClick={() => setShowContactUsModal(true)} />
                   <ProfileMenuItem icon={<ShieldAlert size={16} />} label="Privacy Policy" onClick={() => setShowPrivacyPolicy(true)} />
+                  <ProfileMenuItem icon={<FileText size={16} />} label="Terms of Service" onClick={() => setShowTermsOfService(true)} />
                 </div>
               </div>
             ) : (
@@ -2810,6 +2857,10 @@ export default function App() {
     <PrivacyPolicyModal 
       isOpen={showPrivacyPolicy}
       onClose={() => setShowPrivacyPolicy(false)}
+    />
+    <TermsOfServiceModal 
+      isOpen={showTermsOfService}
+      onClose={() => setShowTermsOfService(false)}
     />
     </ErrorBoundary>
   );

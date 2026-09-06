@@ -1,0 +1,7 @@
+{
+  "host": "db.ksflmdvqvseiprebgrcp.supabase.co",
+  "port": 5432,
+  "user": "postgres",
+  "password": "Company1.Codexict",
+  "database": "postgres"
+}

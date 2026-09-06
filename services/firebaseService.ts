@@ -1565,6 +1565,27 @@ export const firebaseService = {
   },
 
   signInWithOAuth: async (provider: 'google' | 'github' = 'google'): Promise<void> => {
+    // 1. For Google sign-in, try Firebase popup first (avoids third-party redirect 403 blocks)
+    if (provider === 'google' && auth) {
+      try {
+        const { GoogleAuthProvider, signInWithPopup } = await import('firebase/auth');
+        const fbProvider = new GoogleAuthProvider();
+        fbProvider.setCustomParameters({ prompt: 'select_account' });
+        const cred = await signInWithPopup(auth, fbProvider);
+        if (cred?.user) {
+          const mappedUser = await firebaseService.syncUserSession(cred.user, 'firebase');
+          firebaseService._broadcastAuthChange(mappedUser);
+          return;
+        }
+      } catch (fbErr: any) {
+        console.warn('[Firebase Google Auth] Popup failed or cancelled, trying Supabase OAuth:', fbErr?.code || fbErr?.message);
+        if (fbErr?.code === 'auth/popup-closed-by-user' || fbErr?.code === 'auth/cancelled-popup-request') {
+          return;
+        }
+      }
+    }
+
+    // 2. Supabase OAuth redirect
     try {
       const redirectUrl = window.location.origin;
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -1581,17 +1602,7 @@ export const firebaseService = {
         return;
       }
     } catch (err: any) {
-      console.warn('[Supabase OAuth] Failed, attempting Firebase OAuth fallback:', err?.message || err);
-      if (auth && auth.app && provider === 'google') {
-        const { GoogleAuthProvider, signInWithPopup } = await import('firebase/auth');
-        const fbProvider = new GoogleAuthProvider();
-        const cred = await signInWithPopup(auth, fbProvider);
-        if (cred?.user) {
-          const mappedUser = await firebaseService.syncUserSession(cred.user, 'firebase');
-          firebaseService._broadcastAuthChange(mappedUser);
-          return;
-        }
-      }
+      console.error('[OAuth Error]:', err?.message || err);
       throw err;
     }
   },

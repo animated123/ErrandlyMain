@@ -1,0 +1,17 @@
+{
+  "actionServerUrl": "https://gateway.errandly.site",
+  "database": {
+    "host": "db.ksflmdvqvseiprebgrcp.supabase.co",
+    "port": 5432,
+    "user": "postgres",
+    "password": "Company1.Codexict",
+    "name": "postgres"
+  },
+  "localDatabase": {
+    "host": "host.docker.internal",
+    "port": 5432,
+    "user": "postgres",
+    "password": "Company1.Codexict",
+    "name": "Fallback_Errandly"
+  }
+}

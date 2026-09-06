@@ -59,9 +59,14 @@ const PageWrapper: React.FC<{ children: React.ReactNode; title: string; onBack: 
     <main className="max-w-7xl mx-auto px-6 py-12 pb-16">
       {children}
     </main>
-    <footer className="bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 py-12 px-6">
-      <div className="max-w-7xl mx-auto text-center">
+    <footer className="bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 py-10 px-6">
+      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">© 2026 Coordination Network Standards</p>
+        <div className="flex items-center gap-5 text-xs font-bold text-slate-500 dark:text-slate-400">
+          <a href="/privacy" className="hover:text-primary transition-colors">Privacy Policy</a>
+          <span className="text-slate-300 dark:text-slate-700">•</span>
+          <a href="/terms" className="hover:text-primary transition-colors">Terms of Service</a>
+        </div>
       </div>
     </footer>
   </div>

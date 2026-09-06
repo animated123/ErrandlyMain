@@ -1,8 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { X, HelpCircle, ShieldAlert, ChevronDown } from 'lucide-react';
+import { X, HelpCircle, ShieldAlert, ChevronDown, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { FAQS, PRIVACY_POLICY } from '../constants/legal';
+import { FAQS, PRIVACY_POLICY, TERMS_OF_SERVICE } from '../constants/legal';
 
 interface ModalProps {
   isOpen: boolean;
@@ -62,13 +62,45 @@ export const PrivacyPolicyModal: React.FC<ModalProps> = ({ isOpen, onClose }) =>
             <div className="p-2.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-xl">
               <ShieldAlert size={24} />
             </div>
-            <h2 className="text-2xl font-black text-slate-900 dark:text-white">Privacy Policy</h2>
+            <div>
+              <h2 className="text-2xl font-black text-slate-900 dark:text-white">Privacy Policy</h2>
+              <p className="text-xs font-semibold text-slate-400 mt-0.5">Public Data Privacy & Security Terms</p>
+            </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"><X size={20} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-1 zero-scrollbar">
-           <div className="p-8 markdown-body dark:prose-invert max-w-none">
+           <div className="p-8 markdown-body dark:prose-invert max-w-none text-slate-700 dark:text-slate-200">
              <ReactMarkdown>{PRIVACY_POLICY}</ReactMarkdown>
+           </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+export const TermsOfServiceModal: React.FC<ModalProps> = ({ isOpen, onClose }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white dark:bg-slate-900 w-full max-w-3xl rounded-[2.5rem] shadow-2xl relative flex flex-col max-h-[85vh]">
+        <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-xl">
+              <FileText size={24} />
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-slate-900 dark:text-white">Terms of Service</h2>
+              <p className="text-xs font-semibold text-slate-400 mt-0.5">Public Platform Terms & Operating Agreement</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"><X size={20} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-1 zero-scrollbar">
+           <div className="p-8 markdown-body dark:prose-invert max-w-none text-slate-700 dark:text-slate-200">
+             <ReactMarkdown>{TERMS_OF_SERVICE}</ReactMarkdown>
            </div>
         </div>
       </motion.div>

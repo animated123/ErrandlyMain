@@ -195,6 +195,9 @@ interface LandingPageProps {
   onBecomeRunner?: () => void;
   onTrackRunnerApplication?: () => void;
   appSettings?: AppSettings;
+  onOpenPrivacyPolicy?: () => void;
+  onOpenTermsOfService?: () => void;
+  onNavigateTo?: (path: string) => void;
 }
 
 const maskName = (name?: string) => {
@@ -217,7 +220,16 @@ const maskPhone = (phone?: string) => {
   return clean.substring(0, 4) + '***' + clean.substring(clean.length - 3);
 };
 
-export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onLogin, onBecomeRunner, onTrackRunnerApplication, appSettings }) => {
+export const LandingPage: React.FC<LandingPageProps> = ({ 
+  onGetStarted, 
+  onLogin, 
+  onBecomeRunner, 
+  onTrackRunnerApplication, 
+  appSettings,
+  onOpenPrivacyPolicy,
+  onOpenTermsOfService,
+  onNavigateTo
+}) => {
   const [activeFeature, setActiveFeature] = useState(0);
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -914,17 +926,88 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onGetStarted, onLogin,
               <ul className="space-y-4 text-sm font-bold text-slate-500">
                 <li onClick={() => setActiveInfoPage('help')} className="hover:text-primary transition-colors cursor-pointer">Help Center</li>
                 <li onClick={() => setActiveInfoPage('help')} className="hover:text-primary transition-colors cursor-pointer">Contact Us</li>
-                <li className="hover:text-primary transition-colors cursor-pointer">Terms of Service</li>
-                <li className="hover:text-primary transition-colors cursor-pointer">Privacy Policy</li>
+                <li>
+                  <a 
+                    href="/terms" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/terms');
+                      } else if (onOpenTermsOfService) {
+                        e.preventDefault();
+                        onOpenTermsOfService();
+                      }
+                    }}
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                    title="Public Terms of Service"
+                  >
+                    Terms of Service
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="/privacy" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/privacy');
+                      } else if (onOpenPrivacyPolicy) {
+                        e.preventDefault();
+                        onOpenPrivacyPolicy();
+                      }
+                    }}
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                    title="Public Privacy Policy"
+                  >
+                    Privacy Policy
+                  </a>
+                </li>
               </ul>
             </div>
           </div>
         </div>
-        <div className="max-w-7xl mx-auto pt-6 mt-6 border-t border-slate-100 dark:border-slate-900 text-center flex flex-col items-center gap-3">
-           <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.4em]">© 2026 Errands Coordination Network</p>
-           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
-             Errandly by <a href="https://codexict.co.ke" target="_blank" rel="noopener noreferrer" className="text-primary dark:text-[#2891e2] font-black hover:underline transition-all">Codexict</a>
-           </p>
+        <div className="max-w-7xl mx-auto pt-6 mt-6 border-t border-slate-100 dark:border-slate-900 flex flex-col md:flex-row items-center justify-between gap-4">
+           <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-4 text-center md:text-left">
+             <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">© 2026 Errands Coordination Network</p>
+             <span className="hidden sm:inline text-slate-300 dark:text-slate-700">•</span>
+             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em]">
+               Errandly by <a href="https://codexict.co.ke" target="_blank" rel="noopener noreferrer" className="text-primary dark:text-[#2891e2] font-black hover:underline transition-all">Codexict</a>
+             </p>
+           </div>
+           
+           <div className="flex items-center gap-5 text-[11px] font-bold text-slate-500 dark:text-slate-400">
+             <a 
+               href="/privacy" 
+               onClick={(e) => {
+                 if (onNavigateTo) {
+                   e.preventDefault();
+                   onNavigateTo('/privacy');
+                 } else if (onOpenPrivacyPolicy) {
+                   e.preventDefault();
+                   onOpenPrivacyPolicy();
+                 }
+               }} 
+               className="hover:text-primary transition-colors cursor-pointer"
+             >
+               Privacy Policy
+             </a>
+             <span className="text-slate-300 dark:text-slate-700">•</span>
+             <a 
+               href="/terms" 
+               onClick={(e) => {
+                 if (onNavigateTo) {
+                   e.preventDefault();
+                   onNavigateTo('/terms');
+                 } else if (onOpenTermsOfService) {
+                   e.preventDefault();
+                   onOpenTermsOfService();
+                 }
+               }} 
+               className="hover:text-primary transition-colors cursor-pointer"
+             >
+               Terms of Service
+             </a>
+           </div>
         </div>
       </footer>
     </div>
