@@ -6,7 +6,7 @@ import {
   ArrowLeft, Send, Search, Copy, Check, ExternalLink, HardDrive, 
   Layers, Clock, Filter, Radio, Mail, Zap, CheckCheck, Wifi, 
   Gauge, ShieldCheck, HelpCircle, ChevronRight, Sparkles, Key, AlertCircle,
-  Cloud
+  Cloud, Flame, Table, FileJson, ChevronLeft, UserCheck, ShieldAlert, ArrowRight, User
 } from 'lucide-react';
 
 export interface CheckAllSystemsResult {
@@ -209,7 +209,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [authLoading, setAuthLoading] = useState(false);
 
   // Active navigation tab
-  const [activeTab, setActiveTab] = useState<'db' | 'localdb' | 'actionserver' | 'logs' | 'query' | 'apicall' | 'sync'>('sync');
+  const [activeTab, setActiveTab] = useState<'db' | 'localdb' | 'actionserver' | 'logs' | 'query' | 'apicall' | 'sync' | 'firebase' | 'explorer'>('sync');
 
   // Overall status data
   const [status, setStatus] = useState<ConnectionAdminStatus | null>(null);
@@ -326,6 +326,40 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 2000);
   };
+
+  // Firebase Auth & User Data Backup State (ONLY User Data)
+  const [firebaseStatus, setFirebaseStatus] = useState<any>(null);
+  const [firebaseLoading, setFirebaseLoading] = useState(false);
+  const [firebaseTestingAuth, setFirebaseTestingAuth] = useState(false);
+  const [firebaseAuthTestResult, setFirebaseAuthTestResult] = useState<any>(null);
+  const [firebaseTogglingAuth, setFirebaseTogglingAuth] = useState(false);
+  const [firebaseBackingUpUsers, setFirebaseBackingUpUsers] = useState(false);
+  const [firebaseRestoringUsers, setFirebaseRestoringUsers] = useState(false);
+  const [firebaseBackupUsersList, setFirebaseBackupUsersList] = useState<any[]>([]);
+  const [firebaseBackupUsersLoading, setFirebaseBackupUsersLoading] = useState(false);
+  const [firebaseBackupSearch, setFirebaseBackupSearch] = useState('');
+  const [firebaseBackupPage, setFirebaseBackupPage] = useState(1);
+  const [firebaseBackupTotalPages, setFirebaseBackupTotalPages] = useState(1);
+  const [firebaseBackupTotalCount, setFirebaseBackupTotalCount] = useState(0);
+  const [firebaseActionMsg, setFirebaseActionMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [selectedUserDoc, setSelectedUserDoc] = useState<any | null>(null);
+
+  // Multi-DB Tables & Data Explorer State (Local, Postgres, Supabase, Firebase)
+  const [explorerTablesData, setExplorerTablesData] = useState<any>(null);
+  const [explorerTablesLoading, setExplorerTablesLoading] = useState(false);
+  const [explorerSource, setExplorerSource] = useState<'supabase' | 'local_json' | 'local_pg' | 'firebase'>('supabase');
+  const [explorerTable, setExplorerTable] = useState<string>('profiles');
+  const [explorerRows, setExplorerRows] = useState<any[]>([]);
+  const [explorerFields, setExplorerFields] = useState<string[]>([]);
+  const [explorerTotalCount, setExplorerTotalCount] = useState<number>(0);
+  const [explorerPage, setExplorerPage] = useState<number>(1);
+  const [explorerPageSize, setExplorerPageSize] = useState<number>(25);
+  const [explorerTotalPages, setExplorerTotalPages] = useState<number>(1);
+  const [explorerSearch, setExplorerSearch] = useState<string>('');
+  const [explorerLoadingData, setExplorerLoadingData] = useState<boolean>(false);
+  const [explorerExecutionTime, setExplorerExecutionTime] = useState<number | null>(null);
+  const [explorerViewMode, setExplorerViewMode] = useState<'table' | 'json'>('table');
+  const [selectedRowDoc, setSelectedRowDoc] = useState<any | null>(null);
 
   const safeFetchJson = async (url: string, options?: RequestInit) => {
     try {
@@ -821,6 +855,205 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     }
   };
 
+  // Firebase Auth & User Data Backup Helpers (STRICT SCOPE: ONLY User Data)
+  const fetchFirebaseAdminStatus = useCallback(async () => {
+    setFirebaseLoading(true);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/status', {
+        headers: getAuthHeaders()
+      });
+      if (ok && data.success) {
+        setFirebaseStatus(data);
+      }
+    } catch (e: any) {
+      console.warn("Failed to fetch Firebase admin status:", e);
+    } finally {
+      setFirebaseLoading(false);
+    }
+  }, []);
+
+  const toggleFirebaseAuth = async (alternateAuthEnabled?: boolean, autoMirrorUsersEnabled?: boolean) => {
+    setFirebaseTogglingAuth(true);
+    setFirebaseActionMsg(null);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/auth/toggle', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ alternateAuthEnabled, autoMirrorUsersEnabled })
+      });
+      if (ok && data.success) {
+        setFirebaseActionMsg({ type: 'success', text: 'Firebase alternate auth settings successfully updated.' });
+        fetchFirebaseAdminStatus();
+      } else {
+        setFirebaseActionMsg({ type: 'error', text: data.error || 'Failed to update Firebase settings.' });
+      }
+    } catch (e: any) {
+      setFirebaseActionMsg({ type: 'error', text: e.message });
+    } finally {
+      setFirebaseTogglingAuth(false);
+    }
+  };
+
+  const testFirebaseAuth = async () => {
+    setFirebaseTestingAuth(true);
+    setFirebaseAuthTestResult(null);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/auth/test', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      setFirebaseAuthTestResult(data);
+    } catch (e: any) {
+      setFirebaseAuthTestResult({ success: false, error: e.message });
+    } finally {
+      setFirebaseTestingAuth(false);
+    }
+  };
+
+  const backupUsersToFirebase = async () => {
+    setFirebaseBackingUpUsers(true);
+    setFirebaseActionMsg(null);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/backup-users', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      if (ok && data.success) {
+        setFirebaseActionMsg({ 
+          type: 'success', 
+          text: `Backed up ${data.backedUpCount} user account(s) to isolated Firebase users storage (${data.executionTimeMs}ms).` 
+        });
+        fetchFirebaseAdminStatus();
+        fetchFirebaseBackupUsers(1, firebaseBackupSearch);
+      } else {
+        setFirebaseActionMsg({ type: 'error', text: data.error || 'Failed to backup user accounts to Firebase.' });
+      }
+    } catch (e: any) {
+      setFirebaseActionMsg({ type: 'error', text: e.message });
+    } finally {
+      setFirebaseBackingUpUsers(false);
+    }
+  };
+
+  const restoreUsersFromFirebase = async () => {
+    if (!window.confirm("Restore user profiles from Firebase backup into the primary/local database? Existing user fields will be updated.")) return;
+    setFirebaseRestoringUsers(true);
+    setFirebaseActionMsg(null);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/restore-users', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      if (ok && data.success) {
+        setFirebaseActionMsg({
+          type: 'success',
+          text: `Restored ${data.restoredCount} user account(s) from Firebase backup into primary/local storage.`
+        });
+        fetchFirebaseAdminStatus();
+        fetchFirebaseBackupUsers(1, firebaseBackupSearch);
+      } else {
+        setFirebaseActionMsg({ type: 'error', text: data.error || 'Failed to restore user accounts from Firebase.' });
+      }
+    } catch (e: any) {
+      setFirebaseActionMsg({ type: 'error', text: e.message });
+    } finally {
+      setFirebaseRestoringUsers(false);
+    }
+  };
+
+  const fetchFirebaseBackupUsers = useCallback(async (page: number = 1, search: string = '') => {
+    setFirebaseBackupUsersLoading(true);
+    try {
+      const query = new URLSearchParams({
+        page: String(page),
+        pageSize: '25',
+        search: search.trim()
+      });
+      const { ok, data } = await safeFetchJson(`/api/connectionadmin/firebase/users-backup?${query.toString()}`, {
+        headers: getAuthHeaders()
+      });
+      if (ok && data.success) {
+        setFirebaseBackupUsersList(data.users || []);
+        setFirebaseBackupPage(data.page || 1);
+        setFirebaseBackupTotalPages(data.totalPages || 1);
+        setFirebaseBackupTotalCount(data.totalCount || 0);
+      }
+    } catch (e: any) {
+      console.warn("Failed to fetch Firebase backup users:", e);
+    } finally {
+      setFirebaseBackupUsersLoading(false);
+    }
+  }, []);
+
+  // Multi-DB Tables & Data Explorer Helpers (Local, Postgres, Supabase, Firebase)
+  const fetchExplorerTables = useCallback(async () => {
+    setExplorerTablesLoading(true);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/explorer/tables', {
+        headers: getAuthHeaders()
+      });
+      if (ok && data.success) {
+        setExplorerTablesData(data);
+      }
+    } catch (e: any) {
+      console.warn("Failed to fetch explorer tables:", e);
+    } finally {
+      setExplorerTablesLoading(false);
+    }
+  }, []);
+
+  const fetchExplorerData = useCallback(async (
+    source: string = explorerSource,
+    table: string = explorerTable,
+    page: number = explorerPage,
+    pageSize: number = explorerPageSize,
+    search: string = explorerSearch
+  ) => {
+    setExplorerLoadingData(true);
+    try {
+      const query = new URLSearchParams({
+        source,
+        table,
+        page: String(page),
+        pageSize: String(pageSize),
+        search: search.trim()
+      });
+      const { ok, data } = await safeFetchJson(`/api/connectionadmin/explorer/data?${query.toString()}`, {
+        headers: getAuthHeaders()
+      });
+      if (ok && data.success) {
+        setExplorerRows(data.rows || []);
+        setExplorerFields(data.fields || []);
+        setExplorerTotalCount(data.totalCount || 0);
+        setExplorerPage(data.page || 1);
+        setExplorerPageSize(data.pageSize || 25);
+        setExplorerTotalPages(data.totalPages || 1);
+        setExplorerExecutionTime(data.executionTimeMs || null);
+      } else {
+        setExplorerRows([]);
+        setExplorerFields([]);
+        setExplorerTotalCount(0);
+        setExplorerExecutionTime(data.executionTimeMs || null);
+      }
+    } catch (e: any) {
+      console.warn("Failed to fetch explorer data:", e);
+    } finally {
+      setExplorerLoadingData(false);
+    }
+  }, [explorerSource, explorerTable, explorerPage, explorerPageSize, explorerSearch]);
+
+  // Tab switch listener for Firebase and Explorer
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (activeTab === 'firebase') {
+      fetchFirebaseAdminStatus();
+      fetchFirebaseBackupUsers(1, firebaseBackupSearch);
+    } else if (activeTab === 'explorer') {
+      fetchExplorerTables();
+      fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, explorerSearch);
+    }
+  }, [activeTab, isAuthenticated, fetchFirebaseAdminStatus, fetchFirebaseBackupUsers, fetchExplorerTables, fetchExplorerData, explorerSource, explorerTable, explorerPageSize, explorerSearch, firebaseBackupSearch]);
+
   // Auto-fetch on mount & authentication
   useEffect(() => {
     if (isAuthenticated) {
@@ -1145,6 +1378,44 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                 {syncStatus.synced ? '100% Synced' : `${syncStatus.recordsReconciled} Reconciled`}
               </span>
             )}
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('firebase');
+              fetchFirebaseAdminStatus();
+              fetchFirebaseBackupUsers(1, firebaseBackupSearch);
+            }}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shrink-0 ${
+              activeTab === 'firebase'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Flame className="w-4 h-4 text-amber-400" />
+            8. Firebase Auth & Backup Users
+            <span className="px-1.5 py-0.5 rounded text-[9px] bg-amber-950 text-amber-300 border border-amber-800/80">
+              User Data Only
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('explorer');
+              fetchExplorerTables();
+              fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, explorerSearch);
+            }}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shrink-0 ${
+              activeTab === 'explorer'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
+                : 'text-slate-400 hover:text-white hover:bg-slate-900'
+            }`}
+          >
+            <Layers className="w-4 h-4 text-cyan-400" />
+            9. Tables & Data Explorer
+            <span className="px-1.5 py-0.5 rounded text-[9px] bg-cyan-950 text-cyan-300 border border-cyan-800/80">
+              4 DBs
+            </span>
           </button>
         </div>
 
@@ -3215,6 +3486,1008 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                     No sync audit events recorded yet. Background synchronization daemon is actively monitoring all tiers.
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 8: FIREBASE ALTERNATE AUTH & BACKUP USERS DATA STORAGE (ONLY USER DATA) */}
+        {activeTab === 'firebase' && (
+          <div className="space-y-6">
+            {/* Action Message Banner */}
+            {firebaseActionMsg && (
+              <div className={`p-4 rounded-2xl flex items-center justify-between gap-3 text-xs font-semibold ${
+                firebaseActionMsg.type === 'success' 
+                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800' 
+                  : firebaseActionMsg.type === 'info'
+                  ? 'bg-indigo-950/80 text-indigo-300 border border-indigo-800'
+                  : 'bg-rose-950/80 text-rose-300 border border-rose-800'
+              }`}>
+                <div className="flex items-center gap-2">
+                  {firebaseActionMsg.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  )}
+                  <span>{firebaseActionMsg.text}</span>
+                </div>
+                <button
+                  onClick={() => setFirebaseActionMsg(null)}
+                  className="text-slate-400 hover:text-white p-1"
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Header & Strict Isolation Scope Banner */}
+            <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xl">
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-amber-600/20 text-amber-400 border border-amber-500/30">
+                    <Flame className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h2 className="text-xl font-black text-white tracking-tight">Firebase Alternate Auth & Backup Users Storage</h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-950 text-amber-300 border border-amber-700/80">
+                        Strict Scope: User Data Only
+                      </span>
+                    </div>
+                    <p className="text-slate-400 text-xs mt-1">
+                      Secondary authentication authority & dedicated off-site backup vault exclusively for user account records (<code className="text-amber-300 font-mono">profiles ↔ users</code>).
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
+                <button
+                  onClick={() => {
+                    fetchFirebaseAdminStatus();
+                    fetchFirebaseBackupUsers(firebaseBackupPage, firebaseBackupSearch);
+                  }}
+                  disabled={firebaseLoading}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 border border-slate-700 transition"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${firebaseLoading ? 'animate-spin text-amber-400' : ''}`} />
+                  Refresh Status
+                </button>
+
+                <button
+                  onClick={backupUsersToFirebase}
+                  disabled={firebaseBackingUpUsers}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-amber-600/20 transition disabled:opacity-50"
+                >
+                  <HardDrive className={`w-3.5 h-3.5 ${firebaseBackingUpUsers ? 'animate-spin' : ''}`} />
+                  {firebaseBackingUpUsers ? 'Backing Up Users...' : 'Backup Users to Firebase'}
+                </button>
+
+                <button
+                  onClick={restoreUsersFromFirebase}
+                  disabled={firebaseRestoringUsers}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-xl text-xs font-bold flex items-center gap-2 border border-amber-800/80 transition disabled:opacity-50"
+                >
+                  <Download className={`w-3.5 h-3.5 ${firebaseRestoringUsers ? 'animate-spin' : ''}`} />
+                  {firebaseRestoringUsers ? 'Restoring Users...' : 'Restore Users'}
+                </button>
+              </div>
+            </div>
+
+            {/* Strict Isolation Notice Box */}
+            <div className="p-4 bg-amber-950/20 border border-amber-800/40 rounded-2xl flex items-start gap-3">
+              <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="text-xs space-y-1">
+                <span className="font-bold text-amber-300 block">Security & Isolation Protocol (User Data Exclusivity):</span>
+                <p className="text-slate-300 leading-relaxed">
+                  In compliance with privacy boundaries, this backup storage is strictly restricted to user credentials and profiles in the <code className="text-amber-300 font-mono">users</code> collection. 
+                  Errands, bidding negotiations, wallet transactions, and private chats are preserved exclusively in the primary relational and local datastores.
+                </p>
+              </div>
+            </div>
+
+            {/* 3 Metric Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Card 1: Firebase Service & Project */}
+              <div className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Cloud className="w-4 h-4 text-amber-400" /> Firebase Infrastructure
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    firebaseStatus?.configured
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                      : 'bg-rose-950 text-rose-300 border border-rose-800'
+                  }`}>
+                    {firebaseStatus?.configured ? 'Connected' : 'Not Configured'}
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400">Project ID:</span>
+                    <span className="font-mono text-slate-200 font-semibold">{firebaseStatus?.projectId || 'Not set'}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400">Auth Domain:</span>
+                    <span className="font-mono text-slate-300">{firebaseStatus?.authDomain || 'Not set'}</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400">Firestore DB:</span>
+                    <span className="font-mono text-amber-300 truncate max-w-[170px]" title={firebaseStatus?.firestoreDatabaseId}>
+                      {firebaseStatus?.firestoreDatabaseId || '(default)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-400">API Key:</span>
+                    <span className="text-emerald-400 font-semibold">{firebaseStatus?.apiKeyPresent ? 'Valid & Injected' : 'Missing'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 2: Alternate Authentication Mode */}
+              <div className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" /> Alternate Auth Authority
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    firebaseStatus?.alternateAuthEnabled
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}>
+                    {firebaseStatus?.alternateAuthEnabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400">Authentication Mode:</span>
+                    <span className="text-emerald-300 font-bold">Fastest Race + Fallback</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400">Providers:</span>
+                    <span className="text-slate-200">Google OAuth, Password</span>
+                  </div>
+                  <div className="flex justify-between py-1 border-b border-slate-800">
+                    <span className="text-slate-400">Auto-Mirror Users:</span>
+                    <span className="text-slate-300">{firebaseStatus?.autoMirrorUsersEnabled ? 'Active' : 'Manual'}</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-slate-400">Service Status:</span>
+                    <span className="text-emerald-400 font-semibold">Ready for Login</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: User Storage Backup Status */}
+              <div className="p-5 bg-slate-900 border border-slate-800 rounded-3xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <HardDrive className="w-4 h-4 text-cyan-400" /> Users Backup Parity
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    firebaseStatus?.inSync
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                      : 'bg-amber-950 text-amber-300 border border-amber-800'
+                  }`}>
+                    {firebaseStatus?.inSync ? '100% In Sync' : `${firebaseStatus?.mismatchesCount || 0} Out of Sync`}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="p-2 bg-slate-950 rounded-xl border border-slate-800/80">
+                    <span className="text-[10px] text-slate-400 block">Primary Users</span>
+                    <span className="text-lg font-black text-white">{firebaseStatus?.counts?.primaryUsersCount ?? 0}</span>
+                  </div>
+                  <div className="p-2 bg-slate-950 rounded-xl border border-slate-800/80">
+                    <span className="text-[10px] text-slate-400 block">Firebase Backup</span>
+                    <span className="text-lg font-black text-amber-400">{firebaseStatus?.counts?.firestoreUsersCount ?? 0}</span>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
+                  <span>Last User Backup:</span>
+                  <span className="text-slate-300 font-mono">
+                    {firebaseStatus?.lastUserBackupAt 
+                      ? new Date(firebaseStatus.lastUserBackupAt).toLocaleTimeString() + ' ' + new Date(firebaseStatus.lastUserBackupAt).toLocaleDateString()
+                      : 'Not yet recorded'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Control Panels: Alternate Auth Service & User Data Backup */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Panel A: Alternate Authentication Service Configuration */}
+              <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl space-y-5">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                    <Key className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Alternate Authentication Service</h3>
+                    <p className="text-xs text-slate-400">Manage Firebase Auth as a high-availability fallback authentication provider.</p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800/80 flex items-center justify-between">
+                  <div className="space-y-1">
+                    <span className="text-xs font-bold text-white block">Enable Firebase Alternate Authentication</span>
+                    <p className="text-[11px] text-slate-400 leading-relaxed max-w-sm">
+                      When enabled, the client auth race and backend resolvers will use Firebase Auth tokens and Google Sign-In as an alternate authority.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => toggleFirebaseAuth(!firebaseStatus?.alternateAuthEnabled)}
+                    disabled={firebaseTogglingAuth}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                      firebaseStatus?.alternateAuthEnabled
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20'
+                        : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                    }`}
+                  >
+                    {firebaseStatus?.alternateAuthEnabled ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        Enabled
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="w-3.5 h-3.5" />
+                        Disabled
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Test Auth Button & Result */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-300">Test Auth Service Connectivity</span>
+                    <button
+                      onClick={testFirebaseAuth}
+                      disabled={firebaseTestingAuth}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition disabled:opacity-50"
+                    >
+                      <Zap className={`w-3.5 h-3.5 ${firebaseTestingAuth ? 'animate-spin' : ''}`} />
+                      {firebaseTestingAuth ? 'Testing Auth...' : 'Run Auth Test'}
+                    </button>
+                  </div>
+
+                  {firebaseAuthTestResult && (
+                    <div className={`p-4 rounded-2xl text-xs font-mono border ${
+                      firebaseAuthTestResult.success 
+                        ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300' 
+                        : 'bg-rose-950/40 border-rose-800/80 text-rose-300'
+                    }`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-bold flex items-center gap-1.5">
+                          {firebaseAuthTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <XCircle className="w-4 h-4 text-rose-400" />}
+                          {firebaseAuthTestResult.message}
+                        </span>
+                        {firebaseAuthTestResult.latencyMs && (
+                          <span className="text-[10px] text-slate-400">{firebaseAuthTestResult.latencyMs}ms latency</span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-400 space-y-1 font-sans">
+                        <div>Project: <code className="text-slate-200">{firebaseAuthTestResult.projectId}</code></div>
+                        <div>Auth Domain: <code className="text-slate-200">{firebaseAuthTestResult.authDomain}</code></div>
+                        <div>Supported Providers: Google OAuth, Email/Password, Phone Credentials</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Panel B: Backup Users Data Storage Actions */}
+              <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl space-y-5">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-amber-600/20 text-amber-400 border border-amber-500/30">
+                    <UserCheck className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Users Backup Vault Operations</h3>
+                    <p className="text-xs text-slate-400">Synchronize and safeguard user profiles in the off-site Firestore vault.</p>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white">User Accounts Synchronization</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      firebaseStatus?.inSync ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-amber-950 text-amber-300 border border-amber-800'
+                    }`}>
+                      {firebaseStatus?.inSync ? 'Parity Confirmed' : 'Reconciliation Needed'}
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Executing a backup reads all registered accounts and profiles from the primary database and writes them into the isolated Firebase <code className="text-amber-300 font-mono">users</code> collection.
+                  </p>
+
+                  <div className="flex items-center gap-3 pt-1">
+                    <button
+                      onClick={backupUsersToFirebase}
+                      disabled={firebaseBackingUpUsers}
+                      className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-600/20 transition disabled:opacity-50"
+                    >
+                      <HardDrive className={`w-3.5 h-3.5 ${firebaseBackingUpUsers ? 'animate-spin' : ''}`} />
+                      {firebaseBackingUpUsers ? 'Writing to Firebase Vault...' : 'Execute Full Users Backup'}
+                    </button>
+
+                    <button
+                      onClick={restoreUsersFromFirebase}
+                      disabled={firebaseRestoringUsers}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 border border-slate-700 transition disabled:opacity-50"
+                    >
+                      <Download className={`w-3.5 h-3.5 ${firebaseRestoringUsers ? 'animate-spin' : ''}`} />
+                      {firebaseRestoringUsers ? 'Restoring...' : 'Restore Users'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-400 flex items-center justify-between px-1">
+                  <span>Scope Constraint:</span>
+                  <span className="text-amber-300 font-semibold">User records exclusively (No errands or transactions)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Backed-up User Records Explorer */}
+            <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 shadow-xl">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-2.5">
+                  <User className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-sm font-bold text-white">Backed-up User Documents in Firebase ({firebaseBackupTotalCount})</h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 border border-slate-700">
+                    Collection: users
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <div className="relative flex-1 sm:w-64">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-500" />
+                    <input
+                      type="text"
+                      placeholder="Search users by email, name, phone..."
+                      value={firebaseBackupSearch}
+                      onChange={(e) => {
+                        setFirebaseBackupSearch(e.target.value);
+                        fetchFirebaseBackupUsers(1, e.target.value);
+                      }}
+                      className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <button
+                    onClick={() => fetchFirebaseBackupUsers(firebaseBackupPage, firebaseBackupSearch)}
+                    disabled={firebaseBackupUsersLoading}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold border border-slate-700 transition"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${firebaseBackupUsersLoading ? 'animate-spin text-amber-400' : ''}`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Users Table */}
+              <div className="overflow-x-auto rounded-2xl border border-slate-800">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800">
+                    <tr>
+                      <th className="p-3">User / Identity</th>
+                      <th className="p-3">User ID</th>
+                      <th className="p-3">Role</th>
+                      <th className="p-3">Phone</th>
+                      <th className="p-3">Wallet</th>
+                      <th className="p-3">Backup Source</th>
+                      <th className="p-3">Integrity</th>
+                      <th className="p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
+                    {firebaseBackupUsersList.length > 0 ? (
+                      firebaseBackupUsersList.map((user: any) => (
+                        <tr key={user.id} className="hover:bg-slate-800/40 transition">
+                          <td className="p-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-7 h-7 rounded-full bg-amber-600/20 text-amber-300 flex items-center justify-center font-bold text-xs border border-amber-500/30">
+                                {(user.username || user.name || user.email || 'U')[0].toUpperCase()}
+                              </div>
+                              <div>
+                                <span className="font-semibold text-white block">{user.username || user.name || 'Unnamed User'}</span>
+                                <span className="text-[11px] text-slate-400">{user.email || 'No email registered'}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono text-[11px] text-slate-300">
+                            <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 truncate block max-w-[120px]" title={user.id}>
+                              {user.id}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                              user.role === 'ADMIN' || user.is_admin || user.it_admin
+                                ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                                : user.role === 'RUNNER' || user.is_runner
+                                ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                                : 'bg-indigo-950 text-indigo-300 border border-indigo-800'
+                            }`}>
+                              {user.role || (user.is_runner ? 'RUNNER' : 'REQUESTER')}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-300 font-mono text-[11px]">
+                            {user.phone || '-'}
+                          </td>
+                          <td className="p-3 font-semibold text-emerald-400 font-mono">
+                            KES {Number(user.wallet_balance || user.walletBalance || 0).toLocaleString()}
+                          </td>
+                          <td className="p-3 text-slate-400 text-[11px]">
+                            <span className="px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-[10px]">
+                              {user.backup_source || 'firebase'}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 w-fit ${
+                              user.inSync
+                                ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                : 'bg-amber-950 text-amber-300 border border-amber-800'
+                            }`}>
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              {user.inSync ? 'Verified Synced' : 'Discrepancy'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => setSelectedUserDoc(user)}
+                              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold border border-slate-700 transition"
+                            >
+                              Inspect Doc
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={8} className="p-8 text-center text-slate-500">
+                          {firebaseBackupUsersLoading ? 'Querying Firebase user backup documents...' : 'No backed-up user records found in Firebase users collection.'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {firebaseBackupTotalPages > 1 && (
+                <div className="flex items-center justify-between text-xs text-slate-400 pt-2">
+                  <span>Page {firebaseBackupPage} of {firebaseBackupTotalPages} ({firebaseBackupTotalCount} users)</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => fetchFirebaseBackupUsers(Math.max(1, firebaseBackupPage - 1), firebaseBackupSearch)}
+                      disabled={firebaseBackupPage <= 1 || firebaseBackupUsersLoading}
+                      className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => fetchFirebaseBackupUsers(Math.min(firebaseBackupTotalPages, firebaseBackupPage + 1), firebaseBackupSearch)}
+                      disabled={firebaseBackupPage >= firebaseBackupTotalPages || firebaseBackupUsersLoading}
+                      className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 9: MULTI-DB TABLES & DATA EXPLORER (LOCAL, POSTGRES, SUPABASE, FIREBASE) */}
+        {activeTab === 'explorer' && (
+          <div className="space-y-6">
+            {/* Header Banner */}
+            <div className="p-6 bg-slate-900 border border-slate-800 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xl">
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                    <Layers className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h2 className="text-xl font-black text-white tracking-tight">Multi-DB Tables & Data Explorer</h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-cyan-950 text-cyan-300 border border-cyan-800">
+                        4 Systems Linked
+                      </span>
+                    </div>
+                    <p className="text-slate-400 text-xs mt-1">
+                      Check table schemas, counts, and live records across Local JSON, Local PostgreSQL, Supabase Cloud PG, and Firebase Firestore.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
+                <button
+                  onClick={() => {
+                    fetchExplorerTables();
+                    fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, explorerSearch);
+                  }}
+                  disabled={explorerLoadingData}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-indigo-600/20 transition disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${explorerLoadingData ? 'animate-spin' : ''}`} />
+                  Refresh Table Data
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Data Source Selectors */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Source 1: Local JSON */}
+              <button
+                onClick={() => {
+                  setExplorerSource('local_json');
+                  fetchExplorerData('local_json', explorerTable, 1, explorerPageSize, explorerSearch);
+                }}
+                className={`p-4 rounded-2xl border text-left transition relative overflow-hidden ${
+                  explorerSource === 'local_json'
+                    ? 'bg-slate-800/90 border-indigo-500 ring-2 ring-indigo-500/30'
+                    : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <FileJson className="w-4 h-4 text-emerald-400" /> Local JSON Store
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono truncate">local_db.json (Instant)</div>
+                <div className="mt-3 flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Total Records:</span>
+                  <span className="font-bold text-white font-mono">
+                    {explorerTablesData?.sources?.local_json?.totalRecords?.toLocaleString() ?? 0}
+                  </span>
+                </div>
+              </button>
+
+              {/* Source 2: Local PostgreSQL */}
+              <button
+                onClick={() => {
+                  setExplorerSource('local_pg');
+                  fetchExplorerData('local_pg', explorerTable, 1, explorerPageSize, explorerSearch);
+                }}
+                className={`p-4 rounded-2xl border text-left transition relative overflow-hidden ${
+                  explorerSource === 'local_pg'
+                    ? 'bg-slate-800/90 border-amber-500 ring-2 ring-amber-500/30'
+                    : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Server className="w-4 h-4 text-amber-400" /> Local PostgreSQL
+                  </span>
+                  <span className={`w-2 h-2 rounded-full ${explorerTablesData?.sources?.local_pg?.available ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono truncate">Fallback_Errandly (127.0.0.1)</div>
+                <div className="mt-3 flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Total Records:</span>
+                  <span className="font-bold text-white font-mono">
+                    {explorerTablesData?.sources?.local_pg?.available 
+                      ? (explorerTablesData?.sources?.local_pg?.totalRecords?.toLocaleString() ?? 0)
+                      : 'Standby / Offline'}
+                  </span>
+                </div>
+              </button>
+
+              {/* Source 3: Supabase Cloud PG */}
+              <button
+                onClick={() => {
+                  setExplorerSource('supabase');
+                  fetchExplorerData('supabase', explorerTable, 1, explorerPageSize, explorerSearch);
+                }}
+                className={`p-4 rounded-2xl border text-left transition relative overflow-hidden ${
+                  explorerSource === 'supabase'
+                    ? 'bg-slate-800/90 border-emerald-500 ring-2 ring-emerald-500/30'
+                    : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Database className="w-4 h-4 text-emerald-400" /> Supabase Cloud PG
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono truncate">Primary Cloud Postgres</div>
+                <div className="mt-3 flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Total Records:</span>
+                  <span className="font-bold text-white font-mono">
+                    {explorerTablesData?.sources?.supabase?.totalRecords?.toLocaleString() ?? 0}
+                  </span>
+                </div>
+              </button>
+
+              {/* Source 4: Firebase Firestore */}
+              <button
+                onClick={() => {
+                  setExplorerSource('firebase');
+                  fetchExplorerData('firebase', explorerTable, 1, explorerPageSize, explorerSearch);
+                }}
+                className={`p-4 rounded-2xl border text-left transition relative overflow-hidden ${
+                  explorerSource === 'firebase'
+                    ? 'bg-slate-800/90 border-amber-500 ring-2 ring-amber-500/30'
+                    : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Flame className="w-4 h-4 text-amber-400" /> Firebase Firestore
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                </div>
+                <div className="text-[11px] text-slate-400 font-mono truncate">Firestore Cloud DB</div>
+                <div className="mt-3 flex items-center justify-between text-xs">
+                  <span className="text-slate-400">Total Records:</span>
+                  <span className="font-bold text-white font-mono">
+                    {explorerTablesData?.sources?.firebase?.totalRecords?.toLocaleString() ?? 0}
+                  </span>
+                </div>
+              </button>
+            </div>
+
+            {/* Table Selection Pills */}
+            <div className="p-4 bg-slate-900 border border-slate-800 rounded-3xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Table className="w-4 h-4 text-cyan-400" /> Select Database Table / Collection
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  Active Source: <strong className="text-white capitalize">{explorerSource.replace('_', ' ')}</strong>
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {(explorerTablesData?.tableList || ['profiles', 'errands', 'runner_applications', 'bids', 'notifications', 'reviews', 'errand_chats', 'support_messages', 'transactions', 'wallets', 'settings', 'categories', 'saved_places', 'featured_services', 'service_listings', 'otp_codes']).map((tbl: string) => {
+                  const countInSource = explorerTablesData?.sources?.[explorerSource]?.counts?.[tbl] ?? 0;
+                  return (
+                    <button
+                      key={tbl}
+                      onClick={() => {
+                        setExplorerTable(tbl);
+                        fetchExplorerData(explorerSource, tbl, 1, explorerPageSize, explorerSearch);
+                      }}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                        explorerTable === tbl
+                          ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/30'
+                          : 'bg-slate-950 text-slate-300 border border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <span>{tbl}</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                        explorerTable === tbl ? 'bg-cyan-900 text-cyan-100' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {countInSource}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Cross-Source Count Comparison Bar for Active Table */}
+            <div className="p-4 bg-slate-900/90 border border-slate-800 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-400">Table <code className="text-cyan-300 font-mono text-xs">{explorerTable}</code> Parity Check:</span>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap text-xs">
+                <div className="px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+                  <span className="text-slate-400">Local JSON:</span>
+                  <span className="font-bold font-mono text-emerald-400">{explorerTablesData?.sources?.local_json?.counts?.[explorerTable] ?? 0}</span>
+                </div>
+                <div className="px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+                  <span className="text-slate-400">Local PG:</span>
+                  <span className="font-bold font-mono text-amber-400">{explorerTablesData?.sources?.local_pg?.counts?.[explorerTable] ?? 0}</span>
+                </div>
+                <div className="px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+                  <span className="text-slate-400">Supabase Cloud:</span>
+                  <span className="font-bold font-mono text-cyan-400">{explorerTablesData?.sources?.supabase?.counts?.[explorerTable] ?? 0}</span>
+                </div>
+                <div className="px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1.5">
+                  <span className="text-slate-400">Firebase Firestore:</span>
+                  <span className="font-bold font-mono text-amber-300">{explorerTablesData?.sources?.firebase?.counts?.[explorerTable] ?? 0}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Search, Filter & Actions Toolbar */}
+            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center gap-2.5 w-full md:w-auto flex-1">
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder={`Search within table '${explorerTable}'...`}
+                    value={explorerSearch}
+                    onChange={(e) => {
+                      setExplorerSearch(e.target.value);
+                      fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, e.target.value);
+                    }}
+                    className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                  <button
+                    onClick={() => setExplorerViewMode('table')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${
+                      explorerViewMode === 'table' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Table Grid
+                  </button>
+                  <button
+                    onClick={() => setExplorerViewMode('json')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${
+                      explorerViewMode === 'json' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Raw JSON
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 text-xs text-slate-400 w-full md:w-auto justify-between md:justify-end">
+                {explorerExecutionTime !== null && (
+                  <span className="font-mono text-[11px] text-slate-500">Queried in {explorerExecutionTime}ms</span>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <span>Rows:</span>
+                  <select
+                    value={explorerPageSize}
+                    onChange={(e) => {
+                      const newSize = parseInt(e.target.value);
+                      setExplorerPageSize(newSize);
+                      fetchExplorerData(explorerSource, explorerTable, 1, newSize, explorerSearch);
+                    }}
+                    className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none"
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={() => {
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(explorerRows, null, 2));
+                    const downloadAnchor = document.createElement('a');
+                    downloadAnchor.setAttribute("href", dataStr);
+                    downloadAnchor.setAttribute("download", `${explorerSource}_${explorerTable}_data.json`);
+                    document.body.appendChild(downloadAnchor);
+                    downloadAnchor.click();
+                    downloadAnchor.remove();
+                  }}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold flex items-center gap-1.5 border border-slate-700 transition"
+                  title="Download current table records as JSON"
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
+                  Export JSON
+                </button>
+              </div>
+            </div>
+
+            {/* Data Content: Table Grid or Raw JSON */}
+            {explorerViewMode === 'table' ? (
+              <div className="p-4 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 shadow-xl">
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 max-h-[600px] overflow-y-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] tracking-wider sticky top-0 z-10 border-b border-slate-800">
+                      <tr>
+                        <th className="p-3 w-12 text-center">#</th>
+                        {explorerFields.slice(0, 10).map((f) => (
+                          <th key={f} className="p-3 font-semibold text-slate-300">
+                            {f}
+                          </th>
+                        ))}
+                        <th className="p-3 text-right">Inspect</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
+                      {explorerRows.length > 0 ? (
+                        explorerRows.map((row: any, idx: number) => (
+                          <tr key={row.id || idx} className="hover:bg-slate-800/40 transition">
+                            <td className="p-3 text-center text-slate-500 font-mono text-[10px]">
+                              {(explorerPage - 1) * explorerPageSize + idx + 1}
+                            </td>
+                            {explorerFields.slice(0, 10).map((f) => {
+                              const val = row[f];
+                              let displayVal: any = '-';
+                              if (val === true) {
+                                displayVal = <span className="text-emerald-400 font-bold">true</span>;
+                              } else if (val === false) {
+                                displayVal = <span className="text-rose-400 font-bold">false</span>;
+                              } else if (val === null || val === undefined) {
+                                displayVal = <span className="text-slate-600 italic">null</span>;
+                              } else if (typeof val === 'object') {
+                                displayVal = (
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-950 text-[10px] font-mono text-cyan-300 border border-slate-800">
+                                    {Array.isArray(val) ? `[Array: ${val.length}]` : '{Object}'}
+                                  </span>
+                                );
+                              } else {
+                                displayVal = String(val);
+                              }
+
+                              return (
+                                <td key={f} className="p-3 text-slate-300 font-mono text-[11px] max-w-[200px] truncate" title={String(val)}>
+                                  {displayVal}
+                                </td>
+                              );
+                            })}
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={() => setSelectedRowDoc(row)}
+                                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold border border-slate-700 transition"
+                              >
+                                View Row
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={explorerFields.slice(0, 10).length + 2} className="p-8 text-center text-slate-500">
+                            {explorerLoadingData ? 'Loading records from data source...' : `No records found in table '${explorerTable}' for source '${explorerSource}'.`}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pagination Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400 pt-2">
+                  <span>
+                    Showing {explorerRows.length > 0 ? (explorerPage - 1) * explorerPageSize + 1 : 0} to{' '}
+                    {Math.min(explorerPage * explorerPageSize, explorerTotalCount)} of {explorerTotalCount} records
+                  </span>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => fetchExplorerData(explorerSource, explorerTable, Math.max(1, explorerPage - 1), explorerPageSize, explorerSearch)}
+                      disabled={explorerPage <= 1 || explorerLoadingData}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl disabled:opacity-40 font-bold transition flex items-center gap-1"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" /> Previous
+                    </button>
+                    <span className="px-3 py-1 bg-slate-950 rounded-xl border border-slate-800 text-white font-bold">
+                      {explorerPage} / {explorerTotalPages}
+                    </span>
+                    <button
+                      onClick={() => fetchExplorerData(explorerSource, explorerTable, Math.min(explorerTotalPages, explorerPage + 1), explorerPageSize, explorerSearch)}
+                      disabled={explorerPage >= explorerTotalPages || explorerLoadingData}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl disabled:opacity-40 font-bold transition flex items-center gap-1"
+                    >
+                      Next <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-slate-900 border border-slate-800 rounded-3xl space-y-4 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-300">Raw JSON Representation ({explorerRows.length} rows)</span>
+                  <button
+                    onClick={() => copyToClipboard(JSON.stringify(explorerRows, null, 2), 'explorer_raw_json')}
+                    className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold flex items-center gap-1.5"
+                  >
+                    {copiedKey === 'explorer_raw_json' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedKey === 'explorer_raw_json' ? 'Copied' : 'Copy JSON'}
+                  </button>
+                </div>
+                <pre className="p-4 bg-slate-950 rounded-2xl border border-slate-800 font-mono text-xs text-slate-300 overflow-x-auto max-h-[550px] leading-relaxed">
+                  {JSON.stringify(explorerRows, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* MODAL: User Document JSON Inspector */}
+        {selectedUserDoc && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Flame className="w-5 h-5 text-amber-400" />
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Firebase Vault Document: users/{selectedUserDoc.id}</h3>
+                    <span className="text-[11px] text-slate-400 font-mono">{selectedUserDoc.email || 'No email registered'}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedUserDoc(null)}
+                  className="p-1 text-slate-400 hover:text-white rounded-lg"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto flex-1 font-mono text-xs">
+                <pre className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-slate-200 overflow-x-auto leading-relaxed">
+                  {JSON.stringify(selectedUserDoc, null, 2)}
+                </pre>
+              </div>
+
+              <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+                <span className="text-xs text-amber-300">Isolated to users collection only</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => copyToClipboard(JSON.stringify(selectedUserDoc, null, 2), 'modal_user_doc')}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition"
+                  >
+                    {copiedKey === 'modal_user_doc' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    {copiedKey === 'modal_user_doc' ? 'Copied' : 'Copy JSON'}
+                  </button>
+                  <button
+                    onClick={() => setSelectedUserDoc(null)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: Data Table Row JSON Inspector */}
+        {selectedRowDoc && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <Table className="w-5 h-5 text-cyan-400" />
+                  <div>
+                    <h3 className="text-sm font-bold text-white">Record Details ({explorerSource}/{explorerTable})</h3>
+                    <span className="text-[11px] text-slate-400 font-mono">Row ID: {selectedRowDoc.id || 'N/A'}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedRowDoc(null)}
+                  className="p-1 text-slate-400 hover:text-white rounded-lg"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-5 overflow-y-auto flex-1 font-mono text-xs">
+                <pre className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-slate-200 overflow-x-auto leading-relaxed">
+                  {JSON.stringify(selectedRowDoc, null, 2)}
+                </pre>
+              </div>
+
+              <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+                <span className="text-xs text-slate-400">Queried from {explorerSource}</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => copyToClipboard(JSON.stringify(selectedRowDoc, null, 2), 'modal_row_doc')}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 transition"
+                  >
+                    {copiedKey === 'modal_row_doc' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                    {copiedKey === 'modal_row_doc' ? 'Copied' : 'Copy JSON'}
+                  </button>
+                  <button
+                    onClick={() => setSelectedRowDoc(null)}
+                    className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             </div>
           </div>

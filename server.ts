@@ -1657,6 +1657,186 @@ async function executeLocalDbOperation(tableName: string, chainCalls: Array<{ me
 // MULTI-DATABASE SYNCHRONIZATION & AUTOMATIC MISMATCH HEALING ENGINE
 // =========================================================================
 
+// Firebase Configuration & Firestore Sync Helpers
+const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+let firebaseConfig: any = null;
+try {
+  if (fs.existsSync(firebaseConfigPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+  }
+} catch (e) {
+  console.warn("Could not load firebase-applet-config.json:", e);
+}
+
+let activeFirestoreDatabaseId = '(default)';
+let firestoreDbChecked = false;
+
+async function getActiveFirestoreDbId(): Promise<string> {
+  if (firestoreDbChecked) return activeFirestoreDatabaseId;
+  if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return '(default)';
+  const configured = firebaseConfig.firestoreDatabaseId;
+  if (configured && configured !== '(default)') {
+    try {
+      const testUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(configured)}/documents/settings?key=${firebaseConfig.apiKey}`;
+      const testRes = await axios.get(testUrl, { timeout: 3000 });
+      if (testRes.status === 200) {
+        activeFirestoreDatabaseId = configured;
+        firestoreDbChecked = true;
+        return activeFirestoreDatabaseId;
+      }
+    } catch (e) {
+      // fallback to (default)
+    }
+  }
+  activeFirestoreDatabaseId = '(default)';
+  firestoreDbChecked = true;
+  return activeFirestoreDatabaseId;
+}
+
+function firebaseCollectionForTable(tableName: string): string {
+  if (tableName === 'profiles' || tableName === 'users') return 'users';
+  return tableName;
+}
+
+function jsToFirestoreValue(val: any): any {
+  if (val === null || val === undefined) return { nullValue: null };
+  if (typeof val === 'boolean') return { booleanValue: val };
+  if (typeof val === 'number') {
+    return Number.isInteger(val) ? { integerValue: String(val) } : { doubleValue: val };
+  }
+  if (typeof val === 'string') return { stringValue: val };
+  if (Array.isArray(val)) {
+    return { arrayValue: { values: val.map(jsToFirestoreValue) } };
+  }
+  if (typeof val === 'object') {
+    return { mapValue: { fields: jsToFirestoreFields(val) } };
+  }
+  return { stringValue: String(val) };
+}
+
+function jsToFirestoreFields(obj: Record<string, any>): Record<string, any> {
+  const fields: Record<string, any> = {};
+  if (!obj || typeof obj !== 'object') return fields;
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) continue;
+    fields[k] = jsToFirestoreValue(v);
+  }
+  return fields;
+}
+
+function firestoreValueToJs(val: any): any {
+  if (!val || typeof val !== 'object') return null;
+  if ('stringValue' in val) return val.stringValue;
+  if ('integerValue' in val) return parseInt(val.integerValue, 10);
+  if ('doubleValue' in val) return val.doubleValue;
+  if ('booleanValue' in val) return val.booleanValue;
+  if ('nullValue' in val) return null;
+  if ('timestampValue' in val) return val.timestampValue;
+  if ('arrayValue' in val) {
+    return (val.arrayValue.values || []).map(firestoreValueToJs);
+  }
+  if ('mapValue' in val) {
+    return firestoreFieldsToJs(val.mapValue.fields || {});
+  }
+  return null;
+}
+
+function firestoreFieldsToJs(fields: Record<string, any>): Record<string, any> {
+  const obj: Record<string, any> = {};
+  if (!fields) return obj;
+  for (const [k, v] of Object.entries(fields)) {
+    obj[k] = firestoreValueToJs(v);
+  }
+  return obj;
+}
+
+async function fetchAllRowsFromFirestore(tableName: string): Promise<any[]> {
+  if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return [];
+  try {
+    const dbId = await getActiveFirestoreDbId();
+    const col = firebaseCollectionForTable(tableName);
+    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(col)}?pageSize=300&key=${firebaseConfig.apiKey}`;
+    const res = await axios.get(url, { timeout: 6000 });
+    const docs = res.data?.documents || [];
+    return docs.map((d: any) => {
+      const item = firestoreFieldsToJs(d.fields || {});
+      const docId = d.name ? d.name.split('/').pop() : item.id;
+      if (!item.id && docId) item.id = docId;
+      return convertToSupabaseRow(item);
+    });
+  } catch (err: any) {
+    return [];
+  }
+}
+
+async function upsertFirestoreRecord(tableName: string, docId: string, record: any): Promise<boolean> {
+  if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey || !docId) return false;
+  try {
+    const dbId = await getActiveFirestoreDbId();
+    const col = firebaseCollectionForTable(tableName);
+    const cleanData = { ...record };
+    if (!cleanData.id) cleanData.id = docId;
+    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(col)}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+    const payload = { fields: jsToFirestoreFields(cleanData) };
+    await axios.patch(url, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 6000
+    });
+    return true;
+  } catch (err: any) {
+    console.warn(`[Firestore Sync Upsert Notice] ${tableName}/${docId}:`, err?.message);
+    return false;
+  }
+}
+
+async function deleteFirestoreRecord(tableName: string, docId: string): Promise<boolean> {
+  if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey || !docId) return false;
+  try {
+    const dbId = await getActiveFirestoreDbId();
+    const col = firebaseCollectionForTable(tableName);
+    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(col)}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+    await axios.delete(url, { timeout: 6000 });
+    return true;
+  } catch (err: any) {
+    console.warn(`[Firestore Sync Delete Notice] ${tableName}/${docId}:`, err?.message);
+    return false;
+  }
+}
+
+async function mirrorWriteToFirestore(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
+  if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return;
+  try {
+    const insertCall = chainCalls.find(c => c.method === 'insert' || c.method === 'upsert');
+    const updateCall = chainCalls.find(c => c.method === 'update');
+    const deleteCall = chainCalls.find(c => c.method === 'delete');
+
+    if (insertCall && insertCall.args[0]) {
+      const rows = Array.isArray(insertCall.args[0]) ? insertCall.args[0] : [insertCall.args[0]];
+      for (const row of rows) {
+        const id = row.id || row.userId || row.uid || row.settingId;
+        if (id) {
+          await upsertFirestoreRecord(tableName, String(id), row);
+        }
+      }
+    } else if (updateCall && updateCall.args[0]) {
+      const updates = updateCall.args[0];
+      const eqCall = chainCalls.find(c => c.method === 'eq');
+      const targetId = eqCall ? eqCall.args[1] : (updates.id || updates.userId);
+      if (targetId) {
+        await upsertFirestoreRecord(tableName, String(targetId), updates);
+      }
+    } else if (deleteCall) {
+      const eqCall = chainCalls.find(c => c.method === 'eq');
+      const targetId = eqCall ? eqCall.args[1] : null;
+      if (targetId) {
+        await deleteFirestoreRecord(tableName, String(targetId));
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[Firestore Mirror Exception on '${tableName}']:`, err?.message);
+  }
+}
+
 const KNOWN_SYNC_TABLES = [
   'profiles',
   'errands',
@@ -1704,7 +1884,7 @@ function addSyncAuditLog(table: string, action: string, recordsCount: number, st
   }
 }
 
-async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{ method: string, args: any[] }>, sourceUsed: 'primary' | 'local_pg' | 'json') {
+async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{ method: string, args: any[] }>, sourceUsed: 'primary' | 'local_pg' | 'json' | 'firebase') {
   try {
     if (sourceUsed === 'primary') {
       if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
@@ -1715,6 +1895,9 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
       });
+      mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
+        console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
+      });
     } else if (sourceUsed === 'local_pg') {
       if (primaryPgPool && primaryPgConnected && primaryPgPool !== localPgPool) {
         executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
@@ -1723,6 +1906,9 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
       }
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
+      });
+      mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
+        console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
       });
     } else if (sourceUsed === 'json') {
       if (primaryPgPool && primaryPgConnected) {
@@ -1735,6 +1921,23 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
           console.warn(`[Sync Mirror] Notice mirroring write to Local PG from JSON on '${tableName}':`, err.message);
         });
       }
+      mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
+        console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
+      });
+    } else if (sourceUsed === 'firebase') {
+      if (primaryPgPool && primaryPgConnected) {
+        executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
+          console.warn(`[Sync Mirror] Notice mirroring write to Primary PG from Firebase on '${tableName}':`, err.message);
+        });
+      }
+      if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
+        executePostgresOperation(localPgPool, tableName, chainCalls).catch(err => {
+          console.warn(`[Sync Mirror] Notice mirroring write to Local PG from Firebase on '${tableName}':`, err.message);
+        });
+      }
+      executeLocalDbOperation(tableName, chainCalls).catch(err => {
+        console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
+      });
     }
   } catch (err: any) {
     console.warn(`[Sync Mirror Exception on '${tableName}']:`, err?.message);
@@ -1744,7 +1947,8 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
 async function fetchAllRowsFromPg(pool: any, tableName: string): Promise<any[]> {
   if (!pool) return [];
   try {
-    const res = await pool.query(`SELECT * FROM public."${tableName}"`);
+    const pgTable = tableName === 'users' ? 'profiles' : tableName;
+    const res = await pool.query(`SELECT * FROM public."${pgTable}"`);
     return (res.rows || []).map(convertToSupabaseRow);
   } catch (err: any) {
     return [];
@@ -1753,8 +1957,47 @@ async function fetchAllRowsFromPg(pool: any, tableName: string): Promise<any[]> 
 
 function fetchAllRowsFromJson(tableName: string): any[] {
   const db = loadLocalDb();
-  const rows = db[tableName] || [];
+  let rows = db[tableName] || [];
+  if (rows.length === 0 && tableName === 'users' && Array.isArray(db['profiles'])) {
+    rows = db['profiles'];
+  }
   return rows.map(convertToSupabaseRow);
+}
+
+async function upsertPgRecord(targetPool: any, tableName: string, record: any): Promise<boolean> {
+  if (!targetPool || !record) return false;
+  try {
+    const pgTable = tableName === 'users' ? 'profiles' : tableName;
+    const keys: string[] = [];
+    const vals: any[] = [];
+    const placeholders: string[] = [];
+    let idx = 1;
+    for (const [k, v] of Object.entries(record)) {
+      if (k === 'backup_source' || k === 'backup_synced_at') continue;
+      const col = camelToSnake(k);
+      keys.push(col);
+      vals.push(typeof v === 'object' && v !== null ? JSON.stringify(v) : v);
+      placeholders.push(`$${idx++}`);
+    }
+    if (keys.length === 0) return false;
+    const conflictCol = "id";
+    const updateSet = keys
+      .filter(k => k !== conflictCol)
+      .map(k => `"${k}" = EXCLUDED."${k}"`)
+      .join(", ");
+    const subQuery = `
+      INSERT INTO public."${pgTable}" (${keys.map(k => `"${k}"`).join(", ")})
+      VALUES (${placeholders.join(", ")})
+      ON CONFLICT (${conflictCol})
+      DO UPDATE SET ${updateSet || `"${conflictCol}" = EXCLUDED."${conflictCol}"`}
+      RETURNING *
+    `;
+    await targetPool.query(subQuery, vals);
+    return true;
+  } catch (err: any) {
+    console.warn(`[Upsert PG Record Error] on ${tableName}:`, err?.message);
+    return false;
+  }
 }
 
 interface TableSyncResult {
@@ -1762,6 +2005,7 @@ interface TableSyncResult {
   primaryCount: number;
   localCount: number;
   jsonCount: number;
+  firestoreCount: number;
   inSync: boolean;
   mismatchesDetected: number;
   recordsReconciled: number;
@@ -1818,10 +2062,11 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
 
   for (const tableName of Array.from(tablesToScan)) {
     try {
-      const [primaryRows, localPgRows, jsonRows] = await Promise.all([
+      const [primaryRows, localPgRows, jsonRows, firestoreRows] = await Promise.all([
         isPrimaryOnline ? fetchAllRowsFromPg(primaryPgPool, tableName) : Promise.resolve([]),
         isLocalPgOnline ? fetchAllRowsFromPg(localPgPool, tableName) : Promise.resolve([]),
-        Promise.resolve(fetchAllRowsFromJson(tableName))
+        Promise.resolve(fetchAllRowsFromJson(tableName)),
+        fetchAllRowsFromFirestore(tableName)
       ]);
 
       const primaryMap = new Map<string, any>();
@@ -1833,10 +2078,14 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
       const jsonMap = new Map<string, any>();
       jsonRows.forEach(r => { if (r && (r.id || r.id === 0)) jsonMap.set(String(r.id), r); });
 
+      const firestoreMap = new Map<string, any>();
+      firestoreRows.forEach(r => { if (r && (r.id || r.id === 0)) firestoreMap.set(String(r.id), r); });
+
       const allIds = new Set<string>([
         ...primaryMap.keys(),
         ...localPgMap.keys(),
-        ...jsonMap.keys()
+        ...jsonMap.keys(),
+        ...firestoreMap.keys()
       ]);
 
       let tableMismatches = 0;
@@ -1846,12 +2095,14 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
         const inPrimary = primaryMap.has(id);
         const inLocalPg = localPgMap.has(id);
         const inJson = jsonMap.has(id);
+        const inFirestore = firestoreMap.has(id);
 
         const recPrimary = primaryMap.get(id);
         const recLocalPg = localPgMap.get(id);
         const recJson = jsonMap.get(id);
+        const recFirestore = firestoreMap.get(id);
 
-        const candidates = [recPrimary, recLocalPg, recJson].filter(Boolean);
+        const candidates = [recPrimary, recLocalPg, recJson, recFirestore].filter(Boolean);
         if (candidates.length === 0) continue;
 
         let bestRecord = candidates[0];
@@ -1909,12 +2160,22 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
           }
         }
 
+        // Special handling for settings: preserve logos, UI scale, and active configs
+        if (tableName === 'settings') {
+          for (const cand of candidates) {
+            if (cand.logo_url && !bestRecord.logo_url) bestRecord.logo_url = cand.logo_url;
+            if (cand.icon_url && !bestRecord.icon_url) bestRecord.icon_url = cand.icon_url;
+            if (cand.dashboard_hero_url && !bestRecord.dashboard_hero_url) bestRecord.dashboard_hero_url = cand.dashboard_hero_url;
+          }
+        }
+
         // Check if missing or outdated across available tiers
         const primaryNeedsSync = isPrimaryOnline && (!inPrimary || (inPrimary && recPrimary.updated_at && bestRecord.updated_at && new Date(recPrimary.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
         const localPgNeedsSync = isLocalPgOnline && (!inLocalPg || (inLocalPg && recLocalPg.updated_at && bestRecord.updated_at && new Date(recLocalPg.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
         const jsonNeedsSync = !inJson || (inJson && recJson.updated_at && bestRecord.updated_at && new Date(recJson.updated_at).getTime() < new Date(bestRecord.updated_at).getTime());
+        const firestoreNeedsSync = !inFirestore || (inFirestore && recFirestore.updated_at && bestRecord.updated_at && new Date(recFirestore.updated_at).getTime() < new Date(bestRecord.updated_at).getTime());
 
-        if (primaryNeedsSync || localPgNeedsSync || jsonNeedsSync) {
+        if (primaryNeedsSync || localPgNeedsSync || jsonNeedsSync || firestoreNeedsSync) {
           tableMismatches++;
 
           if (autoHeal) {
@@ -1928,6 +2189,9 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
             if (jsonNeedsSync) {
               syncPromises.push(executeLocalDbOperation(tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal JSON] ${tableName}/${id}:`, e.message)));
             }
+            if (firestoreNeedsSync) {
+              syncPromises.push(upsertFirestoreRecord(tableName, String(id), bestRecord).catch(e => console.warn(`[Sync AutoHeal Firestore] ${tableName}/${id}:`, e.message)));
+            }
             await Promise.allSettled(syncPromises);
             tableReconciled++;
           }
@@ -1940,7 +2204,8 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
       const activeCounts = [
         isPrimaryOnline ? primaryRows.length : null,
         isLocalPgOnline ? localPgRows.length : null,
-        jsonRows.length
+        jsonRows.length,
+        firestoreRows.length
       ].filter(c => c !== null) as number[];
 
       const allCountsMatch = activeCounts.every(c => c === activeCounts[0]);
@@ -1960,6 +2225,7 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
         primaryCount: isPrimaryOnline ? primaryRows.length : 0,
         localCount: isLocalPgOnline ? localPgRows.length : 0,
         jsonCount: jsonRows.length,
+        firestoreCount: firestoreRows.length,
         inSync,
         mismatchesDetected: tableMismatches,
         recordsReconciled: tableReconciled,
@@ -1974,7 +2240,7 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
           'AUTO_RECONCILE',
           tableReconciled,
           'success',
-          `Reconciled ${tableReconciled} record(s) across Primary PG (${primaryRows.length}), Local PG (${localPgRows.length}), and JSON (${jsonRows.length}).`
+          `Reconciled ${tableReconciled} record(s) across Primary PG (${primaryRows.length}), Local PG (${localPgRows.length}), JSON (${jsonRows.length}), and Firestore (${firestoreRows.length}).`
         );
       }
     } catch (tblErr: any) {
@@ -2020,6 +2286,12 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
       json: {
         active: true,
         totalRecords: tableResults.reduce((acc, t) => acc + t.jsonCount, 0)
+      },
+      firebase: {
+        active: !!(firebaseConfig && firebaseConfig.projectId),
+        projectId: firebaseConfig?.projectId || null,
+        databaseId: activeFirestoreDatabaseId,
+        totalRecords: tableResults.reduce((acc, t) => acc + (t.firestoreCount || 0), 0)
       }
     }
   };
@@ -2053,16 +2325,6 @@ const getFetch = () => {
 };
 
 // Initialize Firebase Admin
-const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-let firebaseConfig: any = null;
-try {
-  if (fs.existsSync(configPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  }
-} catch (e) {
-  console.warn("Could not load firebase-applet-config.json:", e);
-}
-
 if (!admin.apps.length) {
   try {
     if (firebaseConfig && firebaseConfig.projectId) {
@@ -6065,6 +6327,553 @@ Please proceed with the task according to safety guidelines and update milestone
     }
     console.log(`[Admin Override] Database forced-mode setting updated. Forced: ${forceDatabaseMode}`);
     res.json({ success: true, forceDatabaseMode });
+  });
+
+  // =========================================================================
+  // CONNECTION ADMIN: FIREBASE ALTERNATE AUTH & BACKUP USERS DATA STORAGE (ONLY USER DATA)
+  // =========================================================================
+
+  app.get("/api/connectionadmin/firebase/status", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const isConfigured = !!(firebaseConfig && firebaseConfig.projectId);
+      const dbId = isConfigured ? await getActiveFirestoreDbId() : '(default)';
+      
+      const isPrimaryOnline = !!(primaryPgPool && primaryPgConnected);
+      const isLocalPgOnline = !!(localPgPool && localPgConnected);
+
+      const [primaryUsers, localPgUsers, jsonUsers, firestoreUsers] = await Promise.all([
+        isPrimaryOnline ? fetchAllRowsFromPg(primaryPgPool, 'profiles') : Promise.resolve([]),
+        isLocalPgOnline ? fetchAllRowsFromPg(localPgPool, 'profiles') : Promise.resolve([]),
+        Promise.resolve(fetchAllRowsFromJson('profiles')),
+        isConfigured ? fetchAllRowsFromFirestore('users') : Promise.resolve([])
+      ]);
+
+      const primaryCount = primaryUsers.length;
+      const localPgCount = localPgUsers.length;
+      const jsonCount = jsonUsers.length;
+      const firestoreCount = firestoreUsers.length;
+
+      const baselineUsers = primaryCount > 0 ? primaryUsers : jsonUsers;
+      const firestoreUserMap = new Map<string, any>();
+      firestoreUsers.forEach(u => { if (u && (u.id || u.id === 0)) firestoreUserMap.set(String(u.id), u); });
+
+      let mismatches = 0;
+      for (const u of baselineUsers) {
+        if (!firestoreUserMap.has(String(u.id))) {
+          mismatches++;
+        }
+      }
+      const inSync = mismatches === 0 && (baselineUsers.length === firestoreUsers.length || baselineUsers.length === 0);
+
+      res.json({
+        success: true,
+        configured: isConfigured,
+        projectId: firebaseConfig?.projectId || null,
+        appId: firebaseConfig?.appId || null,
+        authDomain: firebaseConfig?.authDomain || (firebaseConfig?.projectId ? `${firebaseConfig.projectId}.firebaseapp.com` : null),
+        firestoreDatabaseId: dbId,
+        storageBucket: firebaseConfig?.storageBucket || null,
+        apiKeyPresent: !!firebaseConfig?.apiKey,
+        alternateAuthEnabled: appConfig.firebase?.alternateAuthEnabled ?? true,
+        autoMirrorUsersEnabled: appConfig.firebase?.autoMirrorUsersEnabled ?? true,
+        lastUserBackupAt: appConfig.firebase?.lastUserBackupAt || null,
+        counts: {
+          primaryUsersCount: primaryCount,
+          localPgUsersCount: localPgCount,
+          jsonUsersCount: jsonCount,
+          firestoreUsersCount: firestoreCount
+        },
+        inSync,
+        mismatchesCount: mismatches,
+        scopeRule: "Strict Isolation: This backup storage and authentication panel exclusively handles user profile credentials and user account records (profiles / users collection). No errands, financial bids, or private chats are stored here."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/connectionadmin/firebase/auth/toggle", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const { alternateAuthEnabled, autoMirrorUsersEnabled } = req.body;
+      if (!appConfig.firebase) appConfig.firebase = {};
+      if (typeof alternateAuthEnabled === 'boolean') {
+        appConfig.firebase.alternateAuthEnabled = alternateAuthEnabled;
+      }
+      if (typeof autoMirrorUsersEnabled === 'boolean') {
+        appConfig.firebase.autoMirrorUsersEnabled = autoMirrorUsersEnabled;
+      }
+      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
+      res.json({
+        success: true,
+        alternateAuthEnabled: appConfig.firebase.alternateAuthEnabled,
+        autoMirrorUsersEnabled: appConfig.firebase.autoMirrorUsersEnabled,
+        message: "Firebase authentication settings updated successfully."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/connectionadmin/firebase/auth/test", requireConnectionAdminAuth, async (req, res) => {
+    const t0 = Date.now();
+    try {
+      if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+        return res.json({
+          success: false,
+          error: "Firebase credentials or API Key not configured in firebase-applet-config.json",
+          latencyMs: Date.now() - t0
+        });
+      }
+
+      const testUrl = `https://identitytoolkit.googleapis.com/v1/projects/${firebaseConfig.projectId}/accounts?key=${firebaseConfig.apiKey}`;
+      let authHealthy = false;
+      let statusCode = 200;
+      let message = "Firebase Authentication service is operational and accepting requests.";
+      try {
+        const testRes = await axios.get(testUrl, { timeout: 4000 });
+        statusCode = testRes.status;
+        authHealthy = true;
+      } catch (axErr: any) {
+        if (axErr.response) {
+          statusCode = axErr.response.status;
+          authHealthy = statusCode < 500;
+          message = `Firebase Identity Toolkit responded with HTTP ${statusCode} (Online & responsive).`;
+        } else {
+          throw axErr;
+        }
+      }
+
+      res.json({
+        success: authHealthy,
+        latencyMs: Date.now() - t0,
+        statusCode,
+        message,
+        projectId: firebaseConfig.projectId,
+        authDomain: firebaseConfig.authDomain || `${firebaseConfig.projectId}.firebaseapp.com`,
+        supportedProviders: ['google.com', 'password', 'phone']
+      });
+    } catch (err: any) {
+      res.json({
+        success: false,
+        latencyMs: Date.now() - t0,
+        error: err.message,
+        message: "Failed to connect to Firebase Authentication service."
+      });
+    }
+  });
+
+  app.post("/api/connectionadmin/firebase/backup-users", requireConnectionAdminAuth, async (req, res) => {
+    // STRICT SCOPE: ONLY user profile data
+    const t0 = Date.now();
+    try {
+      if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+        return res.status(400).json({ success: false, error: "Firebase credentials not configured." });
+      }
+
+      const isPrimaryOnline = !!(primaryPgPool && primaryPgConnected);
+      const [primaryUsers, jsonUsers] = await Promise.all([
+        isPrimaryOnline ? fetchAllRowsFromPg(primaryPgPool, 'profiles') : Promise.resolve([]),
+        Promise.resolve(fetchAllRowsFromJson('profiles'))
+      ]);
+
+      const sourceUsers = primaryUsers.length > 0 ? primaryUsers : jsonUsers;
+      if (sourceUsers.length === 0) {
+        return res.json({
+          success: true,
+          backedUpCount: 0,
+          totalSourceUsers: 0,
+          message: "No user accounts found in primary database to backup.",
+          executionTimeMs: Date.now() - t0
+        });
+      }
+
+      let successCount = 0;
+      const backupTimestamp = new Date().toISOString();
+
+      for (const u of sourceUsers) {
+        const id = u.id || u.userId;
+        if (!id) continue;
+        const backupUserRecord = {
+          ...u,
+          backup_source: isPrimaryOnline && primaryUsers.length > 0 ? 'supabase' : 'local_json',
+          backup_synced_at: backupTimestamp
+        };
+        const ok = await upsertFirestoreRecord('users', String(id), backupUserRecord);
+        if (ok) successCount++;
+      }
+
+      if (!appConfig.firebase) appConfig.firebase = {};
+      appConfig.firebase.lastUserBackupAt = backupTimestamp;
+      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
+
+      recordSyncAudit(
+        'sync_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        'users',
+        'USER_DATA_BACKUP',
+        successCount,
+        'success',
+        `Backed up ${successCount} user account(s) to isolated Firebase users collection.`
+      );
+
+      res.json({
+        success: true,
+        backedUpCount: successCount,
+        totalSourceUsers: sourceUsers.length,
+        executionTimeMs: Date.now() - t0,
+        backupTimestamp,
+        message: `Successfully backed up ${successCount} user account(s) to Firebase.`
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, executionTimeMs: Date.now() - t0 });
+    }
+  });
+
+  app.post("/api/connectionadmin/firebase/restore-users", requireConnectionAdminAuth, async (req, res) => {
+    // STRICT SCOPE: ONLY user profile data
+    const t0 = Date.now();
+    try {
+      if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+        return res.status(400).json({ success: false, error: "Firebase credentials not configured." });
+      }
+
+      const firestoreUsers = await fetchAllRowsFromFirestore('users');
+      if (firestoreUsers.length === 0) {
+        return res.json({
+          success: true,
+          restoredCount: 0,
+          message: "No user accounts found in Firebase backup storage to restore.",
+          executionTimeMs: Date.now() - t0
+        });
+      }
+
+      let restoredCount = 0;
+      const isPrimaryOnline = !!(primaryPgPool && primaryPgConnected);
+
+      for (const u of firestoreUsers) {
+        const id = u.id || u.userId;
+        if (!id) continue;
+
+        try {
+          await executeLocalDbOperation('profiles', [{ method: 'upsert', args: [u] }]);
+          restoredCount++;
+        } catch (e: any) {
+          console.warn(`[Restore Users JSON] Failed for ${id}:`, e.message);
+        }
+
+        if (isPrimaryOnline) {
+          try {
+            await upsertPgRecord(primaryPgPool, 'profiles', u);
+          } catch (e: any) {
+            console.warn(`[Restore Users PG] Failed for ${id}:`, e.message);
+          }
+        }
+      }
+
+      recordSyncAudit(
+        'sync_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        'users',
+        'USER_DATA_RESTORE',
+        restoredCount,
+        'success',
+        `Restored ${restoredCount} user account(s) from Firebase users backup into primary/local storage.`
+      );
+
+      res.json({
+        success: true,
+        restoredCount,
+        totalBackupUsers: firestoreUsers.length,
+        executionTimeMs: Date.now() - t0,
+        message: `Successfully restored ${restoredCount} user account(s) from Firebase backup.`
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message, executionTimeMs: Date.now() - t0 });
+    }
+  });
+
+  app.get("/api/connectionadmin/firebase/users-backup", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const { search = '', page = '1', pageSize = '25' } = req.query;
+      const p = Math.max(1, parseInt(page as string) || 1);
+      const ps = Math.max(5, Math.min(100, parseInt(pageSize as string) || 25));
+
+      const isPrimaryOnline = !!(primaryPgPool && primaryPgConnected);
+      const [primaryUsers, jsonUsers, firestoreUsers] = await Promise.all([
+        isPrimaryOnline ? fetchAllRowsFromPg(primaryPgPool, 'profiles') : Promise.resolve([]),
+        Promise.resolve(fetchAllRowsFromJson('profiles')),
+        fetchAllRowsFromFirestore('users')
+      ]);
+
+      const primaryMap = new Map<string, any>();
+      (primaryUsers.length > 0 ? primaryUsers : jsonUsers).forEach(u => {
+        if (u && (u.id || u.id === 0)) primaryMap.set(String(u.id), u);
+      });
+
+      let results = firestoreUsers.map(u => {
+        const prim = primaryMap.get(String(u.id));
+        const inPrimary = !!prim;
+        const emailMatch = !prim || !prim.email || prim.email === u.email;
+        const roleMatch = !prim || !prim.role || prim.role === u.role;
+        return {
+          ...u,
+          inPrimary,
+          inSync: inPrimary && emailMatch && roleMatch
+        };
+      });
+
+      if (search && typeof search === 'string' && search.trim()) {
+        const q = search.toLowerCase().trim();
+        results = results.filter(u => 
+          (u.email && u.email.toLowerCase().includes(q)) ||
+          (u.username && u.username.toLowerCase().includes(q)) ||
+          (u.phone && String(u.phone).includes(q)) ||
+          (u.id && String(u.id).toLowerCase().includes(q)) ||
+          (u.role && u.role.toLowerCase().includes(q))
+        );
+      }
+
+      const totalCount = results.length;
+      const totalPages = Math.ceil(totalCount / ps) || 1;
+      const paginated = results.slice((p - 1) * ps, p * ps);
+
+      res.json({
+        success: true,
+        totalCount,
+        page: p,
+        pageSize: ps,
+        totalPages,
+        users: paginated
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // CONNECTION ADMIN: MULTI-DB TABLES & DATA EXPLORER (LOCAL, POSTGRES, SUPABASE, FIREBASE)
+  // =========================================================================
+
+  app.get("/api/connectionadmin/explorer/tables", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const isPrimaryOnline = !!(primaryPgPool && primaryPgConnected);
+      const isLocalPgOnline = !!(localPgPool && localPgConnected);
+      const isFirebaseConfigured = !!(firebaseConfig && firebaseConfig.projectId);
+
+      const tableList = KNOWN_SYNC_TABLES;
+
+      const localJsonDb = loadLocalDb();
+      const localJsonCounts: Record<string, number> = {};
+      for (const tbl of tableList) {
+        localJsonCounts[tbl] = Array.isArray(localJsonDb[tbl]) ? localJsonDb[tbl].length : 0;
+      }
+
+      const localPgCounts: Record<string, number> = {};
+      const supabaseCounts: Record<string, number> = {};
+      const firebaseCounts: Record<string, number> = {};
+
+      const promises: Promise<any>[] = [];
+
+      // Supabase / Primary Cloud PG
+      if (isPrimaryOnline) {
+        promises.push((async () => {
+          for (const tbl of tableList) {
+            try {
+              const r = await primaryPgPool.query(`SELECT COUNT(*)::int as c FROM public."${tbl}"`);
+              supabaseCounts[tbl] = r.rows[0]?.c || 0;
+            } catch (e) {
+              supabaseCounts[tbl] = 0;
+            }
+          }
+        })());
+      }
+
+      // Local PostgreSQL
+      if (isLocalPgOnline) {
+        promises.push((async () => {
+          for (const tbl of tableList) {
+            try {
+              const r = await localPgPool.query(`SELECT COUNT(*)::int as c FROM public."${tbl}"`);
+              localPgCounts[tbl] = r.rows[0]?.c || 0;
+            } catch (e) {
+              localPgCounts[tbl] = 0;
+            }
+          }
+        })());
+      }
+
+      // Firebase Firestore
+      if (isFirebaseConfigured) {
+        promises.push((async () => {
+          for (const tbl of tableList) {
+            try {
+              const rows = await fetchAllRowsFromFirestore(tbl);
+              firebaseCounts[tbl] = rows.length;
+            } catch (e) {
+              firebaseCounts[tbl] = 0;
+            }
+          }
+        })());
+      }
+
+      await Promise.allSettled(promises);
+
+      res.json({
+        success: true,
+        tableList,
+        sources: {
+          local_json: {
+            id: 'local_json',
+            name: 'Local JSON Database',
+            type: 'Local File (local_db.json)',
+            available: true,
+            counts: localJsonCounts,
+            totalRecords: Object.values(localJsonCounts).reduce((a, b) => a + b, 0)
+          },
+          local_pg: {
+            id: 'local_pg',
+            name: 'Local PostgreSQL',
+            type: `Postgres (${localDbConfig.host}:${localDbConfig.port})`,
+            available: isLocalPgOnline,
+            error: localPgError,
+            counts: localPgCounts,
+            totalRecords: Object.values(localPgCounts).reduce((a, b) => a + b, 0)
+          },
+          supabase: {
+            id: 'supabase',
+            name: 'Supabase Cloud PostgreSQL',
+            type: `Primary Cloud (${dbConfig.host})`,
+            available: isPrimaryOnline,
+            error: primaryPgError,
+            counts: supabaseCounts,
+            totalRecords: Object.values(supabaseCounts).reduce((a, b) => a + b, 0)
+          },
+          firebase: {
+            id: 'firebase',
+            name: 'Firebase Firestore',
+            type: `Firestore (${firebaseConfig?.projectId || 'Not set'})`,
+            available: isFirebaseConfigured,
+            databaseId: activeFirestoreDatabaseId,
+            counts: firebaseCounts,
+            totalRecords: Object.values(firebaseCounts).reduce((a, b) => a + b, 0)
+          }
+        }
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.get("/api/connectionadmin/explorer/data", requireConnectionAdminAuth, async (req, res) => {
+    const t0 = Date.now();
+    try {
+      const { 
+        source = 'supabase', 
+        table = 'profiles', 
+        page = '1', 
+        pageSize = '25', 
+        search = '' 
+      } = req.query;
+
+      const p = Math.max(1, parseInt(page as string) || 1);
+      const ps = Math.max(5, Math.min(100, parseInt(pageSize as string) || 25));
+      const tableName = String(table);
+
+      let allRows: any[] = [];
+      let sourceName = String(source);
+
+      if (source === 'local_json') {
+        sourceName = 'Local JSON DB';
+        allRows = fetchAllRowsFromJson(tableName);
+      } else if (source === 'local_pg') {
+        sourceName = 'Local PostgreSQL';
+        if (!localPgPool || !localPgConnected) {
+          return res.json({
+            success: false,
+            error: localPgError || "Local PostgreSQL is currently offline.",
+            source,
+            table: tableName,
+            rows: [],
+            totalCount: 0,
+            fields: [],
+            executionTimeMs: Date.now() - t0
+          });
+        }
+        allRows = await fetchAllRowsFromPg(localPgPool, tableName);
+      } else if (source === 'supabase') {
+        sourceName = 'Supabase Cloud PostgreSQL';
+        if (!primaryPgPool || !primaryPgConnected) {
+          allRows = fetchAllRowsFromJson(tableName);
+          sourceName = 'Supabase (Offline fallback to JSON)';
+        } else {
+          allRows = await fetchAllRowsFromPg(primaryPgPool, tableName);
+        }
+      } else if (source === 'firebase') {
+        sourceName = 'Firebase Firestore';
+        if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+          return res.json({
+            success: false,
+            error: "Firebase credentials not configured in firebase-applet-config.json",
+            source,
+            table: tableName,
+            rows: [],
+            totalCount: 0,
+            fields: [],
+            executionTimeMs: Date.now() - t0
+          });
+        }
+        allRows = await fetchAllRowsFromFirestore(tableName);
+      } else {
+        return res.status(400).json({ success: false, error: `Invalid data source: ${source}` });
+      }
+
+      let filteredRows = allRows;
+      if (search && typeof search === 'string' && search.trim()) {
+        const query = search.toLowerCase().trim();
+        filteredRows = allRows.filter(row => {
+          if (!row || typeof row !== 'object') return false;
+          return Object.values(row).some(val => {
+            if (val === null || val === undefined) return false;
+            if (typeof val === 'object') return JSON.stringify(val).toLowerCase().includes(query);
+            return String(val).toLowerCase().includes(query);
+          });
+        });
+      }
+
+      const fieldSet = new Set<string>();
+      const priorityKeys = ['id', 'email', 'name', 'username', 'title', 'role', 'status', 'amount', 'type', 'phone', 'created_at', 'updated_at'];
+      priorityKeys.forEach(k => {
+        if (filteredRows.some(r => r && r[k] !== undefined)) fieldSet.add(k);
+      });
+      filteredRows.forEach(r => {
+        if (r && typeof r === 'object') {
+          Object.keys(r).forEach(k => fieldSet.add(k));
+        }
+      });
+      const fields = Array.from(fieldSet);
+
+      const totalCount = filteredRows.length;
+      const totalPages = Math.ceil(totalCount / ps) || 1;
+      const paginatedRows = filteredRows.slice((p - 1) * ps, p * ps);
+
+      res.json({
+        success: true,
+        source,
+        sourceName,
+        table: tableName,
+        page: p,
+        pageSize: ps,
+        totalCount,
+        totalPages,
+        fields,
+        rows: paginatedRows,
+        executionTimeMs: Date.now() - t0
+      });
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        error: err.message,
+        executionTimeMs: Date.now() - t0
+      });
+    }
   });
 
   // =========================================================================

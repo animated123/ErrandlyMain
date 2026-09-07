@@ -140,9 +140,30 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "senderId", "senderName", "text", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile document.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "phone": { "type": "string" },
+        "wallet_balance": { "type": "number" },
+        "is_admin": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "email", "name"]
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection of user accounts and profile documents."
+    },
     "/featured_services/{serviceId}": {
       "schema": "FeaturedService",
       "description": "Collection of featured services."
