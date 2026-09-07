@@ -7,6 +7,25 @@ const SUPABASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VIT
 const SUPABASE_ANON_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) || 
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzZmxtZHZxdnNlaXByZWJncmNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5ODI1MzIsImV4cCI6MjA5MDU1ODUzMn0.kugwrWw_J8qXY9b037qOgvMLTcyTRu4Wo0Ji13YFA8c';
 
+// No-op WebSocket to prevent any unauthorized WebSocket connection attempts to Supabase Realtime
+class NoopWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  readyState = 3;
+  onopen: any = null;
+  onclose: any = null;
+  onerror: any = null;
+  onmessage: any = null;
+  constructor() {}
+  close() {}
+  send() {}
+  addEventListener() {}
+  removeEventListener() {}
+  dispatchEvent() { return false; }
+}
+
 export const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
@@ -15,7 +34,7 @@ export const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
   realtime: {
-    enabled: false
+    transport: NoopWebSocket as any
   }
 });
 
@@ -139,6 +158,23 @@ export const supabase: any = new Proxy(supabaseClient, {
       return function(tableName: string) {
         return buildClientPostgrestBuilder(tableName);
       };
+    }
+    if (prop === 'channel') {
+      return function(channelName: string) {
+        const dummyChannel: any = {
+          name: channelName,
+          on: () => dummyChannel,
+          subscribe: (callback?: (status: string) => void) => {
+            if (callback) setTimeout(() => callback('SUBSCRIBED'), 0);
+            return dummyChannel;
+          },
+          unsubscribe: () => Promise.resolve('ok')
+        };
+        return dummyChannel;
+      };
+    }
+    if (prop === 'removeChannel') {
+      return () => Promise.resolve('ok');
     }
     const val = target[prop];
     if (typeof val === 'function') {

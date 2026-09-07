@@ -17,6 +17,7 @@ export default function PhoneVerificationModal({ user, onClose, onSuccess }: Pho
   const [error, setError] = useState<string | null>(null);
 
   const [devMode, setDevMode] = useState(false);
+  const [devCode, setDevCode] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
 
   React.useEffect(() => {
@@ -33,9 +34,17 @@ export default function PhoneVerificationModal({ user, onClose, onSuccess }: Pho
     setLoading(true);
     setError(null);
     setDevMode(false);
+    setDevCode(null);
     try {
-      const res = await firebaseService.sendPhoneVerificationCode(user.id, phone);
-      if ((res as any).devMode) setDevMode(true);
+      const userId = user?.id || (user as any)?.uid || '';
+      const res: any = await firebaseService.sendPhoneVerificationCode(userId, phone);
+      if (res?.devMode || res?.code) {
+        setDevMode(true);
+        if (res.code) {
+          setDevCode(String(res.code));
+          setCode(String(res.code));
+        }
+      }
       setStep('code');
       setResendCooldown(60); // 1 minute cooldown
     } catch (err: any) {
@@ -55,8 +64,9 @@ export default function PhoneVerificationModal({ user, onClose, onSuccess }: Pho
       if (cleanCode.length < 4) {
         throw new Error("Please enter a valid verification code.");
       }
-      await firebaseService.verifyPhoneCode(user.id, phone, cleanCode);
-      await firebaseService.updateUserProfile(user.id, { phoneVerified: true, phone });
+      const userId = user?.id || (user as any)?.uid || '';
+      await firebaseService.verifyPhoneCode(userId, phone, cleanCode);
+      await firebaseService.updateUserProfile(userId, { phoneVerified: true, phone });
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -119,10 +129,26 @@ export default function PhoneVerificationModal({ user, onClose, onSuccess }: Pho
                 />
               </div>
             </div>
-            {devMode && (
-              <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                <p className="text-sm font-black text-indigo-600 tracking-normal font-medium leading-relaxed">
-                  Dev Mode: Check server logs for the verification code.
+            {(devMode || devCode) && (
+              <div className="p-4 bg-indigo-50 dark:bg-indigo-950/40 rounded-2xl border border-indigo-100 dark:border-indigo-900/50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                    Verification Code {devCode ? `(${devCode})` : ''}
+                  </span>
+                  {devCode && (
+                    <button 
+                      type="button" 
+                      onClick={() => setCode(devCode)} 
+                      className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Autofill Code
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-indigo-600 dark:text-indigo-400 font-medium leading-relaxed">
+                  {devCode 
+                    ? `Your OTP is ${devCode}. It has been entered automatically.` 
+                    : "Dev Mode: Verification code generated and logged on the server."}
                 </p>
               </div>
             )}

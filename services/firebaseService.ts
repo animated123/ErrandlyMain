@@ -2733,7 +2733,8 @@ export const firebaseService = {
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.message || data.error || "Failed to send verification code");
+        const errorDetail = data.message || data.error || (data.details ? `Failed: ${data.details}` : null);
+        throw new Error(errorDetail || "Failed to send verification code");
       }
       
       return data;
