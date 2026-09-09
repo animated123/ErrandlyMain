@@ -8,6 +8,7 @@ import {
   Gauge, ShieldCheck, HelpCircle, ChevronRight, Sparkles, Key, AlertCircle,
   Cloud, Flame, Table, FileJson, ChevronLeft, UserCheck, ShieldAlert, ArrowRight, User
 } from 'lucide-react';
+import { FirebaseInfrastructureTable } from './FirebaseInfrastructureTable';
 
 export interface CheckAllSystemsResult {
   success: boolean;
@@ -344,6 +345,23 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [firebaseActionMsg, setFirebaseActionMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [selectedUserDoc, setSelectedUserDoc] = useState<any | null>(null);
 
+  // Firebase Infrastructure & Real-Time Settings Table State
+  const [firebaseInfra, setFirebaseInfra] = useState<any>(null);
+  const [firebaseInfraFields, setFirebaseInfraFields] = useState<any[]>([]);
+  const [firebaseInfraLoading, setFirebaseInfraLoading] = useState(false);
+  const [firebaseInfraSaving, setFirebaseInfraSaving] = useState(false);
+  const [firebaseInfraQuickFilling, setFirebaseInfraQuickFilling] = useState(false);
+  const [firebaseRealtimeConnected, setFirebaseRealtimeConnected] = useState(false);
+  const [firebaseRealtimeEvents, setFirebaseRealtimeEvents] = useState<any[]>([]);
+  const [firebaseInfraFilterCategory, setFirebaseInfraFilterCategory] = useState<string>('all');
+  const [firebaseInfraSearch, setFirebaseInfraSearch] = useState<string>('');
+  const [showSecretKeys, setShowSecretKeys] = useState<Record<string, boolean>>({});
+  const [infraDirtyFields, setInfraDirtyFields] = useState<Record<string, any>>({});
+  const [firebaseSubTab, setFirebaseSubTab] = useState<'infrastructure' | 'backup_vault'>('infrastructure');
+  const [singleFieldSavingKey, setSingleFieldSavingKey] = useState<string | null>(null);
+  const [liveTestRunning, setLiveTestRunning] = useState(false);
+  const [liveTestLatency, setLiveTestLatency] = useState<number | null>(null);
+
   // Multi-DB Tables & Data Explorer State (Local, Postgres, Supabase, Firebase)
   const [explorerTablesData, setExplorerTablesData] = useState<any>(null);
   const [explorerTablesLoading, setExplorerTablesLoading] = useState(false);
@@ -360,6 +378,17 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [explorerExecutionTime, setExplorerExecutionTime] = useState<number | null>(null);
   const [explorerViewMode, setExplorerViewMode] = useState<'table' | 'json'>('table');
   const [selectedRowDoc, setSelectedRowDoc] = useState<any | null>(null);
+
+  // Multi-DB Table Data & Local Strings Purge / Deletion State
+  const [deleteModalOpen, setDeleteModalOpen] = useState<boolean>(false);
+  const [deleteTargetDb, setDeleteTargetDb] = useState<'all' | 'supabase' | 'local_pg' | 'local_json' | 'firestore' | 'local_strings'>('all');
+  const [deleteSelectedTables, setDeleteSelectedTables] = useState<string[]>([]);
+  const [deleteDryRun, setDeleteDryRun] = useState<boolean>(true);
+  const [deleteKeepAdmin, setDeleteKeepAdmin] = useState<boolean>(true);
+  const [deleteClearLocalStorage, setDeleteClearLocalStorage] = useState<boolean>(true);
+  const [deleteConfirmText, setDeleteConfirmText] = useState<string>('');
+  const [deleteExecuting, setDeleteExecuting] = useState<boolean>(false);
+  const [deleteResults, setDeleteResults] = useState<any | null>(null);
 
   const safeFetchJson = async (url: string, options?: RequestInit) => {
     try {
@@ -985,6 +1014,169 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     }
   }, []);
 
+  // Firebase Infrastructure & Real-Time Settings Handlers
+  const fetchFirebaseInfrastructure = useCallback(async () => {
+    setFirebaseInfraLoading(true);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/infrastructure', {
+        headers: getAuthHeaders()
+      });
+      if (ok && data?.success) {
+        setFirebaseInfra(data.infrastructure || null);
+        setFirebaseInfraFields(data.fieldsMeta || []);
+        setInfraDirtyFields({});
+      }
+    } catch (err: any) {
+      console.warn("Failed to fetch Firebase infrastructure:", err);
+    } finally {
+      setFirebaseInfraLoading(false);
+    }
+  }, []);
+
+  const updateFirebaseInfrastructure = async (fieldUpdates?: Record<string, any>, specificKey?: string) => {
+    const payload = fieldUpdates || infraDirtyFields;
+    if (Object.keys(payload).length === 0) {
+      setFirebaseActionMsg({ type: 'info', text: "No configuration changes detected to save." });
+      return;
+    }
+    if (specificKey) {
+      setSingleFieldSavingKey(specificKey);
+    } else {
+      setFirebaseInfraSaving(true);
+    }
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/infrastructure/update', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(payload)
+      });
+      if (ok && data?.success) {
+        setFirebaseInfra(data.infrastructure);
+        if (specificKey) {
+          setInfraDirtyFields(prev => {
+            const next = { ...prev };
+            delete next[specificKey];
+            return next;
+          });
+        } else {
+          setInfraDirtyFields({});
+        }
+        setFirebaseActionMsg({ type: 'success', text: data.message || "Infrastructure settings updated in real time!" });
+        fetchFirebaseAdminStatus();
+      } else {
+        setFirebaseActionMsg({ type: 'error', text: data?.error || "Failed to update infrastructure settings." });
+      }
+    } catch (err: any) {
+      setFirebaseActionMsg({ type: 'error', text: err.message || "Network error updating infrastructure." });
+    } finally {
+      setFirebaseInfraSaving(false);
+      setSingleFieldSavingKey(null);
+    }
+  };
+
+  const quickFillFirebaseInfrastructure = async () => {
+    setFirebaseInfraQuickFilling(true);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/infrastructure/quick-fill', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      if (ok && data?.success && data.detected) {
+        setFirebaseInfra((prev: any) => ({ ...prev, ...data.detected }));
+        setInfraDirtyFields(data.detected);
+        setFirebaseActionMsg({ type: 'info', text: "Detected cloud infrastructure values loaded into table. Review or click 'Save in Real Time'." });
+      }
+    } catch (err: any) {
+      setFirebaseActionMsg({ type: 'error', text: err.message || "Failed to quick-fill cloud infrastructure." });
+    } finally {
+      setFirebaseInfraQuickFilling(false);
+    }
+  };
+
+  const testFirebaseInfrastructureLive = async () => {
+    setLiveTestRunning(true);
+    setLiveTestLatency(null);
+    const t0 = performance.now();
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/firebase/auth/test', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      const dur = Math.round(performance.now() - t0);
+      setLiveTestLatency(dur);
+      if (ok && data?.success) {
+        setFirebaseActionMsg({ type: 'success', text: `Firebase ping successful (${dur}ms). ${data.message || ''}` });
+      } else {
+        setFirebaseActionMsg({ type: 'error', text: `Firebase ping issue (${dur}ms): ${data?.error || 'Unavailable'}` });
+      }
+    } catch (err: any) {
+      setFirebaseActionMsg({ type: 'error', text: `Ping failed: ${err.message}` });
+    } finally {
+      setLiveTestRunning(false);
+    }
+  };
+
+  // SSE Stream Listener for Real-Time Firebase Infrastructure Settings
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'firebase') return;
+    fetchFirebaseInfrastructure();
+
+    const token = sessionStorage.getItem('connectionadmin_token') || '';
+    if (!token) return;
+
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource(`/api/connectionadmin/firebase/realtime-stream?token=${encodeURIComponent(token)}`);
+
+      eventSource.addEventListener('INIT', (e: MessageEvent) => {
+        setFirebaseRealtimeConnected(true);
+        try {
+          const payload = JSON.parse(e.data);
+          setFirebaseRealtimeEvents(prev => [{
+            type: 'CONNECTED',
+            timestamp: payload.timestamp || new Date().toISOString(),
+            text: `Connected to Real-time Stream (Active DB: ${payload.activeFirestoreDb || '(default)'})`
+          }, ...prev.slice(0, 19)]);
+        } catch (err) {
+          console.debug("Error parsing SSE init payload", err);
+        }
+      });
+
+      eventSource.addEventListener('HEARTBEAT', () => {
+        setFirebaseRealtimeConnected(true);
+      });
+
+      eventSource.addEventListener('INFRASTRUCTURE_SETTINGS_UPDATED', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (payload.infrastructure) {
+            setFirebaseInfra(payload.infrastructure);
+            setInfraDirtyFields({});
+          }
+          setFirebaseRealtimeEvents(prev => [{
+            type: 'UPDATED',
+            timestamp: payload.timestamp || new Date().toISOString(),
+            text: `Real-time settings synchronized across cluster`
+          }, ...prev.slice(0, 19)]);
+        } catch (err) {
+          console.debug("Error parsing SSE update payload", err);
+        }
+      });
+
+      eventSource.onerror = () => {
+        setFirebaseRealtimeConnected(false);
+      };
+    } catch (err) {
+      console.warn("Real-time SSE connection error:", err);
+    }
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
+  }, [isAuthenticated, activeTab, fetchFirebaseInfrastructure]);
+
   // Multi-DB Tables & Data Explorer Helpers (Local, Postgres, Supabase, Firebase)
   const fetchExplorerTables = useCallback(async () => {
     setExplorerTablesLoading(true);
@@ -1041,6 +1233,61 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       setExplorerLoadingData(false);
     }
   }, [explorerSource, explorerTable, explorerPage, explorerPageSize, explorerSearch]);
+
+  const handleExecuteDeleteTableData = async () => {
+    if (!deleteDryRun && deleteConfirmText !== 'DELETE') {
+      alert('Please type "DELETE" into the confirmation box to confirm live data purging.');
+      return;
+    }
+
+    setDeleteExecuting(true);
+    setDeleteResults(null);
+
+    try {
+      // 1. If user selected to clear client local storage
+      if (deleteClearLocalStorage && (deleteTargetDb === 'all' || deleteTargetDb === 'local_strings')) {
+        const keysToClear = ['errand_drafts', 'custom_action_server_url', 'custom_gateway_url'];
+        keysToClear.forEach(k => {
+          try { 
+            localStorage.removeItem(k); 
+          } catch (e: any) {
+            console.warn(`Could not clear localStorage item ${k}:`, e?.message);
+          }
+        });
+      }
+
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/database/delete-table-data', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          db: deleteTargetDb,
+          tables: deleteSelectedTables.length > 0 ? deleteSelectedTables : null,
+          dryRun: deleteDryRun,
+          keepAdmin: deleteKeepAdmin
+        })
+      });
+
+      if (ok && data.success) {
+        setDeleteResults(data);
+        if (!deleteDryRun) {
+          fetchExplorerTables();
+          fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, explorerSearch);
+        }
+      } else {
+        setDeleteResults({
+          success: false,
+          error: data.error || 'Failed to execute table data deletion'
+        });
+      }
+    } catch (e: any) {
+      setDeleteResults({
+        success: false,
+        error: e.message || 'Execution error'
+      });
+    } finally {
+      setDeleteExecuting(false);
+    }
+  };
 
   // Tab switch listener for Firebase and Explorer
   useEffect(() => {
@@ -3586,6 +3833,90 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
               </div>
             </div>
 
+            {/* Sub-Navigation: Firebase Infrastructure Table & Real-Time Settings vs. User Accounts Backup Storage */}
+            <div className="flex items-center justify-between gap-4 border-b border-slate-800 pb-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setFirebaseSubTab('infrastructure')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                    firebaseSubTab === 'infrastructure'
+                      ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  <Table className="w-4 h-4" />
+                  Firebase Infrastructure & Real-Time Settings
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${
+                    firebaseRealtimeConnected ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' : 'bg-amber-950 text-amber-300'
+                  }`}>
+                    {firebaseRealtimeConnected ? 'Live Real-Time' : `${firebaseInfraFields?.length || 17} Fields`}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setFirebaseSubTab('backup_vault')}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+                    firebaseSubTab === 'backup_vault'
+                      ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
+                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                  }`}
+                >
+                  <HardDrive className="w-4 h-4" />
+                  User Account Backup Vault
+                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-mono">
+                    {firebaseStatus?.counts?.firestoreUsersCount ?? 0} Users
+                  </span>
+                </button>
+              </div>
+
+              {/* Real-Time SSE Indicator */}
+              <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+                <span className="relative flex h-2 w-2">
+                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${firebaseRealtimeConnected ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${firebaseRealtimeConnected ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                </span>
+                <span className="text-slate-400 font-medium">Real-Time Sync:</span>
+                <span className={`font-bold ${firebaseRealtimeConnected ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {firebaseRealtimeConnected ? 'Active & Streaming' : 'Polling Sync'}
+                </span>
+                {liveTestLatency !== null && (
+                  <span className="text-[11px] font-mono text-slate-400 border-l border-slate-800 pl-2">
+                    Ping: <span className="text-emerald-400">{liveTestLatency}ms</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* SUB-TAB 1: FIREBASE INFRASTRUCTURE TABLE & REAL-TIME SETTINGS */}
+            {firebaseSubTab === 'infrastructure' && (
+              <FirebaseInfrastructureTable
+                infrastructure={firebaseInfra}
+                fieldsMeta={firebaseInfraFields}
+                dirtyFields={infraDirtyFields}
+                onFieldChange={(key, val) => {
+                  setInfraDirtyFields(prev => ({ ...prev, [key]: val }));
+                }}
+                onSaveAll={() => updateFirebaseInfrastructure()}
+                onSaveSingle={(key, val) => updateFirebaseInfrastructure({ [key]: val }, key)}
+                onQuickFill={quickFillFirebaseInfrastructure}
+                onRefresh={fetchFirebaseInfrastructure}
+                onTestLive={testFirebaseInfrastructureLive}
+                isSaving={firebaseInfraSaving}
+                isQuickFilling={firebaseInfraQuickFilling}
+                isLoading={firebaseInfraLoading}
+                isTestingLive={liveTestRunning}
+                singleSavingKey={singleFieldSavingKey}
+                liveLatency={liveTestLatency}
+                realtimeConnected={firebaseRealtimeConnected}
+                realtimeEvents={firebaseRealtimeEvents}
+                copyToClipboard={copyToClipboard}
+                copiedKey={copiedKey}
+              />
+            )}
+
+            {/* SUB-TAB 2: USER ACCOUNT BACKUP VAULT & ALTERNATE AUTH */}
+            {firebaseSubTab === 'backup_vault' && (
+              <div className="space-y-6">
             {/* 3 Metric Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {/* Card 1: Firebase Service & Project */}
@@ -3981,6 +4312,8 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                 </div>
               )}
             </div>
+            </div>
+            )}
           </div>
         )}
 
@@ -4019,6 +4352,19 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${explorerLoadingData ? 'animate-spin' : ''}`} />
                   Refresh Table Data
+                </button>
+
+                <button
+                  onClick={() => {
+                    setDeleteResults(null);
+                    setDeleteConfirmText('');
+                    setDeleteModalOpen(true);
+                  }}
+                  className="px-4 py-2 bg-rose-600/90 hover:bg-rose-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-rose-600/20 transition"
+                  title="Purge or delete table data across databases and local strings"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete Table Data / Purge
                 </button>
               </div>
             </div>
@@ -4486,6 +4832,319 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                     className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition"
                   >
                     Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Table Data & Local Strings Modal */}
+        {deleteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+              {/* Modal Header */}
+              <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-rose-600/20 text-rose-400 border border-rose-500/30">
+                    <Trash2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      Delete Table Data & Local Strings
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Purge specific or all tables across databases and wipe local strings
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDeleteModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-5 overflow-y-auto space-y-5 flex-1 text-xs">
+                {/* Database Selection */}
+                <div>
+                  <label className="block text-slate-300 font-bold mb-2">Target Storage System</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {[
+                      { id: 'all', label: 'All Databases & Strings', desc: 'Supabase, PG, JSON, Firestore & Strings' },
+                      { id: 'supabase', label: 'Supabase Cloud PG', desc: 'PostgreSQL public schema' },
+                      { id: 'local_pg', label: 'Local PostgreSQL', desc: 'Local fallback database' },
+                      { id: 'local_json', label: 'Local JSON DB', desc: 'local_db.json file' },
+                      { id: 'firestore', label: 'Firebase Firestore', desc: 'Cloud Firestore collections' },
+                      { id: 'local_strings', label: 'Local Strings', desc: 'OTP strings & config strings' }
+                    ].map(db => (
+                      <button
+                        key={db.id}
+                        type="button"
+                        onClick={() => setDeleteTargetDb(db.id as any)}
+                        className={`p-3 text-left rounded-xl border transition flex flex-col justify-between ${
+                          deleteTargetDb === db.id
+                            ? 'bg-rose-950/40 border-rose-500 text-white shadow-sm'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                        }`}
+                      >
+                        <span className="font-bold text-xs">{db.label}</span>
+                        <span className="text-[10px] text-slate-500 mt-1">{db.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Table Selection */}
+                {deleteTargetDb !== 'local_strings' && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-slate-300 font-bold">Target Tables (Leave empty for All Tables)</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (deleteSelectedTables.length > 0) {
+                            setDeleteSelectedTables([]);
+                          } else {
+                            setDeleteSelectedTables([
+                              'profiles', 'errands', 'transactions', 'otp_codes',
+                              'runner_applications', 'notifications', 'errand_chats',
+                              'support_messages', 'featured_services', 'service_listings', 'settings'
+                            ]);
+                          }
+                        }}
+                        className="text-[11px] text-cyan-400 hover:text-cyan-300 underline"
+                      >
+                        {deleteSelectedTables.length > 0 ? 'Clear Selection (Select All)' : 'Select Specific Tables'}
+                      </button>
+                    </div>
+
+                    {deleteSelectedTables.length > 0 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 p-3 bg-slate-950 rounded-xl border border-slate-800">
+                        {[
+                          'profiles', 'errands', 'transactions', 'otp_codes',
+                          'runner_applications', 'notifications', 'errand_chats',
+                          'support_messages', 'featured_services', 'service_listings',
+                          'settings', 'firebase_infrastructure'
+                        ].map(tbl => {
+                          const checked = deleteSelectedTables.includes(tbl);
+                          return (
+                            <label
+                              key={tbl}
+                              className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer transition ${
+                                checked ? 'bg-slate-800 text-slate-200' : 'text-slate-400 hover:bg-slate-900'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setDeleteSelectedTables([...deleteSelectedTables, tbl]);
+                                  } else {
+                                    setDeleteSelectedTables(deleteSelectedTables.filter(t => t !== tbl));
+                                  }
+                                }}
+                                className="w-3.5 h-3.5 rounded bg-slate-950 border-slate-700 text-rose-600 focus:ring-rose-500"
+                              />
+                              <span className="font-mono text-[11px]">{tbl}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Safeguards & Options */}
+                <div className="space-y-2.5 p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+                  <span className="text-slate-300 font-bold block mb-1">Execution Safeguards</span>
+
+                  {/* Dry Run */}
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={deleteDryRun}
+                      onChange={(e) => setDeleteDryRun(e.target.checked)}
+                      className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-cyan-600 focus:ring-cyan-500"
+                    />
+                    <div>
+                      <span className="text-slate-200 font-bold text-xs">Dry Run (Preview Only - Recommended)</span>
+                      <p className="text-[10px] text-slate-400">Scans all target tables and calculates record counts without deleting anything.</p>
+                    </div>
+                  </label>
+
+                  {/* Keep Admin Accounts */}
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={deleteKeepAdmin}
+                      onChange={(e) => setDeleteKeepAdmin(e.target.checked)}
+                      className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div>
+                      <span className="text-slate-200 font-bold text-xs">Preserve Admin Accounts</span>
+                      <p className="text-[10px] text-slate-400">Prevents admin users in profiles/users collections from being wiped so you stay logged in.</p>
+                    </div>
+                  </label>
+
+                  {/* Clear Local Storage */}
+                  {(deleteTargetDb === 'all' || deleteTargetDb === 'local_strings') && (
+                    <label className="flex items-center gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={deleteClearLocalStorage}
+                        onChange={(e) => setDeleteClearLocalStorage(e.target.checked)}
+                        className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-amber-600 focus:ring-amber-500"
+                      />
+                      <div>
+                        <span className="text-slate-200 font-bold text-xs">Purge Browser LocalStorage Strings</span>
+                        <p className="text-[10px] text-slate-400">Clears errand drafts, cached custom server URLs, and string tokens stored in browser localStorage.</p>
+                      </div>
+                    </label>
+                  )}
+                </div>
+
+                {/* Confirmation Box if NOT dry run */}
+                {!deleteDryRun && (
+                  <div className="p-3.5 bg-rose-950/30 border border-rose-500/40 rounded-xl space-y-2">
+                    <div className="flex items-center gap-2 text-rose-400 font-bold">
+                      <AlertTriangle className="w-4 h-4" />
+                      <span>Permanent Data Deletion Warning</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      You are about to execute a live purge on <strong className="text-rose-400">{deleteTargetDb.toUpperCase()}</strong>.
+                      To confirm this action, please type <code className="bg-slate-950 px-1 py-0.5 rounded text-white font-mono">DELETE</code> below:
+                    </p>
+                    <input
+                      type="text"
+                      placeholder='Type "DELETE" to confirm'
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-950 border border-rose-500/50 rounded-lg text-white font-mono text-xs focus:ring-2 focus:ring-rose-500"
+                    />
+                  </div>
+                )}
+
+                {/* Quick Client LocalStorage Clean Button */}
+                <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-slate-800">
+                  <div>
+                    <span className="font-bold text-slate-300">Quick Browser LocalStorage Cleanup</span>
+                    <p className="text-[10px] text-slate-400">Wipe errand_drafts and client tokens in this browser immediately</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      ['errand_drafts', 'custom_action_server_url', 'custom_gateway_url'].forEach(k => {
+                        try { 
+                          localStorage.removeItem(k); 
+                        } catch (e: any) {
+                          console.warn(`Could not remove ${k}:`, e?.message);
+                        }
+                      });
+                      alert('Cleared browser localStorage strings successfully!');
+                    }}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition"
+                  >
+                    Clear LocalStorage
+                  </button>
+                </div>
+
+                {/* Results Section */}
+                {deleteResults && (
+                  <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white flex items-center gap-2">
+                        {deleteResults.success ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        ) : (
+                          <XCircle className="w-4 h-4 text-rose-400" />
+                        )}
+                        {deleteResults.dryRun ? 'Dry-Run Simulation Report' : 'Live Purge Report'}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                        Target: {deleteResults.targetDb}
+                      </span>
+                    </div>
+
+                    {deleteResults.error && (
+                      <div className="p-2.5 bg-rose-950/40 border border-rose-800 rounded-xl text-rose-300 text-[11px]">
+                        {deleteResults.error}
+                      </div>
+                    )}
+
+                    {deleteResults.results && (
+                      <div className="space-y-2 font-mono text-[11px]">
+                        {Object.entries(deleteResults.results).map(([k, v]: [string, any]) => (
+                          <div key={k} className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                            <div className="flex items-center justify-between font-bold text-slate-300 mb-1">
+                              <span className="uppercase text-xs">{k}</span>
+                              <span className={v?.success ? 'text-emerald-400' : 'text-rose-400'}>
+                                {v?.success ? (deleteResults.dryRun ? 'SIMULATED' : 'SUCCESS') : (v?.error ? 'OFFLINE / ERROR' : 'SKIPPED')}
+                              </span>
+                            </div>
+                            {v?.totalDeleted !== undefined && (
+                              <p className="text-slate-400">
+                                {deleteResults.dryRun ? 'Would delete:' : 'Deleted:'} <strong>{v.totalDeleted}</strong> records
+                              </p>
+                            )}
+                            {v?.totalActions !== undefined && (
+                              <p className="text-slate-400">
+                                String cleanup actions: <strong>{v.totalActions}</strong>
+                              </p>
+                            )}
+                            {v?.error && (
+                              <p className="text-rose-400 text-[10px]">{v.error}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+                <span className="text-slate-400 text-xs">
+                  CLI Script: <code className="text-cyan-400 font-mono">npm run db:delete</code>
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDeleteModalOpen(false)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExecuteDeleteTableData}
+                    disabled={deleteExecuting || (!deleteDryRun && deleteConfirmText !== 'DELETE')}
+                    className={`px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-lg ${
+                      deleteDryRun
+                        ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-cyan-600/20'
+                        : 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/20'
+                    } disabled:opacity-40`}
+                  >
+                    {deleteExecuting ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Processing...
+                      </>
+                    ) : deleteDryRun ? (
+                      <>
+                        <Play className="w-3.5 h-3.5" />
+                        Run Dry-Run Preview
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Execute Live Purge
+                      </>
+                    )}
                   </button>
                 </div>
               </div>

@@ -162,6 +162,12 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // Firebase Infrastructure & Real-Time Settings
+    match /firebase_infrastructure/{infraId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
     
     // Test collection
     match /test/{docId} {

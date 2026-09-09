@@ -8,7 +8,14 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "clean:data": "node scripts/delete-table-data.cjs --db=all",
+    "db:delete": "node scripts/delete-table-data.cjs",
+    "db:delete:supabase": "node scripts/delete-supabase-data.cjs",
+    "db:delete:local-pg": "node scripts/delete-local-pg-data.cjs",
+    "db:delete:local-json": "node scripts/delete-local-json-data.cjs",
+    "db:delete:firestore": "node scripts/delete-firestore-data.cjs",
+    "db:delete:local-strings": "node scripts/delete-local-strings.cjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.1",

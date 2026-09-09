@@ -11,6 +11,9 @@ import pg from 'pg';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createRequire } from 'module';
+
+const nodeRequire = typeof require === 'function' ? require : createRequire(path.join(process.cwd(), 'package.json'));
 
 // Load .env or .env1 file if present into process.env before anything else
 try {
@@ -798,6 +801,81 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
     } catch (e: any) {
       console.log("Check for email/phone column skipped or completed:", e.message);
     }
+
+    // Firebase Infrastructure and Real-Time Settings Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.firebase_infrastructure (
+        id TEXT PRIMARY KEY DEFAULT 'primary_infrastructure',
+        project_id TEXT,
+        firestore_database_id TEXT,
+        api_key TEXT,
+        auth_domain TEXT,
+        storage_bucket TEXT,
+        messaging_sender_id TEXT,
+        measurement_id TEXT,
+        app_id TEXT,
+        oauth_client_id TEXT,
+        recaptcha_site_key TEXT,
+        alternate_auth_enabled BOOLEAN DEFAULT true,
+        auto_mirror_users_enabled BOOLEAN DEFAULT true,
+        realtime_sync_enabled BOOLEAN DEFAULT true,
+        sync_interval_seconds INTEGER DEFAULT 30,
+        backup_retention_days INTEGER DEFAULT 30,
+        users_collection_path TEXT DEFAULT 'users',
+        firestore_region TEXT DEFAULT 'europe-west1',
+        status TEXT DEFAULT 'configured',
+        last_synced_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS project_id TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS firestore_database_id TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS api_key TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS auth_domain TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS storage_bucket TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS messaging_sender_id TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS measurement_id TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS app_id TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS oauth_client_id TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS recaptcha_site_key TEXT;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS alternate_auth_enabled BOOLEAN DEFAULT true;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS auto_mirror_users_enabled BOOLEAN DEFAULT true;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS realtime_sync_enabled BOOLEAN DEFAULT true;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS sync_interval_seconds INTEGER DEFAULT 30;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS backup_retention_days INTEGER DEFAULT 30;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS users_collection_path TEXT DEFAULT 'users';`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS firestore_region TEXT DEFAULT 'europe-west1';`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'configured';`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+    await client.query(`ALTER TABLE public.firebase_infrastructure ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+
+    // Seed default infrastructure record
+    await client.query(`
+      INSERT INTO public.firebase_infrastructure (
+        id, project_id, firestore_database_id, api_key, auth_domain, storage_bucket, messaging_sender_id, measurement_id, app_id, oauth_client_id, recaptcha_site_key, alternate_auth_enabled, auto_mirror_users_enabled, realtime_sync_enabled, sync_interval_seconds, backup_retention_days, users_collection_path, firestore_region, status
+      ) VALUES (
+        'primary_infrastructure',
+        'gen-lang-client-0499210555',
+        'ai-studio-errandrunner-6391c5f4-7e90-43e3-90b0-8a0e0e1ce265',
+        'AIzaSyB8xCJP6sZQIhSswwPJ_mJpAg9VvDh4nrc',
+        'gen-lang-client-0499210555.firebaseapp.com',
+        'gen-lang-client-0499210555.firebasestorage.app',
+        '130225300272',
+        'G-K3CM3MB6QF',
+        '1:130225300272:web:d51c2e4995568a207a1ef5',
+        '130225300272-50lte4no7odisevm23cmjqdos4e5rfkv.apps.googleusercontent.com',
+        '',
+        true,
+        true,
+        true,
+        30,
+        30,
+        'users',
+        'europe-west1',
+        'online'
+      ) ON CONFLICT (id) DO NOTHING;
+    `);
 
     // Transactions table
     await client.query(`
@@ -1671,6 +1749,31 @@ try {
 let activeFirestoreDatabaseId = '(default)';
 let firestoreDbChecked = false;
 
+// Real-Time SSE Clients for Firebase Infrastructure & Settings
+const firebaseRealtimeClients = new Set<express.Response>();
+
+function broadcastFirebaseRealtime(eventType: string, payload: any) {
+  const message = `event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of firebaseRealtimeClients) {
+    try {
+      client.write(message);
+    } catch (err) {
+      firebaseRealtimeClients.delete(client);
+    }
+  }
+}
+
+function reloadFirebaseConfig() {
+  try {
+    if (fs.existsSync(firebaseConfigPath)) {
+      firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+    }
+  } catch (e) {
+    console.warn("Could not reload firebase-applet-config.json:", e);
+  }
+  firestoreDbChecked = false;
+}
+
 async function getActiveFirestoreDbId(): Promise<string> {
   if (firestoreDbChecked) return activeFirestoreDatabaseId;
   if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return '(default)';
@@ -1849,6 +1952,7 @@ const KNOWN_SYNC_TABLES = [
   'transactions',
   'wallets',
   'settings',
+  'firebase_infrastructure',
   'categories',
   'saved_places',
   'featured_services',
@@ -6414,6 +6518,352 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   });
 
+  // --- REAL-TIME SSE STREAM FOR FIREBASE INFRASTRUCTURE & SETTINGS ---
+  app.get("/api/connectionadmin/firebase/realtime-stream", (req, res) => {
+    const token = (req.query.token as string) || (req.headers.authorization?.replace("Bearer ", ""));
+    if (!token) {
+      return res.status(401).send("Unauthorized");
+    }
+    try {
+      jwt.verify(token, process.env.JWT_SECRET || "errand_runner_secret_key_2026");
+    } catch (err) {
+      return res.status(401).send("Invalid Token");
+    }
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof (res as any).flushHeaders === 'function') {
+      (res as any).flushHeaders();
+    }
+
+    firebaseRealtimeClients.add(res);
+
+    // Send initial connected payload
+    const initData = {
+      type: 'INIT_CONNECTED',
+      timestamp: new Date().toISOString(),
+      activeFirestoreDb: activeFirestoreDatabaseId,
+      projectId: firebaseConfig?.projectId || null,
+      clientsCount: firebaseRealtimeClients.size
+    };
+    res.write(`event: INIT\ndata: ${JSON.stringify(initData)}\n\n`);
+
+    // Keepalive heartbeat
+    const keepaliveTimer = setInterval(() => {
+      try {
+        res.write(`event: HEARTBEAT\ndata: ${JSON.stringify({ timestamp: new Date().toISOString(), ping: 'ok' })}\n\n`);
+      } catch (e) {
+        clearInterval(keepaliveTimer);
+      }
+    }, 15000);
+
+    req.on("close", () => {
+      clearInterval(keepaliveTimer);
+      firebaseRealtimeClients.delete(res);
+    });
+  });
+
+  // --- GET INFRASTRUCTURE CONFIGURATION TABLE DATA ---
+  app.get("/api/connectionadmin/firebase/infrastructure", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      // 1. Load from DB or local JSON
+      const db = loadLocalDb();
+      let record: any = null;
+      if (Array.isArray(db.firebase_infrastructure) && db.firebase_infrastructure.length > 0) {
+        record = { ...db.firebase_infrastructure[0] };
+      }
+
+      // Check PostgreSQL
+      if (primaryPgPool && primaryPgConnected) {
+        try {
+          const pgRes = await primaryPgPool.query(`SELECT * FROM public.firebase_infrastructure WHERE id = 'primary_infrastructure' LIMIT 1`);
+          if (pgRes.rows.length > 0) {
+            record = { ...record, ...pgRes.rows[0] };
+          }
+        } catch (e) {
+          // PostgreSQL table read fallback
+        }
+      }
+
+      // Fallback defaults from firebase-applet-config.json and app-config.json
+      if (!record) {
+        record = {
+          id: 'primary_infrastructure',
+          project_id: firebaseConfig?.projectId || 'gen-lang-client-0499210555',
+          firestore_database_id: firebaseConfig?.firestoreDatabaseId || 'ai-studio-errandrunner-6391c5f4-7e90-43e3-90b0-8a0e0e1ce265',
+          api_key: firebaseConfig?.apiKey || '',
+          auth_domain: firebaseConfig?.authDomain || `${firebaseConfig?.projectId || 'gen-lang-client-0499210555'}.firebaseapp.com`,
+          storage_bucket: firebaseConfig?.storageBucket || `${firebaseConfig?.projectId || 'gen-lang-client-0499210555'}.firebasestorage.app`,
+          messaging_sender_id: firebaseConfig?.messagingSenderId || '130225300272',
+          measurement_id: firebaseConfig?.measurementId || 'G-K3CM3MB6QF',
+          app_id: firebaseConfig?.appId || '1:130225300272:web:d51c2e4995568a207a1ef5',
+          oauth_client_id: firebaseConfig?.oAuthClientId || '130225300272-50lte4no7odisevm23cmjqdos4e5rfkv.apps.googleusercontent.com',
+          recaptcha_site_key: firebaseConfig?.recaptchaSiteKey || '',
+          alternate_auth_enabled: appConfig.firebase?.alternateAuthEnabled ?? true,
+          auto_mirror_users_enabled: appConfig.firebase?.autoMirrorUsersEnabled ?? true,
+          realtime_sync_enabled: true,
+          sync_interval_seconds: 30,
+          backup_retention_days: 30,
+          users_collection_path: 'users',
+          firestore_region: 'europe-west1',
+          status: 'online',
+          last_synced_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+      }
+
+      // Merge current live firebaseConfig values if any field was empty
+      if (firebaseConfig) {
+        if (!record.project_id && firebaseConfig.projectId) record.project_id = firebaseConfig.projectId;
+        if (!record.firestore_database_id && firebaseConfig.firestoreDatabaseId) record.firestore_database_id = firebaseConfig.firestoreDatabaseId;
+        if (!record.api_key && firebaseConfig.apiKey) record.api_key = firebaseConfig.apiKey;
+        if (!record.auth_domain && firebaseConfig.authDomain) record.auth_domain = firebaseConfig.authDomain;
+        if (!record.storage_bucket && firebaseConfig.storageBucket) record.storage_bucket = firebaseConfig.storageBucket;
+        if (!record.messaging_sender_id && firebaseConfig.messagingSenderId) record.messaging_sender_id = firebaseConfig.messagingSenderId;
+        if (!record.measurement_id && firebaseConfig.measurementId) record.measurement_id = firebaseConfig.measurementId;
+        if (!record.app_id && firebaseConfig.appId) record.app_id = firebaseConfig.appId;
+        if (!record.oauth_client_id && firebaseConfig.oAuthClientId) record.oauth_client_id = firebaseConfig.oAuthClientId;
+      }
+
+      const fieldsMeta = [
+        { key: 'project_id', label: 'Firebase Project ID', category: 'Cloud Core', type: 'text', description: 'GCP/Firebase project identifier for all API calls and auth', isSecret: false },
+        { key: 'firestore_database_id', label: 'Firestore Database ID', category: 'Database', type: 'text', description: 'Specific Firestore database instance (e.g. named or (default))', isSecret: false },
+        { key: 'api_key', label: 'Web API Key', category: 'Credentials', type: 'text', description: 'Browser API key for Firebase REST and Web SDK operations', isSecret: true },
+        { key: 'auth_domain', label: 'Auth Domain', category: 'Authentication', type: 'text', description: 'Domain handled by Firebase Auth for redirect and popup flows', isSecret: false },
+        { key: 'app_id', label: 'Web App ID', category: 'Cloud Core', type: 'text', description: 'Registered Web Application identifier in Firebase Project', isSecret: false },
+        { key: 'storage_bucket', label: 'Cloud Storage Bucket', category: 'Storage', type: 'text', description: 'Default Google Cloud Storage bucket for document attachments', isSecret: false },
+        { key: 'messaging_sender_id', label: 'Messaging Sender ID', category: 'Cloud Core', type: 'text', description: 'Sender ID for Firebase Cloud Messaging (FCM) notifications', isSecret: false },
+        { key: 'measurement_id', label: 'Analytics Measurement ID', category: 'Analytics', type: 'text', description: 'Google Analytics 4 measurement tag identifier', isSecret: false },
+        { key: 'oauth_client_id', label: 'Google OAuth Client ID', category: 'Authentication', type: 'text', description: 'OAuth 2.0 Web Client ID for Google Identity sign-in', isSecret: false },
+        { key: 'recaptcha_site_key', label: 'reCAPTCHA Site Key', category: 'Security', type: 'text', description: 'reCAPTCHA v3 or Enterprise site key for bot defense', isSecret: false },
+        { key: 'alternate_auth_enabled', label: 'Alternate Auth Provider', category: 'Authentication', type: 'boolean', description: 'Use Firebase Auth as secondary/fallback authentication authority', isSecret: false },
+        { key: 'auto_mirror_users_enabled', label: 'Auto-Mirror Users Vault', category: 'Sync Engine', type: 'boolean', description: 'Automatically mirror user account updates to Firestore users collection in real time', isSecret: false },
+        { key: 'realtime_sync_enabled', label: 'Real-Time Sync Engine', category: 'Sync Engine', type: 'boolean', description: 'Broadcast data mutations and heartbeat pulses via Server-Sent Events', isSecret: false },
+        { key: 'sync_interval_seconds', label: 'Sync Heartbeat Interval (s)', category: 'Sync Engine', type: 'number', description: 'Heartbeat and parity reconciliation cycle in seconds', isSecret: false },
+        { key: 'backup_retention_days', label: 'Backup Retention Policy (Days)', category: 'Storage', type: 'number', description: 'Retention window for user document revisions in Firestore', isSecret: false },
+        { key: 'users_collection_path', label: 'Users Collection Path', category: 'Database', type: 'text', description: 'Target Firestore collection name strictly reserved for user profile backup', isSecret: false },
+        { key: 'firestore_region', label: 'Firestore Cloud Region', category: 'Database', type: 'select', options: ['europe-west1', 'us-central1', 'us-east1', 'asia-northeast1', 'asia-south1'], description: 'Primary Google Cloud region provisioning the Firestore database', isSecret: false }
+      ];
+
+      res.json({
+        success: true,
+        infrastructure: record,
+        fieldsMeta,
+        runtime: {
+          activeFirestoreDatabaseId,
+          projectId: firebaseConfig?.projectId || null,
+          connectedSseClients: firebaseRealtimeClients.size,
+          lastUpdated: record.updated_at || new Date().toISOString()
+        }
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // --- UPDATE INFRASTRUCTURE AND SETTINGS ON REAL TIME ---
+  app.post("/api/connectionadmin/firebase/infrastructure/update", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const updates = req.body;
+      if (!updates || typeof updates !== 'object') {
+        return res.status(400).json({ success: false, error: "Invalid payload." });
+      }
+
+      // 1. Check if firebase-applet-config.json needs to be updated
+      const keyMap: Record<string, string> = {
+        project_id: 'projectId',
+        firestore_database_id: 'firestoreDatabaseId',
+        api_key: 'apiKey',
+        auth_domain: 'authDomain',
+        storage_bucket: 'storageBucket',
+        messaging_sender_id: 'messagingSenderId',
+        measurement_id: 'measurementId',
+        app_id: 'appId',
+        oauth_client_id: 'oAuthClientId',
+        recaptcha_site_key: 'recaptchaSiteKey'
+      };
+
+      let configChanged = false;
+      let currentFileConfig: any = {};
+      if (fs.existsSync(firebaseConfigPath)) {
+        try {
+          currentFileConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+        } catch (e) {
+          // File read/parse fallback
+        }
+      }
+
+      for (const [infraKey, fileKey] of Object.entries(keyMap)) {
+        if (updates[infraKey] !== undefined && updates[infraKey] !== currentFileConfig[fileKey]) {
+          currentFileConfig[fileKey] = updates[infraKey];
+          configChanged = true;
+        }
+        if (updates[fileKey] !== undefined && updates[fileKey] !== currentFileConfig[fileKey]) {
+          currentFileConfig[fileKey] = updates[fileKey];
+          configChanged = true;
+        }
+      }
+
+      if (configChanged) {
+        safeWriteJsonFile(firebaseConfigPath, currentFileConfig);
+        reloadFirebaseConfig();
+      }
+
+      // 2. Update appConfig
+      if (!appConfig.firebase) appConfig.firebase = {};
+      if (updates.alternate_auth_enabled !== undefined) appConfig.firebase.alternateAuthEnabled = !!updates.alternate_auth_enabled;
+      if (updates.alternateAuthEnabled !== undefined) appConfig.firebase.alternateAuthEnabled = !!updates.alternateAuthEnabled;
+      if (updates.auto_mirror_users_enabled !== undefined) appConfig.firebase.autoMirrorUsersEnabled = !!updates.auto_mirror_users_enabled;
+      if (updates.autoMirrorUsersEnabled !== undefined) appConfig.firebase.autoMirrorUsersEnabled = !!updates.autoMirrorUsersEnabled;
+      safeWriteJsonFile(APP_CONFIG_FILE, appConfig);
+
+      // 3. Update local_db.json
+      const db = loadLocalDb();
+      if (!Array.isArray(db.firebase_infrastructure)) {
+        db.firebase_infrastructure = [];
+      }
+      const currentRecord = db.firebase_infrastructure[0] || { id: 'primary_infrastructure' };
+      const nowIso = new Date().toISOString();
+      const updatedRecord = {
+        ...currentRecord,
+        ...updates,
+        id: 'primary_infrastructure',
+        project_id: updates.project_id ?? currentFileConfig.projectId ?? currentRecord.project_id,
+        firestore_database_id: updates.firestore_database_id ?? currentFileConfig.firestoreDatabaseId ?? currentRecord.firestore_database_id,
+        api_key: updates.api_key ?? currentFileConfig.apiKey ?? currentRecord.api_key,
+        auth_domain: updates.auth_domain ?? currentFileConfig.authDomain ?? currentRecord.auth_domain,
+        storage_bucket: updates.storage_bucket ?? currentFileConfig.storageBucket ?? currentRecord.storage_bucket,
+        messaging_sender_id: updates.messaging_sender_id ?? currentFileConfig.messagingSenderId ?? currentRecord.messaging_sender_id,
+        measurement_id: updates.measurement_id ?? currentFileConfig.measurementId ?? currentRecord.measurement_id,
+        app_id: updates.app_id ?? currentFileConfig.appId ?? currentRecord.app_id,
+        oauth_client_id: updates.oauth_client_id ?? currentFileConfig.oAuthClientId ?? currentRecord.oauth_client_id,
+        recaptcha_site_key: updates.recaptcha_site_key ?? currentFileConfig.recaptchaSiteKey ?? currentRecord.recaptcha_site_key,
+        alternate_auth_enabled: updates.alternate_auth_enabled !== undefined ? updates.alternate_auth_enabled : currentRecord.alternate_auth_enabled,
+        auto_mirror_users_enabled: updates.auto_mirror_users_enabled !== undefined ? updates.auto_mirror_users_enabled : currentRecord.auto_mirror_users_enabled,
+        realtime_sync_enabled: updates.realtime_sync_enabled !== undefined ? updates.realtime_sync_enabled : (currentRecord.realtime_sync_enabled ?? true),
+        sync_interval_seconds: updates.sync_interval_seconds ?? currentRecord.sync_interval_seconds ?? 30,
+        backup_retention_days: updates.backup_retention_days ?? currentRecord.backup_retention_days ?? 30,
+        users_collection_path: updates.users_collection_path ?? currentRecord.users_collection_path ?? 'users',
+        firestore_region: updates.firestore_region ?? currentRecord.firestore_region ?? 'europe-west1',
+        status: 'online',
+        updated_at: nowIso
+      };
+      db.firebase_infrastructure = [updatedRecord];
+      saveLocalDb(db);
+
+      // 4. Update PostgreSQL if connected
+      if (primaryPgPool && primaryPgConnected) {
+        try {
+          await primaryPgPool.query(`
+            INSERT INTO public.firebase_infrastructure (
+              id, project_id, firestore_database_id, api_key, auth_domain, storage_bucket, messaging_sender_id, measurement_id, app_id, oauth_client_id, recaptcha_site_key, alternate_auth_enabled, auto_mirror_users_enabled, realtime_sync_enabled, sync_interval_seconds, backup_retention_days, users_collection_path, firestore_region, status, updated_at
+            ) VALUES (
+              'primary_infrastructure', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+            ) ON CONFLICT (id) DO UPDATE SET
+              project_id = EXCLUDED.project_id,
+              firestore_database_id = EXCLUDED.firestore_database_id,
+              api_key = EXCLUDED.api_key,
+              auth_domain = EXCLUDED.auth_domain,
+              storage_bucket = EXCLUDED.storage_bucket,
+              messaging_sender_id = EXCLUDED.messaging_sender_id,
+              measurement_id = EXCLUDED.measurement_id,
+              app_id = EXCLUDED.app_id,
+              oauth_client_id = EXCLUDED.oauth_client_id,
+              recaptcha_site_key = EXCLUDED.recaptcha_site_key,
+              alternate_auth_enabled = EXCLUDED.alternate_auth_enabled,
+              auto_mirror_users_enabled = EXCLUDED.auto_mirror_users_enabled,
+              realtime_sync_enabled = EXCLUDED.realtime_sync_enabled,
+              sync_interval_seconds = EXCLUDED.sync_interval_seconds,
+              backup_retention_days = EXCLUDED.backup_retention_days,
+              users_collection_path = EXCLUDED.users_collection_path,
+              firestore_region = EXCLUDED.firestore_region,
+              status = EXCLUDED.status,
+              updated_at = EXCLUDED.updated_at;
+          `, [
+            updatedRecord.project_id,
+            updatedRecord.firestore_database_id,
+            updatedRecord.api_key,
+            updatedRecord.auth_domain,
+            updatedRecord.storage_bucket,
+            updatedRecord.messaging_sender_id,
+            updatedRecord.measurement_id,
+            updatedRecord.app_id,
+            updatedRecord.oauth_client_id,
+            updatedRecord.recaptcha_site_key,
+            updatedRecord.alternate_auth_enabled,
+            updatedRecord.auto_mirror_users_enabled,
+            updatedRecord.realtime_sync_enabled,
+            updatedRecord.sync_interval_seconds,
+            updatedRecord.backup_retention_days,
+            updatedRecord.users_collection_path,
+            updatedRecord.firestore_region,
+            updatedRecord.status,
+            nowIso
+          ]);
+        } catch (pgErr: any) {
+          console.warn("[Postgres Infrastructure Update Notice]:", pgErr.message);
+        }
+      }
+
+      // 5. Mirror to Firestore asynchronously
+      upsertFirestoreRecord('firebase_infrastructure', 'primary_infrastructure', updatedRecord).catch(() => {});
+
+      // 6. Broadcast update in real time to all connected clients!
+      broadcastFirebaseRealtime('INFRASTRUCTURE_SETTINGS_UPDATED', {
+        action: 'UPDATE',
+        infrastructure: updatedRecord,
+        timestamp: nowIso
+      });
+
+      res.json({
+        success: true,
+        infrastructure: updatedRecord,
+        activeFirestoreDbId: await getActiveFirestoreDbId(),
+        message: "Firebase Infrastructure and settings updated successfully in real time."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // --- QUICK FILL INFRASTRUCTURE SETTINGS ---
+  app.post("/api/connectionadmin/firebase/infrastructure/quick-fill", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const detected = {
+        id: 'primary_infrastructure',
+        project_id: firebaseConfig?.projectId || 'gen-lang-client-0499210555',
+        firestore_database_id: firebaseConfig?.firestoreDatabaseId || 'ai-studio-errandrunner-6391c5f4-7e90-43e3-90b0-8a0e0e1ce265',
+        api_key: firebaseConfig?.apiKey || 'AIzaSyB8xCJP6sZQIhSswwPJ_mJpAg9VvDh4nrc',
+        auth_domain: firebaseConfig?.authDomain || `${firebaseConfig?.projectId || 'gen-lang-client-0499210555'}.firebaseapp.com`,
+        storage_bucket: firebaseConfig?.storageBucket || `${firebaseConfig?.projectId || 'gen-lang-client-0499210555'}.firebasestorage.app`,
+        messaging_sender_id: firebaseConfig?.messagingSenderId || '130225300272',
+        measurement_id: firebaseConfig?.measurementId || 'G-K3CM3MB6QF',
+        app_id: firebaseConfig?.appId || '1:130225300272:web:d51c2e4995568a207a1ef5',
+        oauth_client_id: firebaseConfig?.oAuthClientId || '130225300272-50lte4no7odisevm23cmjqdos4e5rfkv.apps.googleusercontent.com',
+        recaptcha_site_key: '',
+        alternate_auth_enabled: true,
+        auto_mirror_users_enabled: true,
+        realtime_sync_enabled: true,
+        sync_interval_seconds: 30,
+        backup_retention_days: 30,
+        users_collection_path: 'users',
+        firestore_region: 'europe-west1',
+        status: 'online',
+        updated_at: new Date().toISOString()
+      };
+
+      res.json({
+        success: true,
+        detected,
+        message: "Environment parameters detected successfully."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   app.post("/api/connectionadmin/firebase/auth/test", requireConnectionAdminAuth, async (req, res) => {
     const t0 = Date.now();
     try {
@@ -6873,6 +7323,68 @@ Please proceed with the task according to safety guidelines and update milestone
         error: err.message,
         executionTimeMs: Date.now() - t0
       });
+    }
+  });
+
+  // --- DELETE TABLE DATA & LOCAL STRINGS ENDPOINT ---
+  app.post("/api/connectionadmin/database/delete-table-data", requireConnectionAdminAuth, async (req, res) => {
+    try {
+      const {
+        db = 'all',
+        tables = null,
+        dryRun = false,
+        keepAdmin = false
+      } = req.body || {};
+
+      // Require scripts dynamically to avoid build-time bundling issues
+      const { deleteSupabaseData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-supabase-data.cjs'));
+      const { deleteLocalPgData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-local-pg-data.cjs'));
+      const { deleteLocalJsonData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-local-json-data.cjs'));
+      const { deleteFirestoreData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-firestore-data.cjs'));
+      const { deleteLocalStrings } = nodeRequire(path.join(process.cwd(), 'scripts/delete-local-strings.cjs'));
+
+      const results: any = {};
+      const targetDb = String(db).toLowerCase();
+
+      if (targetDb === 'all' || targetDb === 'supabase' || targetDb === 'primary') {
+        results.supabase = await deleteSupabaseData({ tables, dryRun, force: true, keepAdmin });
+      }
+
+      if (targetDb === 'all' || targetDb === 'local_pg') {
+        results.local_pg = await deleteLocalPgData({ tables, dryRun, force: true, keepAdmin });
+      }
+
+      if (targetDb === 'all' || targetDb === 'local_json' || targetDb === 'json') {
+        results.local_json = deleteLocalJsonData({ tables, dryRun, keepAdmin });
+      }
+
+      if (targetDb === 'all' || targetDb === 'firestore' || targetDb === 'firebase') {
+        results.firestore = await deleteFirestoreData({ tables, dryRun, keepAdmin });
+      }
+
+      if (targetDb === 'all' || targetDb === 'local_strings' || targetDb === 'strings') {
+        results.local_strings = deleteLocalStrings({ dryRun });
+      }
+
+      broadcastFirebaseRealtime('TABLE_DATA_PURGED', {
+        targetDb,
+        dryRun: !!dryRun,
+        keepAdmin: !!keepAdmin,
+        timestamp: new Date().toISOString()
+      });
+
+      res.json({
+        success: true,
+        dryRun: !!dryRun,
+        targetDb,
+        results,
+        message: dryRun
+          ? `Dry run completed successfully for ${targetDb.toUpperCase()}`
+          : `Table data deletion completed successfully for ${targetDb.toUpperCase()}`
+      });
+    } catch (err: any) {
+      console.error("Delete table data API error:", err);
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 

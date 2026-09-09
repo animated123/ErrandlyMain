@@ -495,6 +495,95 @@
       "completedErrands": 0,
       "total_tasks": 0,
       "totalTasks": 0
+    },
+    {
+      "id": "6fMnRaFec0PZQns5MXop3ngLoko1",
+      "phoneNumber": null,
+      "phone_number": null,
+      "completedErrands": 0,
+      "completed_errands": 0,
+      "phoneVerified": false,
+      "phone_verified": false,
+      "biography": null,
+      "is_suspended": false,
+      "isSuspended": false,
+      "suspension_reason": null,
+      "suspensionReason": null,
+      "notificationSettings": {
+        "sms": true,
+        "email": true,
+        "push": true
+      },
+      "notification_settings": {
+        "sms": true,
+        "email": true,
+        "push": true
+      },
+      "emailVerified": false,
+      "email_verified": false,
+      "total_tasks": 0,
+      "totalTasks": 0,
+      "createdAt": "2026-09-06T13:57:19.008Z",
+      "created_at": "2026-09-06T13:57:19.008Z",
+      "itAdmin": true,
+      "it_admin": true,
+      "backend_admin": true,
+      "backendAdmin": "true",
+      "is_online": true,
+      "isOnline": true,
+      "ratingCount": 0,
+      "rating_count": 0,
+      "avatar": "",
+      "lastKnownLocation": {
+        "lat": -1.2899823450696521,
+        "lng": 36.824892183112695
+      },
+      "last_known_location": {
+        "lat": -1.2899823450696521,
+        "lng": 36.824892183112695
+      },
+      "rating": "5.0",
+      "email": "ngugimaina4@gmail.com",
+      "name": null,
+      "phone": "254722603149",
+      "extra_data": {
+        "emailVerificationCode": "529190",
+        "emailVerificationExpires": "2026-09-07T09:15:54.676Z",
+        "emailVerified": true,
+        "isOnline": true,
+        "lastKnownLocation": {
+          "lng": 36.824892183112695,
+          "lat": -1.2899823450696521
+        }
+      },
+      "extraData": {
+        "emailVerificationCode": "529190",
+        "emailVerificationExpires": "2026-09-07T09:15:54.676Z",
+        "emailVerified": true,
+        "isOnline": true,
+        "lastKnownLocation": {
+          "lng": 36.824892183112695,
+          "lat": -1.2899823450696521
+        }
+      },
+      "isAdmin": true,
+      "is_admin": true,
+      "wallet_balance": 10000,
+      "walletBalance": 10000,
+      "balance": 10000,
+      "isRunner": false,
+      "is_runner": false,
+      "updated_at": "2026-09-09T10:18:21.137Z",
+      "updatedAt": "2026-09-09T10:18:21.137Z",
+      "is_verified": false,
+      "isVerified": false,
+      "profile_photo": "",
+      "profilePhoto": "",
+      "theme": "light",
+      "password_hash": null,
+      "passwordHash": null,
+      "username": "NGUG",
+      "role": "admin"
     }
   ],
   "errands": [],
@@ -5029,6 +5118,121 @@
       "phone": "254752269301",
       "avatar": "",
       "biography": null
+    },
+    {
+      "id": "6fMnRaFec0PZQns5MXop3ngLoko1",
+      "is_admin": true,
+      "isAdmin": true,
+      "theme": "light",
+      "completedErrands": 0,
+      "completed_errands": 0,
+      "is_online": true,
+      "isOnline": true,
+      "notification_settings": {
+        "email": true,
+        "push": true,
+        "sms": true
+      },
+      "notificationSettings": {
+        "email": true,
+        "push": true,
+        "sms": true
+      },
+      "suspensionReason": null,
+      "suspension_reason": null,
+      "email": "ngugimaina4@gmail.com",
+      "passwordHash": null,
+      "password_hash": null,
+      "extra_data": {
+        "emailVerificationExpires": "2026-09-07T09:15:54.676Z",
+        "isOnline": true,
+        "emailVerified": true,
+        "emailVerificationCode": "529190",
+        "lastKnownLocation": {
+          "lat": -1.2899823450696521,
+          "lng": 36.824892183112695
+        }
+      },
+      "extraData": {
+        "emailVerificationExpires": "2026-09-07T09:15:54.676Z",
+        "isOnline": true,
+        "emailVerified": true,
+        "emailVerificationCode": "529190",
+        "lastKnownLocation": {
+          "lat": -1.2899823450696521,
+          "lng": 36.824892183112695
+        }
+      },
+      "rating_count": 0,
+      "ratingCount": 0,
+      "phoneNumber": null,
+      "phone_number": null,
+      "isSuspended": false,
+      "is_suspended": false,
+      "itAdmin": true,
+      "it_admin": true,
+      "lastKnownLocation": {
+        "lat": -1.2899823450696521,
+        "lng": 36.824892183112695
+      },
+      "last_known_location": {
+        "lat": -1.2899823450696521,
+        "lng": 36.824892183112695
+      },
+      "backend_admin": "true",
+      "backendAdmin": "true",
+      "isRunner": false,
+      "is_runner": false,
+      "wallet_balance": 10000,
+      "walletBalance": 10000,
+      "phone_verified": false,
+      "phoneVerified": false,
+      "updatedAt": "2026-09-09T10:17:38.297Z",
+      "updated_at": "2026-09-09T10:17:38.297Z",
+      "email_verified": false,
+      "emailVerified": false,
+      "is_verified": false,
+      "isVerified": false,
+      "balance": 10000,
+      "totalTasks": 0,
+      "total_tasks": 0,
+      "role": "admin",
+      "name": null,
+      "avatar": "",
+      "created_at": "2026-09-06T13:57:19.008Z",
+      "createdAt": "2026-09-06T13:57:19.008Z",
+      "phone": "254722603149",
+      "rating": "5.0",
+      "profile_photo": "",
+      "profilePhoto": "",
+      "biography": null,
+      "username": "NGUG"
+    }
+  ],
+  "firebase_infrastructure": [
+    {
+      "id": "primary_infrastructure",
+      "project_id": "gen-lang-client-0499210555",
+      "firestore_database_id": "ai-studio-errandrunner-6391c5f4-7e90-43e3-90b0-8a0e0e1ce265",
+      "api_key": "AIzaSyB8xCJP6sZQIhSswwPJ_mJpAg9VvDh4nrc",
+      "auth_domain": "gen-lang-client-0499210555.firebaseapp.com",
+      "storage_bucket": "gen-lang-client-0499210555.firebasestorage.app",
+      "messaging_sender_id": "130225300272",
+      "measurement_id": "G-K3CM3MB6QF",
+      "app_id": "1:130225300272:web:d51c2e4995568a207a1ef5",
+      "oauth_client_id": "130225300272-50lte4no7odisevm23cmjqdos4e5rfkv.apps.googleusercontent.com",
+      "recaptcha_site_key": "",
+      "alternate_auth_enabled": true,
+      "auto_mirror_users_enabled": true,
+      "realtime_sync_enabled": true,
+      "sync_interval_seconds": 30,
+      "backup_retention_days": 30,
+      "users_collection_path": "users",
+      "firestore_region": "europe-west1",
+      "status": "online",
+      "last_synced_at": "2026-09-09T09:20:11.871Z",
+      "created_at": "2026-09-09T09:20:11.871Z",
+      "updated_at": "2026-09-09T09:27:11.810Z"
     }
   ]
 }

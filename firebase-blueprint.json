@@ -157,9 +157,42 @@
         "updated_at": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "email", "name"]
+    },
+    "FirebaseInfrastructure": {
+      "title": "FirebaseInfrastructure",
+      "description": "Firebase Infrastructure and real-time settings configuration.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "projectId": { "type": "string" },
+        "firestoreDatabaseId": { "type": "string" },
+        "apiKey": { "type": "string" },
+        "authDomain": { "type": "string" },
+        "appId": { "type": "string" },
+        "storageBucket": { "type": "string" },
+        "messagingSenderId": { "type": "string" },
+        "measurementId": { "type": "string" },
+        "oAuthClientId": { "type": "string" },
+        "recaptchaSiteKey": { "type": "string" },
+        "alternateAuthEnabled": { "type": "boolean" },
+        "autoMirrorUsersEnabled": { "type": "boolean" },
+        "realtimeSyncEnabled": { "type": "boolean" },
+        "syncIntervalSeconds": { "type": "number" },
+        "backupRetentionDays": { "type": "number" },
+        "usersCollectionPath": { "type": "string" },
+        "firestoreRegion": { "type": "string" },
+        "status": { "type": "string" },
+        "lastSyncedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "projectId", "firestoreDatabaseId"]
     }
   },
   "firestore": {
+    "/firebase_infrastructure/{infraId}": {
+      "schema": "FirebaseInfrastructure",
+      "description": "Collection of Firebase Infrastructure and real-time settings configurations."
+    },
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "Collection of user accounts and profile documents."

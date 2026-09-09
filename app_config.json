@@ -13,5 +13,6 @@
     "user": "postgres",
     "password": "Company1.Codexict",
     "name": "Fallback_Errandly"
-  }
+  },
+  "firebase": {}
 }
