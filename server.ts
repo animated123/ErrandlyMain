@@ -11,9 +11,13 @@ import pg from 'pg';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
-import { createRequire } from 'module';
-
-const nodeRequire = typeof require === 'function' ? require : createRequire(path.join(process.cwd(), 'package.json'));
+import {
+  deleteSupabaseData,
+  deleteLocalPgData,
+  deleteLocalJsonData,
+  deleteFirestoreData,
+  deleteLocalStrings
+} from './services/tableDataDeletionService.js';
 
 // Load .env or .env1 file if present into process.env before anything else
 try {
@@ -7335,13 +7339,6 @@ Please proceed with the task according to safety guidelines and update milestone
         dryRun = false,
         keepAdmin = false
       } = req.body || {};
-
-      // Require scripts dynamically to avoid build-time bundling issues
-      const { deleteSupabaseData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-supabase-data.cjs'));
-      const { deleteLocalPgData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-local-pg-data.cjs'));
-      const { deleteLocalJsonData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-local-json-data.cjs'));
-      const { deleteFirestoreData } = nodeRequire(path.join(process.cwd(), 'scripts/delete-firestore-data.cjs'));
-      const { deleteLocalStrings } = nodeRequire(path.join(process.cwd(), 'scripts/delete-local-strings.cjs'));
 
       const results: any = {};
       const targetDb = String(db).toLowerCase();
