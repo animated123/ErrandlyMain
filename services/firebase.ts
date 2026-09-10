@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, setLogLevel } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 
@@ -32,6 +32,13 @@ if (!firebaseConfig || !firebaseConfig.apiKey) {
   }
 }
 
+// Silence internal Firestore console warnings when running against offline/unprovisioned database
+try {
+  setLogLevel('silent');
+} catch (_) {
+  // Ignore in environments without loglevel support
+}
+
 // Ensure we have a valid config before initializing
 let app: any = null;
 export let auth: any = null;
@@ -60,3 +67,4 @@ if (firebaseConfig && firebaseConfig.apiKey) {
 } else {
   console.error("Firebase is not initialized due to missing configuration.");
 }
+

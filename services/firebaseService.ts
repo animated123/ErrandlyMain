@@ -1550,13 +1550,16 @@ export const firebaseService = {
         }
       }
 
-      // 3. Sync to Firebase Firestore /users/${finalId}
+      // 3. Sync to Firebase Firestore /users/${finalId} (with offline timeout guard)
       if (db) {
         try {
           const { doc, setDoc } = await import('firebase/firestore');
-          await setDoc(doc(db, 'users', finalId), profilePayload, { merge: true });
+          await Promise.race([
+            setDoc(doc(db, 'users', finalId), profilePayload, { merge: true }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2500))
+          ]);
         } catch (fbErr) {
-          console.debug('[syncUserSession] Firestore sync skipped:', fbErr);
+          console.debug('[syncUserSession] Firestore sync skipped (service offline):', fbErr);
         }
       }
 
@@ -1627,66 +1630,95 @@ export const firebaseService = {
       if (!input.includes('@')) {
         const formattedPhone = actionService.formatPhoneNumber(input);
         if (supabase) {
-          const { data: userRow } = await supabase
-            .from('profiles')
-            .select('email')
-            .eq('phone', formattedPhone)
-            .maybeSingle();
-          if (userRow?.email) {
-            targetEmail = userRow.email.toLowerCase();
+          try {
+            const { data: userRow } = await supabase
+              .from('profiles')
+              .select('email')
+              .eq('phone', formattedPhone)
+              .maybeSingle();
+            if (userRow?.email) {
+              targetEmail = userRow.email.toLowerCase();
+            }
+          } catch (phoneErr) {
+            console.debug('[Auth Login] Phone lookup note:', phoneErr);
           }
         }
       }
 
-      // Fastest / Most Recent service race: Run Supabase Auth & Firebase Auth in parallel
+      // 1. Service: Supabase Auth (with fast timeout)
       const trySupabase = async () => {
-        const { data, error } = await supabase.auth.signInWithPassword({
+        if (!supabase?.auth) throw new Error('Supabase Auth offline');
+        const supaPromise = supabase.auth.signInWithPassword({
           email: targetEmail,
           password: pass
         });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Supabase Auth timeout')), 4000)
+        );
+        const { data, error } = await Promise.race([supaPromise, timeoutPromise]) as any;
         if (error) throw error;
         if (!data?.user) throw new Error('No user returned from Supabase Auth');
         return { source: 'supabase' as const, authUser: data.user, session: data.session };
       };
 
+      // 2. Service: Firebase Auth (with fast timeout)
       const tryFirebase = async () => {
         if (!auth || !auth.app) throw new Error('Firebase Auth not available');
         const { signInWithEmailAndPassword } = await import('firebase/auth');
-        const cred = await signInWithEmailAndPassword(auth, targetEmail, pass);
+        const fbPromise = signInWithEmailAndPassword(auth, targetEmail, pass);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Firebase Auth timeout')), 4000)
+        );
+        const cred = await Promise.race([fbPromise, timeoutPromise]) as any;
         if (!cred?.user) throw new Error('No user returned from Firebase Auth');
         return { source: 'firebase' as const, authUser: cred.user, session: null };
       };
 
-      let authResult: { source: 'supabase' | 'firebase'; authUser: any; session: any } | null = null;
+      // 3. Service: Backend Secure Auth API (/api/auth/login)
+      const tryBackendAuth = async () => {
+        const resData = await firebaseService._callAuthApi('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: targetEmail, password: pass })
+        });
+        if (resData?.success && resData?.user) {
+          return { source: 'backend' as const, authUser: resData.user, session: { access_token: resData.token } };
+        }
+        throw new Error(resData?.error || 'Backend authentication failed');
+      };
 
+      let authResult: { source: 'supabase' | 'firebase' | 'backend'; authUser: any; session: any } | null = null;
+
+      // Primary strategy: Race the available cloud providers (Supabase & Firebase)
       try {
-        // Promise.any resolves with the fastest successful service!
         authResult = await Promise.any([trySupabase(), tryFirebase()]);
       } catch (raceErr) {
-        // Fallback: check direct backend auth endpoint if existing custom account
+        console.info('[Auth Login] Cloud auth providers offline or failed, seamlessly failing over to Backend Auth Service...');
+      }
+
+      // Alternative service failover: If Firebase/Supabase are offline or failed, use Backend Auth
+      if (!authResult) {
         try {
-          const resData = await firebaseService._callAuthApi('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: targetEmail, password: pass })
-          });
-          if (resData?.success && resData?.user) {
-            const mappedUser = mapSupabaseToProfile(resData.user);
-            localStorage.setItem('errand_runner_jwt_token', resData.token);
-            localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
-            firebaseService._broadcastAuthChange(mappedUser);
-            return mappedUser;
-          }
-        } catch (apiErr) {
-          throw new Error('Invalid email/phone or password. Please verify your credentials.');
+          authResult = await tryBackendAuth();
+        } catch (apiErr: any) {
+          throw new Error(apiErr?.message || 'Invalid email/phone or password. Please verify your credentials.');
         }
       }
 
       if (!authResult) {
-        throw new Error('Authentication failed');
+        throw new Error('Authentication failed across all available services.');
       }
 
-      // Copy directly to database profiles & sync to Firebase
+      if (authResult.source === 'backend') {
+        const mappedUser = mapSupabaseToProfile(authResult.authUser);
+        const token = authResult.session?.access_token || `token_${mappedUser.id}_${Date.now()}`;
+        localStorage.setItem('errand_runner_jwt_token', token);
+        localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
+        firebaseService._broadcastAuthChange(mappedUser);
+        return mappedUser;
+      }
+
+      // Copy directly to database profiles & sync to Firebase if online
       const mappedUser = await firebaseService.syncUserSession(authResult.authUser, authResult.source, authResult.session);
       firebaseService._broadcastAuthChange(mappedUser);
       return mappedUser;
@@ -1705,49 +1737,93 @@ export const firebaseService = {
 
       const lowercaseEmail = email.toLowerCase().trim();
 
-      // 1. Create in Supabase Auth
+      // Step 1: Register in Backend Database Service first (creates profile + bcrypt hash)
+      let backendUser: any = null;
+      let backendToken: string | null = null;
+      try {
+        const backendRes = await firebaseService._callAuthApi('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            email: lowercaseEmail,
+            phone: formattedPhone,
+            password: pass,
+            role: role || UserRole.REQUESTER
+          })
+        });
+        if (backendRes?.success && backendRes?.user) {
+          backendUser = backendRes.user;
+          backendToken = backendRes.token;
+        } else if (backendRes?.error) {
+          if (String(backendRes.error).toLowerCase().includes('already registered')) {
+            throw new Error(backendRes.error);
+          }
+        }
+      } catch (backendErr: any) {
+        if (backendErr?.message && backendErr.message.toLowerCase().includes('already registered')) {
+          throw backendErr;
+        }
+        console.warn('[Register] Backend registration fallback note:', backendErr?.message || backendErr);
+      }
+
+      // Step 2: Alternative Service: Supabase Auth
       let supaUser: any = null;
       let supaSession: any = null;
       try {
-        const { data, error } = await supabase.auth.signUp({
-          email: lowercaseEmail,
-          password: pass,
-          options: {
-            data: {
-              name,
-              username: name,
-              phone: formattedPhone,
-              role: role || UserRole.REQUESTER
+        if (supabase?.auth) {
+          const supaPromise = supabase.auth.signUp({
+            email: lowercaseEmail,
+            password: pass,
+            options: {
+              data: {
+                name,
+                username: name,
+                phone: formattedPhone,
+                role: role || UserRole.REQUESTER
+              }
             }
+          });
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Supabase signUp timeout')), 4000)
+          );
+          const { data, error } = await Promise.race([supaPromise, timeoutPromise]) as any;
+          if (error) {
+            console.warn('[Register] Supabase signUp note:', error.message);
+          } else {
+            supaUser = data?.user;
+            supaSession = data?.session;
           }
-        });
-        if (error) {
-          console.warn('[Register] Supabase signUp note:', error.message);
-        } else {
-          supaUser = data.user;
-          supaSession = data.session;
         }
       } catch (err: any) {
-        console.warn('[Register] Supabase auth error:', err.message);
+        console.warn('[Register] Supabase auth note (service offline or failed):', err?.message || err);
       }
 
-      // 2. Dual-sync: Create in Firebase Auth as fallback
+      // Step 3: Alternative Service: Firebase Auth
       let fbUser: any = null;
       if (auth && auth.app) {
         try {
           const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
-          const cred = await createUserWithEmailAndPassword(auth, lowercaseEmail, pass);
-          if (cred.user) {
-            await updateProfile(cred.user, { displayName: name });
+          const fbPromise = createUserWithEmailAndPassword(auth, lowercaseEmail, pass);
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Firebase signUp timeout')), 4000)
+          );
+          const cred = await Promise.race([fbPromise, timeoutPromise]) as any;
+          if (cred?.user) {
+            await updateProfile(cred.user, { displayName: name }).catch(() => {});
             fbUser = cred.user;
           }
         } catch (fbErr: any) {
-          console.warn('[Register] Firebase auth dual-sync note:', fbErr.message);
+          if (fbErr?.code === 'auth/email-already-in-use' || String(fbErr?.message).includes('email-already-in-use')) {
+            console.info('[Register] Email already registered in Firebase; syncing profile with database.');
+          } else {
+            console.warn('[Register] Firebase auth note (service offline or failed):', fbErr?.message || fbErr);
+          }
         }
       }
 
-      // 3. Copy user profile directly to database profiles table (no bcrypt, no password_hash in DB!)
-      const userId = supaUser?.id || fbUser?.uid || `usr_${Math.random().toString(36).substring(2, 11)}`;
+      // Step 4: Resolve user profile ID across services
+      const userId = backendUser?.id || supaUser?.id || fbUser?.uid || `usr_${Math.random().toString(36).substring(2, 11)}`;
       const isSuperAdmin = lowercaseEmail === 'errands@codexict.co.ke' ||
                            lowercaseEmail === 'ngugimaina4@gmail.com' ||
                            lowercaseEmail.includes('supaadmin') ||
@@ -1769,22 +1845,30 @@ export const firebaseService = {
         updated_at: new Date().toISOString()
       };
 
+      // Upsert to primary database
       if (supabase) {
-        await supabase.from('profiles').upsert(profilePayload);
+        try {
+          await supabase.from('profiles').upsert(profilePayload);
+        } catch (dbErr) {
+          console.warn('[Register] Profiles table upsert note:', dbErr);
+        }
       }
 
-      // 4. Dual-sync to Firestore
+      // Safe Firestore sync: only if online, with timeout and silent error guard
       if (db) {
         try {
           const { doc, setDoc } = await import('firebase/firestore');
-          await setDoc(doc(db, 'users', userId), profilePayload, { merge: true });
+          await Promise.race([
+            setDoc(doc(db, 'users', userId), profilePayload, { merge: true }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 2500))
+          ]);
         } catch (fbErr) {
-          console.debug('[Register] Firestore sync skipped:', fbErr);
+          console.debug('[Register] Firestore sync skipped (service offline):', fbErr);
         }
       }
 
       const mappedUser = mapSupabaseToProfile(profilePayload);
-      const token = supaSession?.access_token || `token_${userId}_${Date.now()}`;
+      const token = supaSession?.access_token || backendToken || `token_${userId}_${Date.now()}`;
       localStorage.setItem('errand_runner_jwt_token', token);
       localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
 

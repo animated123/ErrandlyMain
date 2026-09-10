@@ -1,8 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 import { API_BASE_URL } from './apiConfig';
 
-const SUPABASE_URL = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || 
+export const cleanSupabaseUrl = (url?: string): string => {
+  if (!url || typeof url !== 'string') return 'https://ksflmdvqvseiprebgrcp.supabase.co';
+  let clean = url.trim();
+  clean = clean.replace(/\/rest(\/v1)?\/?$/i, '');
+  clean = clean.replace(/\/auth(\/v1)?\/?$/i, '');
+  clean = clean.replace(/\/+$/, '');
+  return clean || 'https://ksflmdvqvseiprebgrcp.supabase.co';
+};
+
+const rawSupabaseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) || 
   'https://ksflmdvqvseiprebgrcp.supabase.co';
+
+const SUPABASE_URL = cleanSupabaseUrl(rawSupabaseUrl);
 
 const SUPABASE_ANON_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) || 
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzZmxtZHZxdnNlaXByZWJncmNwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5ODI1MzIsImV4cCI6MjA5MDU1ODUzMn0.kugwrWw_J8qXY9b037qOgvMLTcyTRu4Wo0Ji13YFA8c';

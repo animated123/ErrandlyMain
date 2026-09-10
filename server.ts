@@ -1399,7 +1399,16 @@ function buildMockPostgrestBuilder(tableName: string, chainCalls: any[] = []): a
   return builder;
 }
 
-const SUPABASE_SERVER_URL = process.env.VITE_SUPABASE_URL || 'https://ksflmdvqvseiprebgrcp.supabase.co';
+const cleanSupabaseServerUrl = (url?: string): string => {
+  if (!url || typeof url !== 'string') return 'https://ksflmdvqvseiprebgrcp.supabase.co';
+  let clean = url.trim();
+  clean = clean.replace(/\/rest(\/v1)?\/?$/i, '');
+  clean = clean.replace(/\/auth(\/v1)?\/?$/i, '');
+  clean = clean.replace(/\/+$/, '');
+  return clean || 'https://ksflmdvqvseiprebgrcp.supabase.co';
+};
+
+const SUPABASE_SERVER_URL = cleanSupabaseServerUrl(process.env.VITE_SUPABASE_URL);
 const SUPABASE_SERVER_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 
 const supabaseAdminClient = createSupabaseClient(SUPABASE_SERVER_URL, SUPABASE_SERVER_SERVICE_KEY, {
@@ -2405,16 +2414,16 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
   };
 }
 
-// Background auto-sync daemon: Enforces "Always sync either if there is a data mismatch" continuously
+// Background auto-sync daemon: Enforces consistency across database sources periodically
 setInterval(async () => {
   try {
     if ((primaryPgPool && primaryPgConnected) || (localPgPool && localPgConnected)) {
       await syncDataBetweenSources({ autoHeal: true });
     }
-  } catch (err: any) {
+  } catch (_err: any) {
     // Fail silently in background
   }
-}, 25000);
+}, 300000);
 
 // Initial boot-up sync check
 setTimeout(async () => {
@@ -4208,6 +4217,8 @@ Please proceed with the task according to safety guidelines and update milestone
                            lowercaseEmail.includes('supaadmin') || 
                            lowercaseEmail.startsWith('supaadmin@');
 
+      const hashedPassword = await bcrypt.hash(password, 10);
+
       const profilePayload = {
         id: userId,
         email: lowercaseEmail,
@@ -4216,6 +4227,7 @@ Please proceed with the task according to safety guidelines and update milestone
         role: isSuperAdmin ? 'ADMIN' : 'REQUESTER',
         is_runner: false,
         is_admin: isSuperAdmin,
+        password_hash: hashedPassword,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         wallet_balance: 0,
@@ -4240,7 +4252,8 @@ Please proceed with the task according to safety guidelines and update milestone
       );
 
       console.log(`[JWT Auth] Successfully registered user: ${lowercaseEmail} with ID: ${userId}`);
-      res.json({ success: true, token, user: profilePayload });
+      const { password_hash, ...safeUser } = profilePayload;
+      res.json({ success: true, token, user: safeUser });
     } catch (err: any) {
       console.error("[JWT Register Error]", err);
       res.status(500).json({ error: err.message || "Registration failed" });
@@ -4345,7 +4358,7 @@ Please proceed with the task according to safety guidelines and update milestone
 
   app.get("/api/config/auth", (req, res) => {
     res.json({
-      supabaseUrl: process.env.VITE_SUPABASE_URL || 'https://ksflmdvqvseiprebgrcp.supabase.co',
+      supabaseUrl: SUPABASE_SERVER_URL,
       supabaseAnonKey: process.env.VITE_SUPABASE_ANON_KEY || ''
     });
   });
