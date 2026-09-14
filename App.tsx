@@ -59,7 +59,12 @@ import MapComponent from './src/components/MapComponent';
 import UserAvatar from './src/components/UserAvatar';
 import WalletModal from './src/components/Wallet';
 import RunnerRegistrationModal from './src/components/RunnerRegistrationModal';
-import { FAQModal, PrivacyPolicyModal, TermsOfServiceModal } from './src/components/LegalModals';
+import { 
+  FAQModal, PrivacyPolicyModal, TermsOfServiceModal 
+} from './src/components/LegalModals';
+import { 
+  HelpPage
+} from './src/components/InfoPages';
 import { LandingPage } from './src/components/LandingPage';
 import { PublicLegalPage } from './src/components/PublicLegalPage';
 import RunnerApplicationPage from './src/components/RunnerApplicationPage';
@@ -226,7 +231,7 @@ export default function App() {
   });
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [profileView, setProfileView] = useState<'main' | 'edit' | 'history' | 'apply-runner'>('main');
+  const [profileView, setProfileView] = useState<'main' | 'edit' | 'history' | 'apply-runner' | 'help'>('main');
   const [runnerProfileTab, setRunnerProfileTab] = useState<'overview' | 'earnings' | 'tools' | 'settings'>('overview');
   const [runnerOnline, setRunnerOnline] = useState<boolean>(true);
   const [runnerChecklist, setRunnerChecklist] = useState<Array<{ id: string; text: string; completed: boolean }>>([
@@ -1085,6 +1090,7 @@ export default function App() {
             onOpenPrivacyPolicy={() => setShowPrivacyPolicy(true)}
             onOpenTermsOfService={() => setShowTermsOfService(true)}
             onNavigateTo={(path) => navigateTo(path)}
+            user={user}
           />
           {selectedErrand && (
             <ErrandDetailScreenLocal 
@@ -1856,7 +1862,7 @@ export default function App() {
                 
                 <div className="pt-4 border-t border-border space-y-1.5 text-left">
                   <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-3 pb-1">Support & Policies</p>
-                  <ProfileMenuItem icon={<HelpCircle size={16} />} label="Frequently Asked Questions" onClick={() => setShowFAQ(true)} />
+                  <ProfileMenuItem icon={<HelpCircle size={16} />} label="Complaint Center & FAQ" onClick={() => { setProfileView('help'); window.scrollTo(0,0); }} />
                   <ProfileMenuItem icon={<Calculator size={16} />} label="Errand Price Guide" onClick={() => setShowPriceGuideModal(true)} />
                   <ProfileMenuItem icon={<Phone size={16} />} label="Contact Helpline" onClick={() => setShowContactUsModal(true)} />
                   <ProfileMenuItem icon={<ShieldAlert size={16} />} label="Privacy Policy" onClick={() => setShowPrivacyPolicy(true)} />
@@ -2000,6 +2006,7 @@ export default function App() {
                           {user.role !== UserRole.RUNNER && (
                             <ProfileMenuItem icon={<Briefcase size={16} />} label="Apply to Become a Runner" onClick={() => navigateTo('/application-runner')} />
                           )}
+                          <ProfileMenuItem icon={<HelpCircle size={16} />} label="Complaint Center & FAQ" onClick={() => { setProfileView('help'); window.scrollTo(0,0); }} />
                           <div className="h-px bg-border my-1 mx-2" />
                           <ProfileMenuItem icon={<LogOut size={16} />} label="Sign Out" onClick={() => setShowLogoutConfirm(true)} destructive />
                         </div>
@@ -2509,6 +2516,10 @@ export default function App() {
                                       <HelpCircle size={14} className="text-primary" /> Support & Policies
                                     </h4>
                                     <div className="space-y-1">
+                                      <button onClick={() => { setProfileView('help'); window.scrollTo(0,0); }} className="w-full text-left py-2.5 px-3 hover:bg-secondary rounded-xl text-xs font-medium text-foreground transition-colors flex items-center justify-between">
+                                        <span>Complaint Center & FAQ</span>
+                                        <ChevronRight size={14} className="text-muted-foreground" />
+                                      </button>
                                       <button onClick={() => setShowFAQ(true)} className="w-full text-left py-2.5 px-3 hover:bg-secondary rounded-xl text-xs font-medium text-foreground transition-colors flex items-center justify-between">
                                         <span>Community FAQs</span>
                                         <ChevronRight size={14} className="text-muted-foreground" />
@@ -2559,6 +2570,22 @@ export default function App() {
                     onBack={() => setProfileView('main')} 
                     existingApplication={userApplication}
                   />
+                )}
+
+                {profileView === 'help' && user && (
+                  <div className="animate-in slide-in-from-right-4 duration-300">
+                    <HelpPage 
+                      onBack={() => setProfileView('main')} 
+                      user={{
+                        id: user.id,
+                        name: user.username || user.email?.split('@')[0] || 'User',
+                        email: user.email,
+                        phone: user.phone,
+                        role: user.role || 'REQUESTER'
+                      }}
+                      appSettings={appSettings}
+                    />
+                  </div>
                 )}
 
                 {profileView === 'history' && (

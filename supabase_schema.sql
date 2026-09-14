@@ -221,6 +221,37 @@ CREATE POLICY "Allow anyone to view settings" ON public.settings FOR SELECT USIN
 DROP POLICY IF EXISTS "Allow settings edit" ON public.settings;
 CREATE POLICY "Allow settings edit" ON public.settings FOR ALL USING (true);
 
+-- 8. COMPLAINTS Table (Ticketing Platform)
+CREATE TABLE IF NOT EXISTS public.complaints (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ticket_number TEXT UNIQUE NOT NULL,
+    user_id UUID NOT NULL,
+    user_name TEXT NOT NULL,
+    user_email TEXT NOT NULL,
+    user_phone TEXT,
+    role TEXT NOT NULL, -- CLIENT or RUNNER
+    subject TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT DEFAULT 'OPEN', -- OPEN, IN_PROGRESS, RESOLVED, CLOSED
+    priority TEXT DEFAULT 'MEDIUM', -- LOW, MEDIUM, HIGH, URGENT
+    errand_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Enable RLS for Complaints
+ALTER TABLE public.complaints ENABLE ROW LEVEL SECURITY;
+
+-- Complaints Policies
+DROP POLICY IF EXISTS "Users can view their own complaints" ON public.complaints;
+CREATE POLICY "Users can view their own complaints" ON public.complaints FOR SELECT USING (auth.uid()::text = user_id::text);
+
+DROP POLICY IF EXISTS "Users can insert their own complaints" ON public.complaints;
+CREATE POLICY "Users can insert their own complaints" ON public.complaints FOR INSERT WITH CHECK (auth.uid()::text = user_id::text OR true); -- Allowing true for public form if needed, but usually auth is better
+
+DROP POLICY IF EXISTS "Admins can view all complaints" ON public.complaints;
+CREATE POLICY "Admins can view all complaints" ON public.complaints FOR ALL USING (true); -- Simplified for now
+
 -- Insert Default Settings
 INSERT INTO public.settings (id, primary_color, logo_url, icon_url, dashboard_hero_url, default_ui_scale, logo_scale, logo_variant, saka_keja_base_fee, saka_keja_percentage)
 VALUES ('app', '#2891e2', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png', 1.1, 3, 'original', 1200, 8)

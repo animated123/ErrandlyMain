@@ -1,5 +1,6 @@
-import React from 'react';
-import { motion } from 'motion/react';
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import axios from 'axios';
 import { 
   ShieldCheck, 
   Zap, 
@@ -29,14 +30,19 @@ import {
   Activity,
   Droplets,
   UserCheck,
-  Heart
+  AlertCircle,
+  Send,
+  Loader2,
+  FileText
 } from 'lucide-react';
 import { Logo } from './Logo';
+import { API_BASE_URL } from '../../services/apiConfig';
 
 interface InfoPageProps {
   onBack: () => void;
   onStartApplication?: () => void;
   appSettings?: any;
+  user?: any;
 }
 
 const PageWrapper: React.FC<{ children: React.ReactNode; title: string; onBack: () => void }> = ({ children, title, onBack }) => (
@@ -246,7 +252,50 @@ export const NetworkStandardsPage: React.FC<InfoPageProps> = ({ onBack }) => {
   );
 };
 
-export const HelpPage: React.FC<InfoPageProps> = ({ onBack }) => {
+export const HelpPage: React.FC<InfoPageProps> = ({ onBack, user }) => {
+  const [complaintForm, setComplaintForm] = useState({
+    subject: '',
+    description: '',
+    priority: 'MEDIUM'
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [ticketResult, setTicketResult] = useState<{ success: boolean; ticketNumber?: string; error?: string } | null>(null);
+
+  const handleSubmitComplaint = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) {
+      alert("Please sign in to log a complaint.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setTicketResult(null);
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/complaints`, {
+        userId: user.id,
+        userName: user.name,
+        userEmail: user.email,
+        userPhone: user.phone,
+        role: user.role,
+        subject: complaintForm.subject,
+        description: complaintForm.description,
+        priority: complaintForm.priority
+      });
+
+      if (response.data.success) {
+        setTicketResult({ success: true, ticketNumber: response.data.ticketNumber });
+        setComplaintForm({ subject: '', description: '', priority: 'MEDIUM' });
+      } else {
+        setTicketResult({ success: false, error: response.data.error || "Failed to log complaint" });
+      }
+    } catch (err: any) {
+      setTicketResult({ success: false, error: err.response?.data?.error || err.message || "An error occurred" });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <PageWrapper title="Help Center" onBack={onBack}>
       <div className="text-center mb-10">
@@ -258,44 +307,183 @@ export const HelpPage: React.FC<InfoPageProps> = ({ onBack }) => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-        <div className="space-y-6">
-          <h2 className="text-2xl font-black text-[#0a2e5c] dark:text-white flex items-center gap-3">
-             <HelpCircle className="text-primary" />
-             Frequently Asked Questions
-          </h2>
-          {[
-            "How do I track my runner?",
-            "What happens if my package is delayed?",
-            "How do I audit my shopping receipt?",
-            "Can I request a specific runner?"
-          ].map((q, i) => (
-            <div key={i} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl cursor-pointer hover:border-primary/40 transition-colors group">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-black text-slate-700 dark:text-slate-300">{q}</span>
-                <ChevronRight size={16} className="text-slate-400 group-hover:text-primary transition-colors" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-16">
+        <div className="space-y-8">
+          <div className="space-y-6">
+            <h2 className="text-2xl font-black text-[#0a2e5c] dark:text-white flex items-center gap-3">
+               <HelpCircle className="text-primary" />
+               Frequently Asked Questions
+            </h2>
+            {[
+              "How do I track my runner?",
+              "What happens if my package is delayed?",
+              "How do I audit my shopping receipt?",
+              "Can I request a specific runner?"
+            ].map((q, i) => (
+              <div key={i} className="p-6 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl cursor-pointer hover:border-primary/40 transition-colors group">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-black text-slate-700 dark:text-slate-300">{q}</span>
+                  <ChevronRight size={16} className="text-slate-400 group-hover:text-primary transition-colors" />
+                </div>
               </div>
+            ))}
+          </div>
+
+          <div className="space-y-6">
+            <h2 className="text-2xl font-black text-[#0a2e5c] dark:text-white flex items-center gap-3">
+               <Mail className="text-primary" />
+               Direct Lines
+            </h2>
+            <div className="p-6 bg-[#0a2e5c] text-white rounded-[2rem] space-y-4 shadow-xl">
+               <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-[#2891e2] mb-1">Email Support</p>
+                  <p className="text-xl font-bold">ops@coordinate.net</p>
+               </div>
+               <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-[#2891e2] mb-1">WhatsApp Hotline</p>
+                  <p className="text-xl font-bold">+254 700 000 000</p>
+               </div>
+               <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-[#2891e2] mb-1">Operational Hours</p>
+                  <p className="text-xl font-bold">24/7 Live Response</p>
+               </div>
             </div>
-          ))}
+          </div>
         </div>
+
         <div className="space-y-6">
-          <h2 className="text-2xl font-black text-[#0a2e5c] dark:text-white flex items-center gap-3">
-             <Mail className="text-primary" />
-             Direct Lines
-          </h2>
-          <div className="p-6 bg-[#0a2e5c] text-white rounded-[2rem] space-y-4">
-             <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-[#2891e2] mb-1">Email Support</p>
-                <p className="text-xl font-bold">ops@coordinate.net</p>
-             </div>
-             <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-[#2891e2] mb-1">WhatsApp Hotline</p>
-                <p className="text-xl font-bold">+254 700 000 000</p>
-             </div>
-             <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-[#2891e2] mb-1">Operational Hours</p>
-                <p className="text-xl font-bold">24/7 Live Response</p>
-             </div>
+          <div className="p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2.5rem] shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-16 -mt-16"></div>
+            
+            <h2 className="text-2xl font-black text-[#0a2e5c] dark:text-white flex items-center gap-3 mb-6 relative z-10">
+               <AlertCircle className="text-primary" />
+               Complain Center
+            </h2>
+            
+            {!user ? (
+              <div className="text-center py-12 space-y-4">
+                <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center justify-center mx-auto text-slate-400">
+                  <UserCheck size={32} />
+                </div>
+                <p className="text-sm font-medium text-slate-500">Please sign in to log a formal complaint and track its resolution.</p>
+              </div>
+            ) : ticketResult?.success ? (
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="text-center py-8 space-y-6"
+              >
+                <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                  <CheckCircle size={40} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 dark:text-white">Complaint Logged!</h3>
+                  <p className="text-sm font-medium text-slate-500 mt-2">Your ticket number is:</p>
+                  <div className="mt-3 px-6 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl border-2 border-dashed border-primary/30 inline-block font-black text-2xl tracking-widest text-primary">
+                    {ticketResult.ticketNumber}
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400">A confirmation email has been sent to <strong>{user.email}</strong>. Our team will review your case shortly.</p>
+                <button 
+                  onClick={() => setTicketResult(null)}
+                  className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-colors"
+                >
+                  Log Another Complaint
+                </button>
+              </motion.div>
+            ) : (
+              <form onSubmit={handleSubmitComplaint} className="space-y-5 relative z-10">
+                {ticketResult?.error && (
+                  <div className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50 rounded-xl text-rose-600 text-xs font-bold flex items-center gap-2">
+                    <AlertCircle size={14} />
+                    {ticketResult.error}
+                  </div>
+                )}
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Full Name</label>
+                    <input 
+                      type="text" 
+                      value={user.name} 
+                      disabled 
+                      className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-500 cursor-not-allowed" 
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Email Address</label>
+                    <input 
+                      type="text" 
+                      value={user.email} 
+                      disabled 
+                      className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-500 cursor-not-allowed" 
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Subject</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g., Delayed delivery, Wrong items..." 
+                    value={complaintForm.subject}
+                    onChange={(e) => setComplaintForm({ ...complaintForm, subject: e.target.value })}
+                    required
+                    className="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 focus:border-primary/20 transition-all outline-none" 
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Priority Level</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['LOW', 'MEDIUM', 'HIGH'].map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setComplaintForm({ ...complaintForm, priority: p })}
+                        className={`py-2.5 rounded-xl text-[10px] font-black transition-all border ${
+                          complaintForm.priority === p 
+                            ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20' 
+                            : 'bg-slate-50 dark:bg-slate-800 text-slate-400 border-slate-100 dark:border-slate-800 hover:border-primary/20'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Describe the Issue</label>
+                  <textarea 
+                    rows={4}
+                    placeholder="Provide details about what happened..."
+                    value={complaintForm.description}
+                    onChange={(e) => setComplaintForm({ ...complaintForm, description: e.target.value })}
+                    required
+                    className="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 focus:border-primary/20 transition-all outline-none resize-none"
+                  />
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full py-4 bg-primary text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Logging Ticket...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={16} />
+                      Submit Complaint
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
           </div>
         </div>
       </div>

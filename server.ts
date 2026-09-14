@@ -727,6 +727,26 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
       );
     `);
 
+    // Complaints Table (Ticketing Platform)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS public.complaints (
+        id TEXT PRIMARY KEY,
+        ticket_number TEXT UNIQUE NOT NULL,
+        user_id TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        user_email TEXT NOT NULL,
+        user_phone TEXT,
+        role TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        description TEXT NOT NULL,
+        status TEXT DEFAULT 'OPEN',
+        priority TEXT DEFAULT 'MEDIUM',
+        errand_id TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     // Runner Applications Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS public.runner_applications (
@@ -871,13 +891,13 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
         '130225300272-50lte4no7odisevm23cmjqdos4e5rfkv.apps.googleusercontent.com',
         '',
         true,
-        true,
-        true,
+        false,
+        false,
         30,
         30,
         'users',
         'europe-west1',
-        'online'
+        'standby'
       ) ON CONFLICT (id) DO NOTHING;
     `);
 
@@ -1761,6 +1781,7 @@ try {
 
 let activeFirestoreDatabaseId = '(default)';
 let firestoreDbChecked = false;
+const isFirestoreSyncEnabled = false; // Standby mode by default
 
 // Real-Time SSE Clients for Firebase Infrastructure & Settings
 const firebaseRealtimeClients = new Set<express.Response>();
@@ -1866,7 +1887,8 @@ function firestoreFieldsToJs(fields: Record<string, any>): Record<string, any> {
   return obj;
 }
 
-async function fetchAllRowsFromFirestore(tableName: string): Promise<any[]> {
+async function fetchAllRowsFromFirestore(tableName: string, force = false): Promise<any[]> {
+  if (!isFirestoreSyncEnabled && !force) return [];
   if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return [];
   try {
     const dbId = await getActiveFirestoreDbId();
@@ -1885,7 +1907,8 @@ async function fetchAllRowsFromFirestore(tableName: string): Promise<any[]> {
   }
 }
 
-async function upsertFirestoreRecord(tableName: string, docId: string, record: any): Promise<boolean> {
+async function upsertFirestoreRecord(tableName: string, docId: string, record: any, retryCount = 0, force = false): Promise<boolean> {
+  if (!isFirestoreSyncEnabled && !force) return false;
   if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey || !docId) return false;
   try {
     const dbId = await getActiveFirestoreDbId();
@@ -1896,16 +1919,22 @@ async function upsertFirestoreRecord(tableName: string, docId: string, record: a
     const payload = { fields: jsToFirestoreFields(cleanData) };
     await axios.patch(url, payload, {
       headers: { 'Content-Type': 'application/json' },
-      timeout: 6000
+      timeout: 10000
     });
     return true;
   } catch (err: any) {
+    if (err?.response?.status === 429 && retryCount < 5) {
+      const delay = Math.pow(2, retryCount) * 500 + Math.random() * 500;
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return upsertFirestoreRecord(tableName, docId, record, retryCount + 1);
+    }
     console.warn(`[Firestore Sync Upsert Notice] ${tableName}/${docId}:`, err?.message);
     return false;
   }
 }
 
-async function deleteFirestoreRecord(tableName: string, docId: string): Promise<boolean> {
+async function deleteFirestoreRecord(tableName: string, docId: string, force = false): Promise<boolean> {
+  if (!isFirestoreSyncEnabled && !force) return false;
   if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey || !docId) return false;
   try {
     const dbId = await getActiveFirestoreDbId();
@@ -1920,6 +1949,7 @@ async function deleteFirestoreRecord(tableName: string, docId: string): Promise<
 }
 
 async function mirrorWriteToFirestore(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
+  if (!isFirestoreSyncEnabled) return;
   if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return;
   try {
     const insertCall = chainCalls.find(c => c.method === 'insert' || c.method === 'upsert');
@@ -2140,8 +2170,8 @@ let lastSyncSummary = {
   durationMs: 0
 };
 
-async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable?: string } = {}) {
-  const { autoHeal = true, targetTable } = options;
+async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable?: string; forceFirestore?: boolean } = {}) {
+  const { autoHeal = true, targetTable, forceFirestore = false } = options;
   const startTime = Date.now();
 
   // 1. Discover all tables
@@ -2183,7 +2213,7 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
         isPrimaryOnline ? fetchAllRowsFromPg(primaryPgPool, tableName) : Promise.resolve([]),
         isLocalPgOnline ? fetchAllRowsFromPg(localPgPool, tableName) : Promise.resolve([]),
         Promise.resolve(fetchAllRowsFromJson(tableName)),
-        fetchAllRowsFromFirestore(tableName)
+        fetchAllRowsFromFirestore(tableName, forceFirestore)
       ]);
 
       const primaryMap = new Map<string, any>();
@@ -2287,10 +2317,10 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
         }
 
         // Check if missing or outdated across available tiers
-        const primaryNeedsSync = isPrimaryOnline && (!inPrimary || (inPrimary && recPrimary.updated_at && bestRecord.updated_at && new Date(recPrimary.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
-        const localPgNeedsSync = isLocalPgOnline && (!inLocalPg || (inLocalPg && recLocalPg.updated_at && bestRecord.updated_at && new Date(recLocalPg.updated_at).getTime() < new Date(bestRecord.updated_at).getTime()));
-        const jsonNeedsSync = !inJson || (inJson && recJson.updated_at && bestRecord.updated_at && new Date(recJson.updated_at).getTime() < new Date(bestRecord.updated_at).getTime());
-        const firestoreNeedsSync = !inFirestore || (inFirestore && recFirestore.updated_at && bestRecord.updated_at && new Date(recFirestore.updated_at).getTime() < new Date(bestRecord.updated_at).getTime());
+        const primaryNeedsSync = isPrimaryOnline && (!inPrimary || (inPrimary && recPrimary.updated_at && bestRecord.updated_at && Math.abs(new Date(recPrimary.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000));
+        const localPgNeedsSync = isLocalPgOnline && (!inLocalPg || (inLocalPg && recLocalPg.updated_at && bestRecord.updated_at && Math.abs(new Date(recLocalPg.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000));
+        const jsonNeedsSync = !inJson || (inJson && recJson.updated_at && bestRecord.updated_at && Math.abs(new Date(recJson.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000);
+        const firestoreNeedsSync = !inFirestore || (inFirestore && recFirestore.updated_at && bestRecord.updated_at && Math.abs(new Date(recFirestore.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000);
 
         if (primaryNeedsSync || localPgNeedsSync || jsonNeedsSync || firestoreNeedsSync) {
           tableMismatches++;
@@ -2307,9 +2337,13 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
               syncPromises.push(executeLocalDbOperation(tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal JSON] ${tableName}/${id}:`, e.message)));
             }
             if (firestoreNeedsSync) {
-              syncPromises.push(upsertFirestoreRecord(tableName, String(id), bestRecord).catch(e => console.warn(`[Sync AutoHeal Firestore] ${tableName}/${id}:`, e.message)));
+              syncPromises.push(upsertFirestoreRecord(tableName, String(id), bestRecord, 0, forceFirestore).catch(e => console.warn(`[Sync AutoHeal Firestore] ${tableName}/${id}:`, e.message)));
             }
-            await Promise.allSettled(syncPromises);
+            if (syncPromises.length > 0) {
+              await Promise.allSettled(syncPromises);
+              // Add a small breather between mismatched records to avoid hitting rate limits
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
             tableReconciled++;
           }
         }
@@ -3835,6 +3869,74 @@ Please proceed with the task according to safety guidelines and update milestone
   });
 
   // Health Check Endpoint
+  // Complaints API (Ticketing Platform)
+  app.post("/api/complaints", async (req, res) => {
+    const { userId, userName, userEmail, userPhone, role, subject, description, errandId, priority } = req.body;
+    
+    if (!userId || !userName || !userEmail || !subject || !description) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const ticketNumber = `TKT-${Math.floor(100000 + Math.random() * 900000)}`;
+    const id = `complaint-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+    try {
+      const pool = pgPool || localPgPool;
+      if (!pool) throw new Error("No database pool available");
+
+      await pool.query(
+        `INSERT INTO public.complaints (id, ticket_number, user_id, user_name, user_email, user_phone, role, subject, description, errand_id, priority)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [id, ticketNumber, userId, userName, userEmail, userPhone, role, subject, description, errandId, priority || 'MEDIUM']
+      );
+
+      // Notify User via Email
+      try {
+        const emailSubject = `Complaint Logged - Ticket ${ticketNumber}`;
+        const emailHtml = `
+          <div style="font-family: sans-serif; padding: 20px; color: #333; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 12px;">
+            <h2 style="color: #2891e2; border-bottom: 2px solid #2891e2; padding-bottom: 10px;">Complaint Received</h2>
+            <p>Hello <strong>${userName}</strong>,</p>
+            <p>Your complaint has been successfully logged in our system. Our support team has been notified and will review your case shortly.</p>
+            <div style="background: #f8fafc; padding: 20px; border-radius: 12px; margin: 25px 0; border: 1px solid #e2e8f0;">
+              <p style="margin: 0 0 10px 0;"><strong>Ticket Number:</strong> <span style="color: #2891e2; font-weight: bold;">${ticketNumber}</span></p>
+              <p style="margin: 0 0 10px 0;"><strong>Subject:</strong> ${subject}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Status:</strong> <span style="color: #059669; font-weight: bold;">OPEN</span></p>
+              <p style="margin: 0;"><strong>Priority:</strong> ${priority || 'MEDIUM'}</p>
+            </div>
+            <p>We aim to resolve all complaints within 24-48 hours. You can use your ticket number to follow up on your case.</p>
+            <p style="margin-top: 30px; border-top: 1px solid #eee; pt: 20px;">Best regards,<br/><strong>The Errandly Team</strong></p>
+          </div>
+        `;
+        const emailText = `Hello ${userName}, your complaint has been logged. Ticket: ${ticketNumber}. Subject: ${subject}. We will get back to you shortly.`;
+
+        // Try Action Server first, then fallback to SMTP
+        try {
+          await axios.post(`${ACTION_SERVER_URL}/api/email/send`, {
+            to: userEmail,
+            subject: emailSubject,
+            html: emailHtml,
+            text: emailText
+          });
+        } catch (error) {
+          const transporter = getSmtpTransporter();
+          if (transporter) {
+            const from = process.env.SMTP_FROM || "ErrandRunner <notifications@ais-errands.app>";
+            await transporter.sendMail({ from, to: userEmail, subject: emailSubject, html: emailHtml, text: emailText });
+          }
+        }
+        console.log(`[Complaints] Email notification sent to ${userEmail} for ticket ${ticketNumber}`);
+      } catch (emailErr) {
+        console.error("[Complaints] Failed to send email notification:", emailErr);
+      }
+
+      res.json({ success: true, ticketNumber, message: "Complaint logged successfully" });
+    } catch (error: any) {
+      console.error("[Complaints] Failed to log complaint:", error);
+      res.status(500).json({ error: error.message || "Failed to log complaint" });
+    }
+  });
+
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
   });
@@ -6448,8 +6550,8 @@ Please proceed with the task according to safety guidelines and update milestone
   // 2. Force Full Bi-Directional Database Sync
   const handleTriggerSync = async (req: express.Request, res: express.Response) => {
     try {
-      const { table } = req.body || {};
-      const syncResult = await syncDataBetweenSources({ autoHeal: true, targetTable: table });
+      const { table, includeFirestore = false } = req.body || {};
+      const syncResult = await syncDataBetweenSources({ autoHeal: true, targetTable: table, forceFirestore: includeFirestore });
       res.json({
         ...syncResult,
         auditLogs: syncAuditLog.slice(0, 100),

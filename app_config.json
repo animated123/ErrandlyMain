@@ -14,5 +14,9 @@
     "password": "Company1.Codexict",
     "name": "Fallback_Errandly"
   },
-  "firebase": {}
+  "firebase": {
+    "realtimeSyncEnabled": false,
+    "autoMirrorUsersEnabled": false,
+    "alternateAuthEnabled": false
+  }
 }

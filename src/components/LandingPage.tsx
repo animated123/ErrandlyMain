@@ -198,6 +198,7 @@ interface LandingPageProps {
   onOpenPrivacyPolicy?: () => void;
   onOpenTermsOfService?: () => void;
   onNavigateTo?: (path: string) => void;
+  user?: any;
 }
 
 const maskName = (name?: string) => {
@@ -228,7 +229,8 @@ export const LandingPage: React.FC<LandingPageProps> = React.memo(({
   appSettings,
   onOpenPrivacyPolicy,
   onOpenTermsOfService,
-  onNavigateTo
+  onNavigateTo,
+  user
 }) => {
   const [activeFeature, setActiveFeature] = useState(0);
   const [scrolled, setScrolled] = useState(false);
@@ -301,7 +303,7 @@ export const LandingPage: React.FC<LandingPageProps> = React.memo(({
   if (activeInfoPage === 'services') return <ServicesPage onBack={() => setActiveInfoPage(null)} appSettings={appSettings} />;
   if (activeInfoPage === 'pricing') return <ElitePricingPage onBack={() => setActiveInfoPage(null)} appSettings={appSettings} />;
   if (activeInfoPage === 'standards') return <NetworkStandardsPage onBack={() => setActiveInfoPage(null)} appSettings={appSettings} />;
-  if (activeInfoPage === 'help') return <HelpPage onBack={() => setActiveInfoPage(null)} appSettings={appSettings} />;
+  if (activeInfoPage === 'help') return <HelpPage onBack={() => setActiveInfoPage(null)} appSettings={appSettings} user={user} />;
   if (activeInfoPage === 'partner') return <PartnerGuidePage onBack={() => setActiveInfoPage(null)} appSettings={appSettings} onStartApplication={onBecomeRunner} />;
 
   return (
