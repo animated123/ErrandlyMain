@@ -290,7 +290,7 @@ export default function RunnerRegistrationModal({
                       <p className="text-xs font-black uppercase tracking-widest text-slate-400">ID Front</p>
                       <label className="aspect-[3/2] bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-all overflow-hidden relative">
                          {formData.idFrontUrl ? (
-                           <img src={formData.idFrontUrl} className="w-full h-full object-cover" />
+                           <img src={formData.idFrontUrl} alt="National ID card front upload preview" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                          ) : (
                            <>
                              <Upload size={24} className="text-slate-400 mb-2" />
@@ -311,7 +311,7 @@ export default function RunnerRegistrationModal({
                       <p className="text-xs font-black uppercase tracking-widest text-slate-400">ID Back</p>
                       <label className="aspect-[3/2] bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-all overflow-hidden relative">
                          {formData.idBackUrl ? (
-                           <img src={formData.idBackUrl} className="w-full h-full object-cover" />
+                           <img src={formData.idBackUrl} alt="National ID card back upload preview" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                          ) : (
                            <>
                              <Upload size={24} className="text-slate-400 mb-2" />
@@ -371,7 +371,7 @@ export default function RunnerRegistrationModal({
                     </>
                   ) : formData.passportPhoto ? (
                     <div className="w-full h-full relative">
-                      <img src={formData.passportPhoto} className="w-full h-full object-cover" />
+                      <img src={formData.passportPhoto} alt="Applicant passport photo preview" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                       <button 
                         onClick={startCamera}
                         className="absolute bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 bg-indigo-600 text-white rounded-xl text-xs font-black uppercase tracking-widest shadow-lg"

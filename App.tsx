@@ -64,6 +64,7 @@ import { LandingPage } from './src/components/LandingPage';
 import { PublicLegalPage } from './src/components/PublicLegalPage';
 import RunnerApplicationPage from './src/components/RunnerApplicationPage';
 import ConnectionAdminPage from './src/components/ConnectionAdminPage';
+import { NotFoundPage } from './src/components/NotFoundPage';
 
 // Mock Gemini call for static run
 const callGeminiWithRetry = async (prompt: string): Promise<string> => {
@@ -150,7 +151,11 @@ export default function App() {
     if (pageParam === 'terms' || pageParam === 'terms-of-service') return '/terms';
     if (window.location.hash === '#/privacy' || window.location.hash === '#privacy') return '/privacy';
     if (window.location.hash === '#/terms' || window.location.hash === '#terms') return '/terms';
-    return window.location.pathname;
+    const rawPath = window.location.pathname || '/';
+    if (rawPath.length > 1 && rawPath.endsWith('/')) {
+      return rawPath.replace(/\/+$/, '');
+    }
+    return rawPath;
   };
 
   const [currentPath, setCurrentPath] = useState(getNormalizedPath);
@@ -168,8 +173,9 @@ export default function App() {
   }, []);
 
   const navigateTo = (path: string) => {
-    window.history.pushState({}, '', path);
-    setCurrentPath(path);
+    const cleanPath = path.length > 1 && path.endsWith('/') ? path.replace(/\/+$/, '') : path;
+    window.history.pushState({}, '', cleanPath);
+    setCurrentPath(cleanPath);
   };
   
   const setActiveTab = (tab: string) => {
@@ -710,6 +716,15 @@ export default function App() {
     });
   }, [availableErrands, proximityFilter, currentLocation]);
 
+  const dashboardErrands = useMemo(() => {
+    return errands.filter(e => {
+      if (!user || user.role === UserRole.REQUESTER) return true;
+      if (errandFilter === 'posted') return e.requesterId === user.id;
+      if (errandFilter === 'running') return e.runnerId === user.id;
+      return true;
+    });
+  }, [errands, user, errandFilter]);
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
@@ -1015,6 +1030,35 @@ export default function App() {
           user={user} 
           appSettings={appSettings} 
           onBackToHome={() => navigateTo('/')} 
+        />
+      </ErrorBoundary>
+    );
+  }
+
+  const isKnownRoute = (path: string) => {
+    const clean = (path || '/').replace(/\/+$/, '') || '/';
+    return (
+      clean === '/' ||
+      clean === '/connectionadmin' ||
+      clean.startsWith('/connectionadmin') ||
+      clean === '/dbconfig' ||
+      clean === '/privacy' ||
+      clean === '/privacy-policy' ||
+      clean === '/terms' ||
+      clean === '/terms-of-service' ||
+      clean === '/application-runner' ||
+      clean === '/reset-password'
+    );
+  };
+
+  if (!isKnownRoute(currentPath) || currentPath === '/404') {
+    return (
+      <ErrorBoundary>
+        <NotFoundPage 
+          path={currentPath}
+          appSettings={appSettings} 
+          onBackToHome={() => navigateTo('/')} 
+          onNavigateTo={(p) => navigateTo(p)} 
         />
       </ErrorBoundary>
     );
@@ -1369,7 +1413,13 @@ export default function App() {
                         >
                           <div className="space-y-2">
                             <div className="aspect-video relative overflow-hidden rounded-xl bg-secondary">
-                              <img src={service.imageUrl} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" alt={service.title} />
+                              <img 
+                                src={service.imageUrl} 
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                                alt={service.title || "Featured logistics service"} 
+                                loading="lazy"
+                                decoding="async"
+                              />
                               <div className="absolute top-2 right-2 px-2.5 py-1 bg-card/90 backdrop-blur-md rounded-md text-xs font-black text-primary border border-border/50">
                                 KSH {(service.price || 0).toLocaleString()}
                               </div>
@@ -1589,14 +1639,7 @@ export default function App() {
                       </button>
                     </div>
                   ) : (
-                    errands
-                      .filter(e => {
-                        if (!user || user.role === UserRole.REQUESTER) return true;
-                        if (errandFilter === 'posted') return e.requesterId === user.id;
-                        if (errandFilter === 'running') return e.runnerId === user.id;
-                        return true;
-                      })
-                      .map(e => (
+                    dashboardErrands.map(e => (
                       <motion.div
                         key={e.id}
                         initial={{ opacity: 0, y: 20 }}
@@ -3051,7 +3094,13 @@ const FeaturedServiceModal: React.FC<{ service: FeaturedService, onClose: () => 
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-foreground text-background/60 backdrop-blur-sm animate-in fade-in duration-300">
       <div className="bg-card text-card-foreground rounded-[3.5rem] w-full max-w-md overflow-hidden shadow-strong animate-in zoom-in-95 duration-300 flex flex-col max-h-[90vh] border border-border">
         <div className="relative h-64 flex-shrink-0 group">
-          <img src={service.imageUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" alt={service.title} />
+          <img 
+            src={service.imageUrl} 
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" 
+            alt={service.title || "Service detail banner"} 
+            loading="lazy"
+            decoding="async"
+          />
           <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent" />
           <button 
             onClick={onClose} 
@@ -3195,7 +3244,7 @@ const ContactUsModal: React.FC<{ onClose: () => void, setActiveTab: (t: string) 
   </div>
 );
 
-const ProfileMenuItem: React.FC<{ icon: React.ReactNode, label: string, onClick?: () => void, destructive?: boolean }> = ({ icon, label, onClick, destructive }) => (
+const ProfileMenuItem = React.memo(({ icon, label, onClick, destructive }: { icon: React.ReactNode, label: string, onClick?: () => void, destructive?: boolean }) => (
   <button 
     onClick={onClick} 
     className={`w-full flex items-center justify-between p-3 rounded-xl transition-all group ${
@@ -3220,7 +3269,7 @@ const ProfileMenuItem: React.FC<{ icon: React.ReactNode, label: string, onClick?
       <ChevronRight size={16} />
     </div>
   </button>
-);
+));
 
 const AdminPanelLocal: React.FC<{ 
   user: User; 
@@ -3951,8 +4000,8 @@ const AdminPanelLocal: React.FC<{
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <img src={app.idFrontUrl} className="rounded-xl aspect-video object-cover border" alt="ID Front" />
-                  <img src={app.idBackUrl} className="rounded-xl aspect-video object-cover border" alt="ID Back" />
+                  <img src={app.idFrontUrl} className="rounded-xl aspect-video object-cover border" alt={`${app.fullName || 'Applicant'}'s ID Front Document`} loading="lazy" decoding="async" />
+                  <img src={app.idBackUrl} className="rounded-xl aspect-video object-cover border" alt={`${app.fullName || 'Applicant'}'s ID Back Document`} loading="lazy" decoding="async" />
                 </div>
                 {app.status === 'pending' ? (
                   <div className="flex gap-2 pt-2">
@@ -5642,7 +5691,7 @@ ON CONFLICT (id) DO NOTHING;`}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {adminServiceListings.map(s => (
               <div key={s.id} className="bg-card text-card-foreground rounded-[2rem] p-4 border border-border shadow-sm flex gap-4 items-center">
-                <img src={s.imageUrl} className="w-16 h-16 rounded-xl object-cover border" alt="" />
+                <img src={s.imageUrl} className="w-16 h-16 rounded-xl object-cover border" alt={s.title || "Menu service listing icon"} loading="lazy" decoding="async" />
                 <div className="flex-1 min-w-0">
                   <h4 className="font-black text-foreground text-xs truncate">{s.title}</h4>
                   <p className="text-sm font-bold text-muted-foreground tracking-normal font-medium">{s.category} • KSh{s.price}</p>
@@ -5709,7 +5758,7 @@ ON CONFLICT (id) DO NOTHING;`}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {adminFeaturedServices.map(s => (
               <div key={s.id} className="bg-card text-card-foreground rounded-[2rem] p-4 border border-border shadow-sm flex gap-4 items-center">
-                <img src={s.imageUrl} className="w-20 h-20 rounded-2xl object-cover" alt={s.title} />
+                <img src={s.imageUrl} className="w-20 h-20 rounded-2xl object-cover" alt={s.title || "Featured service icon"} loading="lazy" decoding="async" />
                 <div className="flex-1 min-w-0">
                   <h4 className="font-black text-foreground truncate">{s.title}</h4>
                   <p className="text-sm font-black text-muted-foreground tracking-normal font-medium">{s.category} • KSH {s.price}</p>
@@ -5765,7 +5814,7 @@ ON CONFLICT (id) DO NOTHING;`}
               <label className="text-sm font-black tracking-normal font-medium text-muted-foreground ml-1">App Icon</label>
               <div className="flex items-center gap-4">
                 <div className="w-16 h-16 border-2 border-dashed border-indigo-200 flex items-center justify-center overflow-hidden">
-                  {iconUrl ? <img src={iconUrl} className="w-full h-full object-cover" alt="Icon" /> : <ShoppingBag className="text-white/50" />}
+                  {iconUrl ? <img src={iconUrl} className="w-full h-full object-cover" alt="ErrandRunner Application Icon Preview" loading="lazy" decoding="async" /> : <ShoppingBag className="text-white/50" />}
                 </div>
                 <button disabled={isIconUploading} onClick={() => iconFileRef.current?.click()} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-sm tracking-normal font-medium flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">{isIconUploading ? <LoadingSpinner color="white" /> : <><Upload size={14} /> Upload Icon</>}</button>
                 <input type="file" ref={iconFileRef} className="hidden" accept="image/*" onChange={handleIconUpload} />
@@ -5775,7 +5824,7 @@ ON CONFLICT (id) DO NOTHING;`}
               <label className="text-sm font-black tracking-normal font-medium text-muted-foreground ml-1">Dashboard Hero Image</label>
               <div className="flex items-center gap-4">
                 <div className="w-full h-24 bg-slate-100 dark:bg-slate-800 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden">
-                  {dashboardHeroUrl ? <img src={dashboardHeroUrl} className="w-full h-full object-cover" alt="Hero" /> : <ImageIcon className="text-slate-400" />}
+                  {dashboardHeroUrl ? <img src={dashboardHeroUrl} className="w-full h-full object-cover" alt="Dashboard Hero Banner Preview" loading="lazy" decoding="async" /> : <ImageIcon className="text-slate-400" />}
                 </div>
                 <button disabled={isUploading} onClick={() => heroFileRef.current?.click()} className="whitespace-nowrap px-6 py-3 bg-indigo-600 text-white rounded-xl font-black text-sm tracking-normal font-medium flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100">{isUploading ? <LoadingSpinner color="white" /> : <><Upload size={14} /> Upload Image</>}</button>
                 <input type="file" ref={heroFileRef} className="hidden" accept="image/*" onChange={handleHeroUpload} />
@@ -6267,21 +6316,21 @@ const RunnerApplicationFlow: React.FC<{ user: User, onBack: () => void, existing
           <div className="space-y-1.5">
             <label className="text-xs font-black tracking-normal font-medium text-muted-foreground ml-1">ID Front</label>
             <div className="aspect-video bg-muted rounded-2xl border-2 border-dashed border-border flex items-center justify-center overflow-hidden relative">
-              {form.idFrontUrl ? <img src={form.idFrontUrl} className="w-full h-full object-cover" /> : <button onClick={() => document.getElementById('idFront')?.click()} className="text-xs font-black uppercase text-muted-foreground">Upload</button>}
+              {form.idFrontUrl ? <img src={form.idFrontUrl} alt="National ID Front Preview" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <button onClick={() => document.getElementById('idFront')?.click()} className="text-xs font-black uppercase text-muted-foreground">Upload</button>}
               <input id="idFront" type="file" className="hidden" onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0], 'idFrontUrl')} />
             </div>
           </div>
           <div className="space-y-1.5">
             <label className="text-xs font-black tracking-normal font-medium text-muted-foreground ml-1">ID Back</label>
             <div className="aspect-video bg-muted rounded-2xl border-2 border-dashed border-border flex items-center justify-center overflow-hidden relative">
-              {form.idBackUrl ? <img src={form.idBackUrl} className="w-full h-full object-cover" /> : <button onClick={() => document.getElementById('idBack')?.click()} className="text-xs font-black uppercase text-muted-foreground">Upload</button>}
+              {form.idBackUrl ? <img src={form.idBackUrl} alt="National ID Back Preview" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <button onClick={() => document.getElementById('idBack')?.click()} className="text-xs font-black uppercase text-muted-foreground">Upload</button>}
               <input id="idBack" type="file" className="hidden" onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0], 'idBackUrl')} />
             </div>
           </div>
           <div className="space-y-1.5 col-span-2">
             <label className="text-xs font-black tracking-normal font-medium text-muted-foreground ml-1">Selfie with ID</label>
             <div className="aspect-video bg-muted rounded-2xl border-2 border-dashed border-border flex items-center justify-center overflow-hidden relative">
-              {form.selfieUrl ? <img src={form.selfieUrl} className="w-full h-full object-cover" /> : <button onClick={() => document.getElementById('selfie')?.click()} className="text-xs font-black uppercase text-muted-foreground">Upload Selfie</button>}
+              {form.selfieUrl ? <img src={form.selfieUrl} alt="Applicant Verification Selfie Preview" loading="lazy" decoding="async" className="w-full h-full object-cover" /> : <button onClick={() => document.getElementById('selfie')?.click()} className="text-xs font-black uppercase text-muted-foreground">Upload Selfie</button>}
               <input id="selfie" type="file" className="hidden" onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0], 'selfieUrl')} />
             </div>
           </div>
@@ -6655,7 +6704,7 @@ const AddPropertyModal: React.FC<{ onAdd: (listing: any) => void, onClose: () =>
           <div className="aspect-video bg-muted rounded-2xl border-2 border-dashed border-border flex flex-col items-center justify-center overflow-hidden relative group">
             {form.imageUrl ? (
               <>
-                <img src={form.imageUrl} className="w-full h-full object-cover" />
+                <img src={form.imageUrl} alt="Rental property listing preview" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                 <button onClick={() => setForm({...form, imageUrl: ''})} className="absolute top-2 right-2 p-2 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={14} /></button>
               </>
             ) : (
@@ -6737,7 +6786,7 @@ const PropertyComparisonModal: React.FC<{ listings: PropertyListing[], onClose: 
               {listings.map(l => (
                 <th key={l.id} className="text-center py-4 border-b border-border px-4">
                   <div className="space-y-2">
-                    <img src={l.imageUrl} className="w-24 h-24 rounded-2xl object-cover mx-auto shadow-md" />
+                    <img src={l.imageUrl} alt={l.title || "Rental property listing thumbnail"} loading="lazy" decoding="async" className="w-24 h-24 rounded-2xl object-cover mx-auto shadow-md" />
                     <p className="text-xs font-black text-foreground">{l.title}</p>
                   </div>
                 </th>
@@ -7699,7 +7748,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
   return (
     <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-md flex flex-col items-center justify-end md:justify-center p-0 md:p-6 overflow-hidden">
       {showCamera && <CameraCapture onCapture={handleCameraCapture} onClose={handleCloseCamera} />}
-      {fullScreenImage && <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-6" onClick={() => setFullScreenImage(null)}><img src={fullScreenImage} className="max-w-full max-h-full object-contain rounded-xl" alt="Proof" /></div>}
+      {fullScreenImage && <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-6" onClick={() => setFullScreenImage(null)}><img src={fullScreenImage} className="max-w-full max-h-full object-contain rounded-xl" alt="Full-screen photo proof inspection" decoding="async" /></div>}
       <motion.div 
         initial={{ opacity: 0, y: 100 }}
         animate={{ opacity: 1, y: 0 }}
@@ -8040,7 +8089,13 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                   {selectedErrand.propertyListings.map((listing: any) => (
                     <div key={listing.id} className="bg-card text-card-foreground rounded-[2.5rem] overflow-hidden border border-indigo-100 shadow-sm group hover:shadow-strong transition-all">
                       <div className="aspect-video relative overflow-hidden">
-                        <img src={listing.imageUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" />
+                        <img 
+                          src={listing.imageUrl} 
+                          alt={listing.title || "Rental house or apartment photo"} 
+                          loading="lazy" 
+                          decoding="async" 
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-1000" 
+                        />
                         <div className="absolute top-4 right-4 px-4 py-2 bg-foreground text-background/80 backdrop-blur-md text-white rounded-full text-xs font-black shadow-lg">
                           Ksh {(listing.price || 0).toLocaleString()}
                         </div>
@@ -8885,7 +8940,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                       {selectedErrand.proofs?.filter((p: any) => p.label === 'Final Proof' || p.label === 'Receipt').map((proof: any, idx: number) => (
                         <div key={idx} className="space-y-2">
                           <div className="aspect-square rounded-[2.5rem] overflow-hidden border border-border shadow-sm group relative">
-                            <img src={proof.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                            <img src={proof.url} alt={`${proof.label || 'Task verification'} photo proof`} loading="lazy" decoding="async" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                               <button onClick={() => setFullScreenImage(proof.url)} className="p-2 bg-card text-card-foreground text-black rounded-full shadow-lg">
                                 <Maximize2 size={14} />
@@ -8978,7 +9033,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                               {selectedErrand.pickupPhotoUrl ? (
                                 <div className="space-y-2">
                                   <div className="relative rounded-2xl overflow-hidden border border-emerald-100 max-h-48">
-                                    <img src={selectedErrand.pickupPhotoUrl} alt="Pickup Proof" className="w-full object-cover max-h-48" referrerPolicy="no-referrer" />
+                                    <img src={selectedErrand.pickupPhotoUrl} alt="Package pickup location verification photo proof" loading="lazy" decoding="async" className="w-full object-cover max-h-48" referrerPolicy="no-referrer" />
                                     <div className="absolute top-2 right-2 bg-emerald-600 text-white text-xs px-2.5 py-1 rounded-full font-bold flex items-center gap-1 shadow-sm">
                                       <Check size={12} /> Captured
                                     </div>
@@ -9064,7 +9119,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                               {selectedErrand.dropoffPhotoUrl ? (
                                 <div className="space-y-2">
                                   <div className="relative rounded-2xl overflow-hidden border border-emerald-100 max-h-48">
-                                    <img src={selectedErrand.dropoffPhotoUrl} alt="Drop-off Proof" className="w-full object-cover max-h-48" referrerPolicy="no-referrer" />
+                                    <img src={selectedErrand.dropoffPhotoUrl} alt="Package drop-off destination delivery verification photo" loading="lazy" decoding="async" className="w-full object-cover max-h-48" referrerPolicy="no-referrer" />
                                     <div className="absolute top-2 right-2 bg-emerald-600 text-white text-xs px-2.5 py-1 rounded-full font-bold flex items-center gap-1 shadow-sm">
                                       <Check size={12} /> Captured
                                     </div>
@@ -9459,7 +9514,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                     />
                     {selectedErrand.proofs?.map((proof: any, idx: number) => (
                       <div key={idx} className="aspect-square rounded-[2rem] overflow-hidden border border-white/10 relative group">
-                        <img src={proof.url} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+                        <img src={proof.url} alt={`${proof.label || 'Progress'} verification photo`} loading="lazy" decoding="async" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <Eye size={24} className="text-white" />
                         </div>

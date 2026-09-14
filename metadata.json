@@ -1,6 +1,6 @@
 {
   "name": "ErrandRunner",
-  "description": "Kenya's elite errand coordination network for premium laundry, shopping, and professional logistics.",
+  "description": "Kenya's premier on-demand errand network. Connect with trusted, background-checked runners for grocery shopping, Mama Fua laundry, town errands, parcel deliveries, and personal logistics.",
   "requestFramePermissions": ["geolocation", "camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

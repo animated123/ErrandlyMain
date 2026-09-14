@@ -1316,14 +1316,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                   <div className="flex items-start md:items-center gap-5">
                     <div className="flex items-center gap-2 shrink-0">
                       <div className="w-12 h-12 bg-secondary rounded-2xl overflow-hidden border border-border">
-                        <img src={app.idFrontUrl} className="w-full h-full object-cover" alt="ID Front" referrerPolicy="no-referrer" />
+                        <img src={app.idFrontUrl} className="w-full h-full object-cover" alt={`${app.fullName}'s ID Front Document`} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                       </div>
                       <div className="w-12 h-12 bg-secondary rounded-2xl overflow-hidden border border-border">
-                        <img src={app.idBackUrl} className="w-full h-full object-cover" alt="ID Back" referrerPolicy="no-referrer" />
+                        <img src={app.idBackUrl} className="w-full h-full object-cover" alt={`${app.fullName}'s ID Back Document`} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                       </div>
                       {app.selfieUrl && (
                         <div className="w-12 h-12 bg-secondary rounded-2xl overflow-hidden border border-border">
-                          <img src={app.selfieUrl} className="w-full h-full object-cover" alt="Selfie" referrerPolicy="no-referrer" />
+                          <img src={app.selfieUrl} className="w-full h-full object-cover" alt={`${app.fullName}'s Biometric Selfie Verification`} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                         </div>
                       )}
                     </div>
@@ -4182,18 +4182,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                 <h4 className="text-xs font-black text-muted-foreground uppercase tracking-wider">Verification Documents (Click to view full)</h4>
                 <div className="grid grid-cols-3 gap-3">
                   <div className="group relative bg-secondary rounded-2xl overflow-hidden aspect-video border border-border hover:shadow-md transition-all">
-                    <img src={selectedApp.idFrontUrl} className="w-full h-full object-cover" alt="ID Front" />
+                    <img src={selectedApp.idFrontUrl} className="w-full h-full object-cover" alt={`${selectedApp.fullName}'s ID Front Document`} loading="lazy" decoding="async" />
                     <a href={selectedApp.idFrontUrl} target="_blank" rel="noopener noreferrer" className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-black uppercase transition-opacity">Open Image</a>
                     <div className="absolute bottom-1.5 left-2 bg-slate-900/70 text-white text-[8px] font-bold px-1.5 py-0.5 rounded">ID Front</div>
                   </div>
                   <div className="group relative bg-secondary rounded-2xl overflow-hidden aspect-video border border-border hover:shadow-md transition-all">
-                    <img src={selectedApp.idBackUrl} className="w-full h-full object-cover" alt="ID Back" />
+                    <img src={selectedApp.idBackUrl} className="w-full h-full object-cover" alt={`${selectedApp.fullName}'s ID Back Document`} loading="lazy" decoding="async" />
                     <a href={selectedApp.idBackUrl} target="_blank" rel="noopener noreferrer" className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-black uppercase transition-opacity">Open Image</a>
                     <div className="absolute bottom-1.5 left-2 bg-slate-900/70 text-white text-[8px] font-bold px-1.5 py-0.5 rounded">ID Back</div>
                   </div>
                   {selectedApp.selfieUrl && (
                     <div className="group relative bg-secondary rounded-2xl overflow-hidden aspect-video border border-border hover:shadow-md transition-all">
-                      <img src={selectedApp.selfieUrl} className="w-full h-full object-cover" alt="Selfie" />
+                      <img src={selectedApp.selfieUrl} className="w-full h-full object-cover" alt={`${selectedApp.fullName}'s Biometric Selfie Verification`} loading="lazy" decoding="async" />
                       <a href={selectedApp.selfieUrl} target="_blank" rel="noopener noreferrer" className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-black uppercase transition-opacity">Open Image</a>
                       <div className="absolute bottom-1.5 left-2 bg-slate-900/70 text-white text-[8px] font-bold px-1.5 py-0.5 rounded">Passport Photo</div>
                     </div>

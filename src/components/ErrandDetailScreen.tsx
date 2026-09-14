@@ -13,6 +13,7 @@ import GoogleMapPicker from './GoogleMapPicker';
 import UserAvatar from './UserAvatar';
 import { useErrandStatusSync } from '../hooks/useErrandStatusSync';
 import { haptics } from '../lib/haptics';
+import { getOptimizedCardImage, getOptimizedHeroImage } from '../lib/imageOptimizer';
 
 interface ErrandDetailScreenProps {
   errand: Errand;
@@ -483,7 +484,13 @@ export default function ErrandDetailScreen({
                   <div className="grid grid-cols-1 gap-3">
                     {errand.propertyListings?.map((listing: PropertyListing) => (
                       <div key={listing.id} className="bg-card text-card-foreground rounded-2xl border border-amber-100 overflow-hidden shadow-sm flex">
-                        <img src={listing.imageUrl} alt={listing.title} className="w-20 h-20 object-cover" />
+                        <img 
+                          src={getOptimizedCardImage(listing.imageUrl, 240)} 
+                          alt={listing.title || "Property rental listing photo"} 
+                          loading="lazy" 
+                          decoding="async" 
+                          className="w-20 h-20 object-cover" 
+                        />
                         <div className="p-3 flex-1">
                           <div className="flex justify-between items-start">
                             <h5 className="text-xs font-black text-foreground">{listing.title}</h5>
@@ -535,7 +542,13 @@ export default function ErrandDetailScreen({
                     onClick={() => setSelectedListing(listing)}
                     className="bg-card text-card-foreground p-4 rounded-3xl border border-border shadow-sm flex items-center gap-4 hover:border-indigo-200 transition-all text-left"
                   >
-                    <img src={listing.imageUrl} alt={listing.title} className="w-16 h-16 rounded-2xl object-cover" />
+                    <img 
+                      src={getOptimizedCardImage(listing.imageUrl, 200)} 
+                      alt={listing.title || "Property rental listing thumbnail"} 
+                      loading="lazy" 
+                      decoding="async" 
+                      className="w-16 h-16 rounded-2xl object-cover" 
+                    />
                     <div>
                       <p className="text-sm font-black text-foreground">{listing.title}</p>
                       <p className="text-xs font-bold text-indigo-600">KSH {(listing.price || 0).toLocaleString()}</p>
@@ -712,7 +725,13 @@ export default function ErrandDetailScreen({
                 <h3 className="text-lg font-black text-foreground tracking-tight">Receipt</h3>
                 {errand.receiptUrl ? (
                   <div className="relative group rounded-[2rem] overflow-hidden border-4 border-slate-50 shadow-xl">
-                    <img src={errand.receiptUrl} alt="Receipt" className="w-full aspect-[3/4] object-cover" />
+                    <img 
+                      src={getOptimizedHeroImage(errand.receiptUrl, 800)} 
+                      alt="Store purchase receipt proof document" 
+                      loading="lazy" 
+                      decoding="async" 
+                      className="w-full aspect-[3/4] object-cover" 
+                    />
                     <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <a href={errand.receiptUrl} target="_blank" rel="noopener noreferrer" className="p-4 bg-card text-card-foreground rounded-full text-foreground shadow-2xl">
                         <Download size={24} />
@@ -833,7 +852,13 @@ export default function ErrandDetailScreen({
                   <p className="text-sm font-black text-muted-foreground tracking-normal font-medium">House Photo</p>
                   {listingImage ? (
                     <div className="relative rounded-3xl overflow-hidden aspect-video">
-                      <img src={listingImage} alt="Preview" className="w-full h-full object-cover" />
+                      <img 
+                        src={listingImage} 
+                        alt="Property photo upload preview" 
+                        loading="lazy" 
+                        decoding="async" 
+                        className="w-full h-full object-cover" 
+                      />
                       <button 
                         onClick={() => setListingImage(null)}
                         className="absolute top-4 right-4 p-2 bg-black/50 text-white rounded-full backdrop-blur-md"
@@ -948,7 +973,13 @@ export default function ErrandDetailScreen({
               className="bg-card text-card-foreground w-full max-w-xl rounded-t-[3rem] md:rounded-[3rem] overflow-hidden flex flex-col max-h-[90vh]"
             >
               <div className="relative h-64">
-                <img src={selectedListing.imageUrl} alt={selectedListing.title} className="w-full h-full object-cover" />
+                <img 
+                  src={getOptimizedHeroImage(selectedListing.imageUrl, 1000)} 
+                  alt={selectedListing.title || "Selected property listing photo"} 
+                  loading="lazy" 
+                  decoding="async" 
+                  className="w-full h-full object-cover" 
+                />
                 <button 
                   onClick={() => setSelectedListing(null)}
                   className="absolute top-6 right-6 p-2 bg-black/50 text-white rounded-full backdrop-blur-md"

@@ -31,7 +31,7 @@ import {
   PartnerGuidePage 
 } from './InfoPages';
 
-const PricingCalculator = () => {
+const PricingCalculator = React.memo(() => {
   const [distance, setDistance] = useState(5);
   const [urgency, setUrgency] = useState('normal');
   const [service, setService] = useState('general');
@@ -187,7 +187,7 @@ const PricingCalculator = () => {
       </div>
     </div>
   );
-};
+});
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -220,7 +220,7 @@ const maskPhone = (phone?: string) => {
   return clean.substring(0, 4) + '***' + clean.substring(clean.length - 3);
 };
 
-export const LandingPage: React.FC<LandingPageProps> = ({ 
+export const LandingPage: React.FC<LandingPageProps> = React.memo(({ 
   onGetStarted, 
   onLogin, 
   onBecomeRunner, 
@@ -310,7 +310,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       <div className="h-12 bg-[#0a2e5c] flex items-center justify-center px-6 overflow-hidden relative">
         <motion.div 
           animate={{ x: [-800, 800] }}
-          transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
+          transition={{ duration: 60, repeat: Infinity, ease: "linear" }}
           className="whitespace-nowrap text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400 flex items-center gap-16"
         >
           <span>✨ NEW: Premium Laundry Concierge active in Nairobi</span>
@@ -492,7 +492,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   <div className="flex -space-x-2">
                     {[1, 2, 3].map(i => (
                       <div key={i} className="w-10 h-10 rounded-full border-2 border-white bg-slate-200 overflow-hidden">
-                        <img src={`https://i.pravatar.cc/100?u=${i + 50}`} className="w-full h-full object-cover" />
+                        <img 
+                          src={`https://i.pravatar.cc/100?u=${i + 50}`} 
+                          alt={`ErrandRunner community member ${i}`}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover" 
+                        />
                       </div>
                     ))}
                   </div>
@@ -562,7 +568,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                        </div>
 
                        <div className="h-48 bg-slate-50 dark:bg-slate-800/50 rounded-3xl overflow-hidden border border-slate-100 dark:border-slate-700 relative flex flex-col items-center justify-center p-4">
-                          <img src="https://picsum.photos/seed/nairobi/600/400" className="absolute inset-0 w-full h-full object-cover opacity-60 mix-blend-overlay pointer-events-none" />
+                          <img 
+                            src="https://picsum.photos/seed/nairobi/600/400" 
+                            alt="Nairobi logistics coverage and live dispatch routes"
+                            loading="lazy"
+                            decoding="async"
+                            className="absolute inset-0 w-full h-full object-cover opacity-60 mix-blend-overlay pointer-events-none" 
+                          />
                           <div className="relative z-10 flex flex-col items-center gap-2">
                              <div className="w-12 h-12 bg-white dark:bg-slate-900 rounded-full flex items-center justify-center shadow-2xl">
                                 <MapPin className="text-[#0a2e5c] dark:text-primary animate-bounce" size={24} />
@@ -700,13 +712,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                        <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800 font-sans">
                           <div className="flex -space-x-3">
                              <div className="w-10 h-10 rounded-full border-2 border-white bg-slate-100 hover:scale-110 transition-transform overflow-hidden">
-                                <img src="https://i.pravatar.cc/100?u=jane" className="w-full h-full object-cover animate-fade-in" />
+                                <img src="https://i.pravatar.cc/100?u=jane" alt="Verified Runner Jane" loading="lazy" decoding="async" className="w-full h-full object-cover animate-fade-in" />
                              </div>
                              <div className="w-10 h-10 rounded-full border-2 border-white bg-slate-200 hover:scale-110 transition-transform overflow-hidden font-mono text-[9px] flex items-center justify-center">
-                                <img src="https://i.pravatar.cc/100?u=jack" className="w-full h-full object-cover animate-fade-in" />
+                                <img src="https://i.pravatar.cc/100?u=jack" alt="Verified Runner Jack" loading="lazy" decoding="async" className="w-full h-full object-cover animate-fade-in" />
                              </div>
                              <div className="w-10 h-10 rounded-full border-2 border-white bg-slate-300 hover:scale-110 transition-transform overflow-hidden font-mono text-[9px] flex items-center justify-center">
-                                <img src="https://i.pravatar.cc/100?u=john" className="w-full h-full object-cover animate-fade-in" />
+                                <img src="https://i.pravatar.cc/100?u=john" alt="Verified Runner John" loading="lazy" decoding="async" className="w-full h-full object-cover animate-fade-in" />
                              </div>
                           </div>
                           <button 
@@ -1012,4 +1024,4 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </footer>
     </div>
   );
-};
+});

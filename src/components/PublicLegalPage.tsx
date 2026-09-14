@@ -47,7 +47,7 @@ export const PublicLegalPage: React.FC<PublicLegalPageProps> = ({
             <div className="h-4 w-px bg-slate-200 dark:bg-slate-800" />
             <div className="flex items-center gap-2 cursor-pointer" onClick={onBackToHome}>
               {appSettings?.logoUrl ? (
-                <img src={appSettings.logoUrl} alt="Logo" className="h-7 w-auto object-contain" />
+                <img src={appSettings.logoUrl} alt="ErrandRunner Official Brand Logo" loading="lazy" decoding="async" className="h-7 w-auto object-contain" />
               ) : (
                 <span className="font-black text-lg tracking-tight text-[#0a2e5c] dark:text-white">
                   Errands<span className="text-[#2891e2]">.</span>

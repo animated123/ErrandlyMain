@@ -76,7 +76,7 @@ export default function CameraCapture({ onCapture, onClose }: CameraCaptureProps
             className="w-full h-full object-cover"
           />
         ) : (
-          <img src={capturedImage} className="w-full h-full object-cover" alt="Captured" />
+          <img src={capturedImage} className="w-full h-full object-cover" alt="Captured camera proof photo preview" decoding="async" />
         )}
         <canvas ref={canvasRef} className="hidden" />
       </div>

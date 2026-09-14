@@ -208,7 +208,13 @@ export default React.memo(function ErrandCard({ errand, onClick, currentLocation
           <div className="flex -space-x-3">
             {[1, 2, 3].map(i => (
               <div key={i} className="w-8 h-8 rounded-xl border-2 border-white dark:border-slate-900 bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden shadow-sm">
-                <img src={`https://picsum.photos/seed/${i + 42}/100/100`} className="w-full h-full object-cover" alt="User" />
+                <img 
+                  src={`https://picsum.photos/seed/${i + 42}/100/100`} 
+                  className="w-full h-full object-cover" 
+                  alt={`Runner candidate ${i} avatar`} 
+                  loading="lazy" 
+                  decoding="async" 
+                />
               </div>
             ))}
             {errand.bids && errand.bids.length > 3 && (

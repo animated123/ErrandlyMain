@@ -1,5 +1,6 @@
 import React from 'react';
 import { Zap } from 'lucide-react';
+import { optimizeImageUrl } from '../lib/imageOptimizer';
 
 interface LogoProps {
   size?: number;
@@ -59,8 +60,9 @@ export const Logo = ({
         }
       `}</style>
       <img 
-        src={logoUrl} 
-        alt="Logo" 
+        src={optimizeImageUrl(logoUrl, { width: Math.max(80, Math.min(320, Math.ceil(desktopSize * 2))), quality: 'auto' })} 
+        alt="ErrandRunner Official Logo" 
+        decoding="async"
         className={`object-contain logo-res-${styleId} ${variantClasses[variant]} ${className}`}
         referrerPolicy="no-referrer"
       />

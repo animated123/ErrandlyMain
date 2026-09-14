@@ -621,7 +621,7 @@ export default function RunnerApplicationPage({
                       <div className="border border-dashed border-slate-200 dark:border-slate-800 rounded-3xl p-6 text-center space-y-4 flex flex-col items-center justify-center aspect-[5/3] overflow-hidden relative group">
                         {form.idFrontUrl ? (
                           <>
-                            <img src={form.idFrontUrl} className="absolute inset-0 w-full h-full object-cover" />
+                            <img src={form.idFrontUrl} alt="National ID front document preview" loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                               <label className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider rounded-lg cursor-pointer">
                                 Update Front
@@ -648,7 +648,7 @@ export default function RunnerApplicationPage({
                       <div className="border border-dashed border-slate-200 dark:border-slate-800 rounded-3xl p-6 text-center space-y-4 flex flex-col items-center justify-center aspect-[5/3] overflow-hidden relative group">
                         {form.idBackUrl ? (
                           <>
-                            <img src={form.idBackUrl} className="absolute inset-0 w-full h-full object-cover" />
+                            <img src={form.idBackUrl} alt="National ID back document preview" loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                               <label className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-wider rounded-lg cursor-pointer">
                                 Update Back
@@ -690,7 +690,7 @@ export default function RunnerApplicationPage({
                             </>
                           ) : form.passportPhoto ? (
                             <div className="w-full h-full relative">
-                              <img src={form.passportPhoto} className="w-full h-full object-cover" />
+                              <img src={form.passportPhoto} alt="Applicant passport photo preview" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                 <button type="button" onClick={startCamera} className="p-2 bg-indigo-600 text-white rounded-lg text-[9px] font-black uppercase tracking-wider">Retake</button>
                               </div>

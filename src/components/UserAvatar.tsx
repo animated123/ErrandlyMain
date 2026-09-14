@@ -1,5 +1,6 @@
 import React from 'react';
 import { User as UserIcon } from 'lucide-react';
+import { getOptimizedAvatar } from '../lib/imageOptimizer';
 
 interface UserAvatarProps {
   src?: string | null;
@@ -22,8 +23,10 @@ const UserAvatar: React.FC<UserAvatarProps> = ({ src, name, className = "w-12 h-
 
   const avatarContent = finalSrc ? (
     <img 
-      src={finalSrc} 
-      alt={name || 'User'} 
+      src={getOptimizedAvatar(finalSrc, 128)} 
+      alt={name ? `${name}'s Profile Avatar` : 'Verified User Avatar'} 
+      loading="lazy"
+      decoding="async"
       className={`${className} object-cover border border-border shadow-sm`}
       referrerPolicy="no-referrer"
       onError={() => {

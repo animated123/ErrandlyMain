@@ -116,7 +116,9 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
               <img 
                 src="https://picsum.photos/seed/delivery/800/1200" 
                 className="absolute inset-0 w-full h-full object-cover opacity-40 mix-blend-overlay" 
-                alt="Auth background" 
+                alt="ErrandRunner reliable door-to-door delivery and errand coordination" 
+                loading="lazy"
+                decoding="async"
                 referrerPolicy="no-referrer"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-[#0a2e5c] via-transparent to-transparent flex flex-col justify-end p-10 text-white space-y-4">

@@ -498,7 +498,7 @@ export default function MapComponent({
                       <div className="p-1 min-w-[100px]">
                         <p className="text-sm font-black tracking-normal font-medium text-foreground mb-1">{listing.title}</p>
                         <p className="text-xs font-bold text-amber-600 uppercase tracking-tighter">Ksh {(listing.price || 0).toLocaleString()}</p>
-                        <img src={listing.imageUrl} alt={listing.title} className="w-full h-12 object-cover rounded-md mt-1" />
+                        <img src={listing.imageUrl} alt={listing.title || "Rental listing map location thumbnail"} loading="lazy" decoding="async" className="w-full h-12 object-cover rounded-md mt-1" />
                       </div>
                     </InfoWindow>
                   )}
@@ -518,7 +518,7 @@ export default function MapComponent({
                   <div className="relative group">
                     <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-xl border-2 border-white overflow-hidden transition-all group-hover:scale-110">
                       {runner.avatar ? (
-                        <img src={runner.avatar} className="w-full h-full object-cover" alt={runner.name} />
+                        <img src={runner.avatar} className="w-full h-full object-cover" alt={`${runner.name || 'Runner'}'s map location marker`} loading="lazy" decoding="async" />
                       ) : (
                         <User size={20} className="text-white" />
                       )}

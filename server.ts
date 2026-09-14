@@ -2758,6 +2758,48 @@ export async function getApp(): Promise<express.Application> {
   // Attach Session Rate Limiter Middleware
   app.use("/api", sessionRateLimiter);
 
+  // Robots.txt for Search Engines & SEO Crawlers
+  app.get(["/robots.txt", "/robot.txt"], (req, res) => {
+    const baseUrl = process.env.VITE_APP_URL || `${req.protocol}://${req.get('host')}`;
+    const robotsTxt = `# robots.txt for ErrandRunner
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /connectionadmin
+Disallow: /dbconfig
+Disallow: /reset-password
+
+Sitemap: ${baseUrl}/sitemap.xml
+`;
+    res.header('Content-Type', 'text/plain; charset=utf-8');
+    res.send(robotsTxt);
+  });
+
+  // XML Sitemap for Google Search Console
+  app.get("/sitemap.xml", (req, res) => {
+    const baseUrl = process.env.VITE_APP_URL || `${req.protocol}://${req.get('host')}`;
+    const pages = [
+      '',
+      '/privacy',
+      '/privacy-policy',
+      '/terms',
+      '/terms-of-service',
+      '/application-runner'
+    ];
+
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${pages.map(page => `  <url>
+    <loc>${baseUrl}${page}</loc>
+    <changefreq>weekly</changefreq>
+    <priority>${page === '' ? '1.0' : '0.8'}</priority>
+  </url>`).join('\n')}
+</urlset>`;
+
+    res.header('Content-Type', 'application/xml');
+    res.send(sitemap);
+  });
+
   // Universal Database Proxy Endpoint (translates client PostgREST calls to PostgreSQL or local DB)
   app.all(["/api/db/:tableName/:action", "/api/db/:tableName"], async (req, res) => {
     try {

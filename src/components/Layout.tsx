@@ -17,7 +17,7 @@ interface LayoutProps {
   appSettings?: AppSettings;
 }
 
-export default function Layout({ 
+export default React.memo(function Layout({ 
   user, 
   onLogout, 
   activeTab, 
@@ -272,4 +272,4 @@ export default function Layout({
     </div>
   </div>
   );
-}
+});
