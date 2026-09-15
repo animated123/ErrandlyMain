@@ -444,6 +444,7 @@ export default function App() {
       if (u?.id) {
         setUser(u);
         setIsDarkMode(u.theme === 'dark');
+        setShowAuthModal(false);
         
         // Sync profile balance immediately on login
         try {

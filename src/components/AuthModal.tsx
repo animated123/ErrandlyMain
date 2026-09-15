@@ -30,7 +30,20 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
   useEffect(() => {
     setMode(initialMode);
     setError(null);
+    setIsProcessing(false);
   }, [initialMode, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const unsub = firebaseService.subscribeToAuthChanges((u) => {
+      if (u?.id && isOpen) {
+        setIsProcessing(false);
+        onAuthSuccess(u);
+        onClose();
+      }
+    });
+    return () => unsub();
+  }, [isOpen, onAuthSuccess, onClose]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -329,9 +342,14 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
                           setIsProcessing(true);
                           setError(null);
                           try {
-                            await firebaseService.signInWithOAuth('google');
+                            const user = await firebaseService.signInWithOAuth('google');
+                            if (user) {
+                              onAuthSuccess(user);
+                              onClose();
+                            }
                           } catch (err: any) {
                             setError(err?.message || 'Google authentication failed');
+                          } finally {
                             setIsProcessing(false);
                           }
                         }}

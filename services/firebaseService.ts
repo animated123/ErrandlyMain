@@ -1620,7 +1620,7 @@ export const firebaseService = {
     }
   },
 
-  signInWithOAuth: async (provider: 'google' | 'github' = 'google'): Promise<void> => {
+  signInWithOAuth: async (provider: 'google' | 'github' = 'google'): Promise<User | null> => {
     // 1. PRIMARY: For Google sign-in, use Firebase Google Auth provider first
     if (provider === 'google') {
       if (auth && auth.app) {
@@ -1637,20 +1637,20 @@ export const firebaseService = {
               console.log('[Firebase Google Auth] Successfully authenticated via Firebase:', cred.user.email);
               const mappedUser = await firebaseService.syncUserSession(cred.user, 'firebase');
               firebaseService._broadcastAuthChange(mappedUser);
-              return;
+              return mappedUser;
             }
           } catch (popupErr: any) {
             console.warn('[Firebase Google Auth] Popup issue:', popupErr?.code || popupErr?.message);
             // If the user actively closed the popup or cancelled, do not trigger unsolicited fallback
             if (popupErr?.code === 'auth/popup-closed-by-user' || popupErr?.code === 'auth/cancelled-popup-request') {
-              return;
+              return null;
             }
             // If popup is blocked by browser policies, attempt redirect via Firebase
             if (popupErr?.code === 'auth/popup-blocked') {
               console.log('[Firebase Google Auth] Popup blocked by browser, trying Firebase signInWithRedirect...');
               try {
                 await signInWithRedirect(auth, fbProvider);
-                return;
+                return null;
               } catch (redirErr: any) {
                 console.warn('[Firebase Google Auth] Redirect attempt error:', redirErr?.message);
               }
@@ -1679,10 +1679,10 @@ export const firebaseService = {
       }
       if (data?.url) {
         window.location.href = data.url;
-        return;
       }
+      return null;
     } catch (err: any) {
-      console.error('[OAuth Error]:', err?.message || err);
+      console.error('[Supabase OAuth] Error initiating OAuth sign-in:', err);
       throw err;
     }
   },

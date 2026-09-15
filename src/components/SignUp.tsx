@@ -213,9 +213,13 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
             setIsProcessing(true);
             setError(null);
             try {
-              await firebaseService.signInWithOAuth('google');
+              const user = await firebaseService.signInWithOAuth('google');
+              if (user) {
+                onSuccess(user);
+              }
             } catch (err: any) {
               setError(err?.message || 'Google signup failed');
+            } finally {
               setIsProcessing(false);
             }
           }}
