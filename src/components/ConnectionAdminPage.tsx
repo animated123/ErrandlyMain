@@ -2835,10 +2835,10 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                     </button>
                     <button
                       type="button"
-                      onClick={() => setActionServerUrlInput('http://localhost:3000')}
+                      onClick={() => setActionServerUrlInput('https://errandly.site')}
                       className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-bold transition"
                     >
-                      Localhost (3000)
+                      errandly.site
                     </button>
                   </div>
 

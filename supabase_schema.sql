@@ -252,6 +252,38 @@ CREATE POLICY "Users can insert their own complaints" ON public.complaints FOR I
 DROP POLICY IF EXISTS "Admins can view all complaints" ON public.complaints;
 CREATE POLICY "Admins can view all complaints" ON public.complaints FOR ALL USING (true); -- Simplified for now
 
+-- 9. TRANSACTIONS Table (Financial Ledger)
+CREATE TABLE IF NOT EXISTS public.transactions (
+    id TEXT PRIMARY KEY,
+    user_id UUID,
+    amount NUMERIC,
+    type TEXT,
+    status TEXT DEFAULT 'pending',
+    provider TEXT,
+    reference TEXT,
+    phone_number TEXT,
+    verification_data JSONB DEFAULT '{}'::jsonb,
+    error TEXT,
+    description TEXT,
+    previous_balance NUMERIC,
+    added_balance NUMERIC,
+    new_balance NUMERIC,
+    transaction_code TEXT,
+    payment_reference TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Enable RLS for Transactions
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+
+-- Transactions Policies
+DROP POLICY IF EXISTS "Users can view their own transactions" ON public.transactions;
+CREATE POLICY "Users can view their own transactions" ON public.transactions FOR SELECT USING (auth.uid()::text = user_id::text);
+
+DROP POLICY IF EXISTS "Allow full transaction management" ON public.transactions;
+CREATE POLICY "Allow full transaction management" ON public.transactions FOR ALL USING (true);
+
 -- Insert Default Settings
 INSERT INTO public.settings (id, primary_color, logo_url, icon_url, dashboard_hero_url, default_ui_scale, logo_scale, logo_variant, saka_keja_base_fee, saka_keja_percentage)
 VALUES ('app', '#2891e2', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216350/a371z1ikclx5qbsgtgdv.png', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216384/ox2qzeuultlhiccfh02z.png', 'https://res.cloudinary.com/dul9xvvap/image/upload/v1779216072/yy5zthljky17lmq0nlsy.png', 1.1, 3, 'original', 1200, 8)

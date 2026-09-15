@@ -21,7 +21,7 @@ import UserAvatar from './UserAvatar';
 import { Logo } from './Logo';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { API_BASE_URL, ACTION_SERVER_URL } from '../../services/apiConfig';
+import { API_BASE_URL, ACTION_SERVER_URL, getAuthRedirectUrl, DEFAULT_SITE_URL } from '../../services/apiConfig';
 
 interface AdminPanelProps {
   user: User;
@@ -285,6 +285,30 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
     setActionServerGatewayUrl(defaultUrl);
     setGatewaySavedMsg('Gateway URL reset to system default (https://gateway.errandly.site)');
     setTimeout(() => setGatewaySavedMsg(''), 4000);
+  };
+
+  // OAuth Authentication Redirect URL (Google & Supabase)
+  const [authRedirectUrlInput, setAuthRedirectUrlInput] = useState<string>(() => {
+    return localStorage.getItem('custom_site_url') || getAuthRedirectUrl() || DEFAULT_SITE_URL;
+  });
+  const [authRedirectSavedMsg, setAuthRedirectSavedMsg] = useState<string>('');
+
+  const handleSaveAuthRedirectUrl = (urlToSave: string) => {
+    const trimmed = urlToSave.trim().replace(/\/+$/, '');
+    if (!trimmed) return;
+    localStorage.setItem('custom_site_url', trimmed);
+    localStorage.setItem('custom_auth_redirect_url', trimmed);
+    setAuthRedirectUrlInput(trimmed);
+    setAuthRedirectSavedMsg(`Auth redirect URL confirmed and saved to ${trimmed}!`);
+    setTimeout(() => setAuthRedirectSavedMsg(''), 4000);
+  };
+
+  const handleResetAuthRedirectUrl = () => {
+    localStorage.removeItem('custom_site_url');
+    localStorage.removeItem('custom_auth_redirect_url');
+    setAuthRedirectUrlInput(DEFAULT_SITE_URL);
+    setAuthRedirectSavedMsg(`Auth redirect URL reset to default (${DEFAULT_SITE_URL})`);
+    setTimeout(() => setAuthRedirectSavedMsg(''), 4000);
   };
 
   const handleExecuteCustomCall = async () => {
@@ -2462,6 +2486,70 @@ const AdminPanel: React.FC<AdminPanelProps> = ({
                           <strong>Ping Output:</strong> {pingStatus.message}
                         </div>
                       )}
+                    </div>
+
+                    {/* OAuth Login Redirect URL Configuration */}
+                    <div className="pt-4 border-t border-indigo-900/30 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black uppercase tracking-wider text-slate-400 block">
+                          OAuth Login Redirect Target URL (Google & Supabase)
+                        </label>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                          Routing to errandly.site
+                        </span>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={authRedirectUrlInput}
+                          onChange={(e) => setAuthRedirectUrlInput(e.target.value)}
+                          className="flex-1 px-4 py-3 bg-slate-950/80 border border-indigo-900/60 rounded-xl text-xs font-mono font-bold text-white outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/30 transition-all"
+                          placeholder="https://errandly.site"
+                        />
+                        <button
+                          onClick={() => handleSaveAuthRedirectUrl(authRedirectUrlInput)}
+                          className="px-5 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-lg shadow-indigo-600/30"
+                        >
+                          <CheckCircle2 size={14} />
+                          Save Redirect URL
+                        </button>
+                        <button
+                          onClick={handleResetAuthRedirectUrl}
+                          className="px-3 py-3 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl text-xs font-bold transition-all shrink-0 border border-slate-800"
+                          title="Reset to default errandly.site"
+                        >
+                          Reset
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveAuthRedirectUrl('https://errandly.site')}
+                          className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] font-mono transition"
+                        >
+                          Set to https://errandly.site
+                        </button>
+                        {typeof window !== 'undefined' && window.location.origin !== 'https://errandly.site' && (
+                          <button
+                            type="button"
+                            onClick={() => handleSaveAuthRedirectUrl(window.location.origin)}
+                            className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] font-mono transition"
+                          >
+                            Current ({window.location.origin})
+                          </button>
+                        )}
+                      </div>
+
+                      {authRedirectSavedMsg && (
+                        <div className="p-3 bg-emerald-500/20 border border-emerald-500/30 text-emerald-200 rounded-xl text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                          <CheckCircle size={14} className="text-emerald-400 shrink-0" />
+                          <span>{authRedirectSavedMsg}</span>
+                        </div>
+                      )}
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Replaces <code className="text-rose-300 bg-rose-950/40 px-1 py-0.5 rounded">localhost:3000</code> with <code className="text-emerald-300 bg-emerald-950/40 px-1 py-0.5 rounded">https://errandly.site</code> during OAuth sign-ins.
+                      </p>
                     </div>
                   </div>
 

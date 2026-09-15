@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { 
@@ -33,7 +33,9 @@ import {
   AlertCircle,
   Send,
   Loader2,
-  FileText
+  FileText,
+  History,
+  Tag
 } from 'lucide-react';
 import { Logo } from './Logo';
 import { API_BASE_URL } from '../../services/apiConfig';
@@ -253,6 +255,7 @@ export const NetworkStandardsPage: React.FC<InfoPageProps> = ({ onBack }) => {
 };
 
 export const HelpPage: React.FC<InfoPageProps> = ({ onBack, user }) => {
+  const [activeTab, setActiveTab] = useState<'form' | 'history'>('form');
   const [complaintForm, setComplaintForm] = useState({
     subject: '',
     description: '',
@@ -260,6 +263,33 @@ export const HelpPage: React.FC<InfoPageProps> = ({ onBack, user }) => {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [ticketResult, setTicketResult] = useState<{ success: boolean; ticketNumber?: string; error?: string } | null>(null);
+  const [tickets, setTickets] = useState<any[]>([]);
+  const [isLoadingTickets, setIsLoadingTickets] = useState(false);
+
+  const fetchTickets = useCallback(async () => {
+    if (!user) return;
+    setIsLoadingTickets(true);
+    try {
+      const response = await axios.post(`${API_BASE_URL}/api/db/complaints/select`, {
+        match: { user_id: user.id }
+      });
+      if (response.data.success) {
+        setTickets(response.data.data.sort((a: any, b: any) => 
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        ));
+      }
+    } catch (err) {
+      console.error("Failed to fetch tickets:", err);
+    } finally {
+      setIsLoadingTickets(false);
+    }
+  }, [user]);
+
+  React.useEffect(() => {
+    if (activeTab === 'history') {
+      fetchTickets();
+    }
+  }, [activeTab, fetchTickets]);
 
   const handleSubmitComplaint = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -352,138 +382,243 @@ export const HelpPage: React.FC<InfoPageProps> = ({ onBack, user }) => {
         </div>
 
         <div className="space-y-6">
-          <div className="p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2.5rem] shadow-sm relative overflow-hidden">
+          <div className="p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2.5rem] shadow-sm relative overflow-hidden min-h-[600px] flex flex-col">
             <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full blur-3xl -mr-16 -mt-16"></div>
             
-            <h2 className="text-2xl font-black text-[#0a2e5c] dark:text-white flex items-center gap-3 mb-6 relative z-10">
-               <AlertCircle className="text-primary" />
-               Complain Center
-            </h2>
-            
-            {!user ? (
-              <div className="text-center py-12 space-y-4">
-                <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center justify-center mx-auto text-slate-400">
-                  <UserCheck size={32} />
-                </div>
-                <p className="text-sm font-medium text-slate-500">Please sign in to log a formal complaint and track its resolution.</p>
+            <div className="flex items-center justify-between mb-8 relative z-10 border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setActiveTab('form')}
+                  className={`flex items-center gap-2 text-sm font-black transition-all ${activeTab === 'form' ? 'text-primary scale-105' : 'text-slate-400 grayscale hover:grayscale-0'}`}
+                >
+                  <AlertCircle size={18} />
+                  <span>Log Complaint</span>
+                  {activeTab === 'form' && <motion.div layoutId="tab-underline" className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-primary" />}
+                </button>
+                <button 
+                  onClick={() => setActiveTab('history')}
+                  className={`flex items-center gap-2 text-sm font-black transition-all relative ${activeTab === 'history' ? 'text-primary scale-105' : 'text-slate-400 grayscale hover:grayscale-0'}`}
+                >
+                  <History size={18} />
+                  <span>Ticket History</span>
+                  {activeTab === 'history' && <motion.div layoutId="tab-underline" className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-primary" />}
+                </button>
               </div>
-            ) : ticketResult?.success ? (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="text-center py-8 space-y-6"
-              >
-                <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-inner">
-                  <CheckCircle size={40} />
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-slate-900 dark:text-white">Complaint Logged!</h3>
-                  <p className="text-sm font-medium text-slate-500 mt-2">Your ticket number is:</p>
-                  <div className="mt-3 px-6 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl border-2 border-dashed border-primary/30 inline-block font-black text-2xl tracking-widest text-primary">
-                    {ticketResult.ticketNumber}
-                  </div>
-                </div>
-                <p className="text-xs text-slate-400">A confirmation email has been sent to <strong>{user.email}</strong>. Our team will review your case shortly.</p>
-                <button 
-                  onClick={() => setTicketResult(null)}
-                  className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-colors"
-                >
-                  Log Another Complaint
-                </button>
-              </motion.div>
-            ) : (
-              <form onSubmit={handleSubmitComplaint} className="space-y-5 relative z-10">
-                {ticketResult?.error && (
-                  <div className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50 rounded-xl text-rose-600 text-xs font-bold flex items-center gap-2">
-                    <AlertCircle size={14} />
-                    {ticketResult.error}
-                  </div>
-                )}
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Full Name</label>
-                    <input 
-                      type="text" 
-                      value={user.name} 
-                      disabled 
-                      className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-500 cursor-not-allowed" 
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Email Address</label>
-                    <input 
-                      type="text" 
-                      value={user.email} 
-                      disabled 
-                      className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-500 cursor-not-allowed" 
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Subject</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g., Delayed delivery, Wrong items..." 
-                    value={complaintForm.subject}
-                    onChange={(e) => setComplaintForm({ ...complaintForm, subject: e.target.value })}
-                    required
-                    className="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 focus:border-primary/20 transition-all outline-none" 
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Priority Level</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {['LOW', 'MEDIUM', 'HIGH'].map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => setComplaintForm({ ...complaintForm, priority: p })}
-                        className={`py-2.5 rounded-xl text-[10px] font-black transition-all border ${
-                          complaintForm.priority === p 
-                            ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20' 
-                            : 'bg-slate-50 dark:bg-slate-800 text-slate-400 border-slate-100 dark:border-slate-800 hover:border-primary/20'
-                        }`}
+            </div>
+            
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar relative z-10">
+              <AnimatePresence mode="wait">
+                {activeTab === 'form' ? (
+                  <motion.div
+                    key="form"
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 10 }}
+                  >
+                    {!user ? (
+                      <div className="text-center py-12 space-y-4">
+                        <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-2xl flex items-center justify-center mx-auto text-slate-400">
+                          <UserCheck size={32} />
+                        </div>
+                        <p className="text-sm font-medium text-slate-500">Please sign in to log a formal complaint and track its resolution.</p>
+                      </div>
+                    ) : ticketResult?.success ? (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="text-center py-8 space-y-6"
                       >
-                        {p}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                        <div className="w-20 h-20 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-inner">
+                          <CheckCircle size={40} />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-black text-slate-900 dark:text-white">Complaint Logged!</h3>
+                          <p className="text-sm font-medium text-slate-500 mt-2">Your ticket number is:</p>
+                          <div className="mt-3 px-6 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl border-2 border-dashed border-primary/30 inline-block font-black text-2xl tracking-widest text-primary">
+                            {ticketResult.ticketNumber}
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-400">A confirmation email has been sent to <strong>{user.email}</strong>. Our team will review your case shortly.</p>
+                        <button 
+                          onClick={() => setTicketResult(null)}
+                          className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-colors"
+                        >
+                          Log Another Complaint
+                        </button>
+                      </motion.div>
+                    ) : (
+                      <form onSubmit={handleSubmitComplaint} className="space-y-5">
+                        {ticketResult?.error && (
+                          <div className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-100 dark:border-rose-900/50 rounded-xl text-rose-600 text-xs font-bold flex items-center gap-2">
+                            <AlertCircle size={14} />
+                            {ticketResult.error}
+                          </div>
+                        )}
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Full Name</label>
+                            <input 
+                              type="text" 
+                              value={user.name} 
+                              disabled 
+                              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-500 cursor-not-allowed" 
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Email Address</label>
+                            <input 
+                              type="text" 
+                              value={user.email} 
+                              disabled 
+                              className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-xl text-sm font-bold text-slate-500 cursor-not-allowed" 
+                            />
+                          </div>
+                        </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Describe the Issue</label>
-                  <textarea 
-                    rows={4}
-                    placeholder="Provide details about what happened..."
-                    value={complaintForm.description}
-                    onChange={(e) => setComplaintForm({ ...complaintForm, description: e.target.value })}
-                    required
-                    className="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 focus:border-primary/20 transition-all outline-none resize-none"
-                  />
-                </div>
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Subject</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g., Delayed delivery, Wrong items..." 
+                            value={complaintForm.subject}
+                            onChange={(e) => setComplaintForm({ ...complaintForm, subject: e.target.value })}
+                            required
+                            className="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 focus:border-primary/20 transition-all outline-none" 
+                          />
+                        </div>
 
-                <button 
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-4 bg-primary text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      Logging Ticket...
-                    </>
-                  ) : (
-                    <>
-                      <Send size={16} />
-                      Submit Complaint
-                    </>
-                  )}
-                </button>
-              </form>
-            )}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Priority Level</label>
+                          <div className="grid grid-cols-3 gap-2">
+                            {['LOW', 'MEDIUM', 'HIGH'].map((p) => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setComplaintForm({ ...complaintForm, priority: p })}
+                                className={`py-2.5 rounded-xl text-[10px] font-black transition-all border ${
+                                  complaintForm.priority === p 
+                                    ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20' 
+                                    : 'bg-slate-50 dark:bg-slate-800 text-slate-400 border-slate-100 dark:border-slate-800 hover:border-primary/20'
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-1">Describe the Issue</label>
+                          <textarea 
+                            rows={4}
+                            placeholder="Provide details about what happened..."
+                            value={complaintForm.description}
+                            onChange={(e) => setComplaintForm({ ...complaintForm, description: e.target.value })}
+                            required
+                            className="w-full px-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 focus:border-primary/20 transition-all outline-none resize-none"
+                          />
+                        </div>
+
+                        <button 
+                          type="submit"
+                          disabled={isSubmitting}
+                          className="w-full py-4 bg-primary text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                        >
+                          {isSubmitting ? (
+                            <>
+                              <Loader2 size={16} className="animate-spin" />
+                              Logging Ticket...
+                            </>
+                          ) : (
+                            <>
+                              <Send size={16} />
+                              Submit Complaint
+                            </>
+                          )}
+                        </button>
+                      </form>
+                    )}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="history"
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    className="space-y-4"
+                  >
+                    {!user ? (
+                      <div className="text-center py-12">
+                        <p className="text-sm font-medium text-slate-500">Sign in to view your ticket history.</p>
+                      </div>
+                    ) : isLoadingTickets ? (
+                      <div className="flex flex-col items-center justify-center py-20 gap-3">
+                        <Loader2 size={32} className="animate-spin text-primary/30" />
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Retrieving records...</p>
+                      </div>
+                    ) : tickets.length === 0 ? (
+                      <div className="text-center py-16 space-y-4">
+                        <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto text-slate-200">
+                          <History size={32} />
+                        </div>
+                        <p className="text-sm font-bold text-slate-400 italic">No tickets found on record.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {tickets.map((t) => (
+                          <div key={t.id} className="p-5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl hover:border-primary/20 transition-all group">
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <span className="text-[9px] font-black uppercase tracking-widest text-primary bg-primary/5 px-2 py-0.5 rounded-lg mb-1 block w-fit">
+                                  {t.ticket_number}
+                                </span>
+                                <h4 className="text-sm font-black text-[#0a2e5c] dark:text-white leading-tight">
+                                  {t.subject}
+                                </h4>
+                              </div>
+                              <div className={`px-3 py-1 rounded-full text-[9px] font-black tracking-widest uppercase border ${
+                                t.status === 'RESOLVED' 
+                                  ? 'bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-950/20 dark:border-emerald-900/50' 
+                                  : t.status === 'IN_PROGRESS'
+                                  ? 'bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-950/20 dark:border-amber-900/50'
+                                  : 'bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-950/20 dark:border-blue-900/50'
+                              }`}>
+                                {t.status || 'OPEN'}
+                              </div>
+                            </div>
+                            <p className="text-[11px] font-medium text-slate-500 line-clamp-2 mb-3 leading-relaxed">
+                              {t.description}
+                            </p>
+                            <div className="flex items-center justify-between pt-3 border-t border-slate-50 dark:border-slate-800">
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-1.5">
+                                  <Clock size={12} className="text-slate-300" />
+                                  <span className="text-[10px] font-bold text-slate-400">
+                                    {new Date(t.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <Tag size={12} className="text-slate-300" />
+                                  <span className={`text-[10px] font-bold ${
+                                    t.priority === 'HIGH' ? 'text-rose-400' : 'text-slate-400'
+                                  }`}>
+                                    {t.priority}
+                                  </span>
+                                </div>
+                              </div>
+                              <button className="text-[10px] font-black text-primary opacity-0 group-hover:opacity-100 transition-opacity uppercase tracking-widest">
+                                View Full
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </div>

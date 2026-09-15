@@ -8,7 +8,7 @@ import { geminiService } from './geminiService';
 import { actionService } from './actionService';
 import { NotificationService } from '../src/services/NotificationService';
 import { whatsappNotificationService } from './whatsappNotificationService';
-import { API_BASE_URL, ACTION_SERVER_URL } from './apiConfig';
+import { API_BASE_URL, ACTION_SERVER_URL, getAuthRedirectUrl, DEFAULT_SITE_URL } from './apiConfig';
 import { 
   FeaturedService, 
   ServiceListing, 
@@ -1428,11 +1428,66 @@ export const firebaseService = {
     if (firebaseService._authListenersInitialized) return;
     firebaseService._authListenersInitialized = true;
 
-    // 1. Listen to Supabase Auth state changes (handles OAuth redirect returns & sessions)
+    // 1. PRIMARY: Firebase Auth listener for Google provider and user authentication
+    if (auth && auth.app) {
+      try {
+        import('firebase/auth').then(async ({ onAuthStateChanged, getRedirectResult }) => {
+          // Check any Google OAuth redirect result on initial page boot
+          try {
+            const redirectRes = await getRedirectResult(auth);
+            if (redirectRes?.user) {
+              console.log('[Firebase Auth] Handled Google OAuth redirect result for:', redirectRes.user.email);
+              const user = await firebaseService.syncUserSession(redirectRes.user, 'firebase');
+              firebaseService._broadcastAuthChange(user);
+            }
+          } catch (redErr: any) {
+            console.debug('[Firebase Auth] redirect result check note:', redErr?.message || redErr);
+          }
+
+          onAuthStateChanged(auth, async (fbUser) => {
+            console.log('[Firebase Auth Event] State changed:', fbUser ? fbUser.email : 'Signed Out');
+            if (fbUser) {
+              try {
+                const user = await firebaseService.syncUserSession(fbUser, 'firebase');
+                firebaseService._broadcastAuthChange(user);
+              } catch (e) {
+                console.warn('[Firebase Auth] syncUserSession error:', e);
+              }
+            } else {
+              // Firebase signed out or empty: check if a secondary Supabase session is active
+              if (supabase && supabase.auth && typeof supabase.auth.getSession === 'function') {
+                try {
+                  const { data: { session } } = await supabase.auth.getSession();
+                  if (session?.user) {
+                    const user = await firebaseService.syncUserSession(session.user, 'supabase', session);
+                    firebaseService._broadcastAuthChange(user);
+                    return;
+                  }
+                } catch (supaErr) {
+                  console.debug('[Auth] Secondary Supabase check on Firebase signout:', supaErr);
+                }
+              }
+              firebaseService._currentUserCache = null;
+              firebaseService._broadcastAuthChange(null);
+            }
+          });
+        }).catch((e) => {
+          console.debug('[Firebase Auth] Import onAuthStateChanged error:', e);
+        });
+      } catch (e) {
+        console.debug('[Firebase Auth] listener registration error:', e);
+      }
+    }
+
+    // 2. SECONDARY: Supabase Auth listener (for password login, fallback OAuth, and secondary sessions)
     try {
       if (supabase && supabase.auth && typeof supabase.auth.onAuthStateChange === 'function') {
         supabase.auth.onAuthStateChange(async (event: string, session: any) => {
           console.log('[Supabase Auth Event]:', event, session?.user?.email);
+          // If Firebase Auth already has an active primary authenticated user, preserve Firebase as primary
+          if (auth && auth.currentUser) {
+            return;
+          }
           if (session?.user) {
             try {
               const user = await firebaseService.syncUserSession(session.user, 'supabase', session);
@@ -1441,8 +1496,11 @@ export const firebaseService = {
               console.warn('[Supabase Auth] Session sync error:', syncErr);
             }
           } else if (event === 'SIGNED_OUT') {
-            firebaseService._currentUserCache = null;
-            firebaseService._broadcastAuthChange(null);
+            // Only broadcast sign out if Firebase is also not active
+            if (!auth || !auth.currentUser) {
+              firebaseService._currentUserCache = null;
+              firebaseService._broadcastAuthChange(null);
+            }
           }
         });
       }
@@ -1450,42 +1508,22 @@ export const firebaseService = {
       console.warn('[Supabase Auth] onAuthStateChange setup notice:', err);
     }
 
-    // 2. Check existing active Supabase session
+    // 3. Initial check for existing active Supabase session if Firebase is not yet logged in
     try {
       if (supabase && supabase.auth && typeof supabase.auth.getSession === 'function') {
         supabase.auth.getSession().then(async ({ data: { session } }: any) => {
-          if (session?.user && !firebaseService._currentUserCache) {
+          if (session?.user && !firebaseService._currentUserCache && (!auth || !auth.currentUser)) {
             try {
               const user = await firebaseService.syncUserSession(session.user, 'supabase', session);
               firebaseService._broadcastAuthChange(user);
             } catch (e) {
-              console.debug('[Supabase Auth] initial getSession sync error:', e);
+              console.debug('[Supabase Auth] initial getSession sync note:', e);
             }
           }
         }).catch((e: any) => console.debug('[Supabase Auth] getSession check:', e));
       }
     } catch (e) {
       console.debug('[Supabase Auth] getSession listener check:', e);
-    }
-
-    // 3. Firebase Auth listener (secondary fallback)
-    if (auth && auth.app) {
-      try {
-        import('firebase/auth').then(({ onAuthStateChanged }) => {
-          onAuthStateChanged(auth, async (fbUser) => {
-            if (fbUser && !firebaseService._currentUserCache) {
-              try {
-                const user = await firebaseService.syncUserSession(fbUser, 'firebase');
-                firebaseService._broadcastAuthChange(user);
-              } catch (e) {
-                console.debug('[Firebase Auth] sync error:', e);
-              }
-            }
-          });
-        }).catch(() => {});
-      } catch (e) {
-        console.debug('[Firebase Auth] listener registration error:', e);
-      }
     }
   },
 
@@ -1538,7 +1576,11 @@ export const firebaseService = {
         profile_photo: dbUser?.profile_photo || avatar,
         created_at: dbUser?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        extra_data: existingExtra
+        extra_data: {
+          ...existingExtra,
+          auth_provider: source,
+          auth_primary: source === 'firebase'
+        }
       };
 
       // 2. Direct copy/upsert to database profiles table (no password_hash or bcrypt)
@@ -1579,29 +1621,52 @@ export const firebaseService = {
   },
 
   signInWithOAuth: async (provider: 'google' | 'github' = 'google'): Promise<void> => {
-    // 1. For Google sign-in, try Firebase popup first (avoids third-party redirect 403 blocks)
-    if (provider === 'google' && auth) {
-      try {
-        const { GoogleAuthProvider, signInWithPopup } = await import('firebase/auth');
-        const fbProvider = new GoogleAuthProvider();
-        fbProvider.setCustomParameters({ prompt: 'select_account' });
-        const cred = await signInWithPopup(auth, fbProvider);
-        if (cred?.user) {
-          const mappedUser = await firebaseService.syncUserSession(cred.user, 'firebase');
-          firebaseService._broadcastAuthChange(mappedUser);
-          return;
-        }
-      } catch (fbErr: any) {
-        console.warn('[Firebase Google Auth] Popup failed or cancelled, trying Supabase OAuth:', fbErr?.code || fbErr?.message);
-        if (fbErr?.code === 'auth/popup-closed-by-user' || fbErr?.code === 'auth/cancelled-popup-request') {
-          return;
+    // 1. PRIMARY: For Google sign-in, use Firebase Google Auth provider first
+    if (provider === 'google') {
+      if (auth && auth.app) {
+        try {
+          console.log('[Google Auth] Initiating PRIMARY login via Firebase Google Provider...');
+          const { GoogleAuthProvider, signInWithPopup, signInWithRedirect } = await import('firebase/auth');
+          const fbProvider = new GoogleAuthProvider();
+          fbProvider.setCustomParameters({ prompt: 'select_account' });
+          
+          try {
+            const cred = await signInWithPopup(auth, fbProvider);
+            if (cred?.user) {
+              console.log('[Firebase Google Auth] Successfully authenticated via Firebase:', cred.user.email);
+              const mappedUser = await firebaseService.syncUserSession(cred.user, 'firebase');
+              firebaseService._broadcastAuthChange(mappedUser);
+              return;
+            }
+          } catch (popupErr: any) {
+            console.warn('[Firebase Google Auth] Popup issue:', popupErr?.code || popupErr?.message);
+            // If the user actively closed the popup or cancelled, do not trigger unsolicited fallback
+            if (popupErr?.code === 'auth/popup-closed-by-user' || popupErr?.code === 'auth/cancelled-popup-request') {
+              return;
+            }
+            // If popup is blocked by browser policies, attempt redirect via Firebase
+            if (popupErr?.code === 'auth/popup-blocked') {
+              console.log('[Firebase Google Auth] Popup blocked by browser, trying Firebase signInWithRedirect...');
+              try {
+                await signInWithRedirect(auth, fbProvider);
+                return;
+              } catch (redirErr: any) {
+                console.warn('[Firebase Google Auth] Redirect attempt error:', redirErr?.message);
+              }
+            }
+          }
+        } catch (fbErr: any) {
+          console.warn('[Firebase Google Auth] Primary Firebase authentication error:', fbErr?.code || fbErr?.message);
         }
       }
+
+      console.log('[Google Auth] Falling back to Supabase as SECONDARY OAuth provider for Google...');
     }
 
-    // 2. Supabase OAuth redirect
+    // 2. SECONDARY: Supabase OAuth redirect (secondary for Google, or default for other providers)
     try {
-      const redirectUrl = window.location.origin;
+      const redirectUrl = getAuthRedirectUrl();
+      console.log('[Supabase OAuth] Initiating sign-in with redirect URL:', redirectUrl);
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider,
         options: {
@@ -1776,6 +1841,7 @@ export const firebaseService = {
             email: lowercaseEmail,
             password: pass,
             options: {
+              emailRedirectTo: getAuthRedirectUrl(),
               data: {
                 name,
                 username: name,
@@ -1907,7 +1973,17 @@ export const firebaseService = {
   },
 
   getCurrentUser: async (): Promise<User | null> => {
-    // 1. Check active Supabase Auth session first
+    // 1. PRIMARY: Check active Firebase Auth user
+    try {
+      if (auth && auth.currentUser) {
+        const user = await firebaseService.syncUserSession(auth.currentUser, 'firebase');
+        return user;
+      }
+    } catch (fbErr) {
+      console.debug('[getCurrentUser] Firebase auth user check note:', fbErr);
+    }
+
+    // 2. SECONDARY: Check active Supabase Auth session
     try {
       if (supabase && supabase.auth) {
         const { data: { session } } = await supabase.auth.getSession();
@@ -1920,7 +1996,7 @@ export const firebaseService = {
       console.debug('[getCurrentUser] Supabase getSession check:', err);
     }
 
-    // 2. Fallback to cached profile
+    // 3. Fallback to cached profile
     try {
       const cached = localStorage.getItem('errand_runner_user_profile');
       if (cached) {

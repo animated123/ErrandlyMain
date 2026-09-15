@@ -9,4 +9,5 @@ Disallow: /dbconfig
 Disallow: /reset-password
 
 # Search Engine Sitemaps
-Sitemap: https://ais-pre-ibd7poeei3gmpw2uqxkmu5-22650132817.europe-west1.run.app/sitemap.xml
+Sitemap: https://errandly.site/sitemap.xml
+Sitemap: /sitemap.xml

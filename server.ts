@@ -926,14 +926,42 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
     `);
 
     // Migrate existing transactions table to add missing columns if any
-    await client.query(`
-      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS provider TEXT;
-      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS previous_balance NUMERIC;
-      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS added_balance NUMERIC;
-      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS new_balance NUMERIC;
-      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transaction_code TEXT;
-      ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS payment_reference TEXT;
-    `);
+    const migrationQueries = [
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS provider TEXT",
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS previous_balance NUMERIC",
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS added_balance NUMERIC",
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS new_balance NUMERIC",
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transaction_code TEXT",
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS payment_reference TEXT",
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS verification_data JSONB DEFAULT '{}'::jsonb"
+    ];
+
+    for (const q of migrationQueries) {
+      try {
+        await client.query(q);
+      } catch (err: any) {
+        console.warn(`[Database Migration] Warning: Query failed: ${q}. Error: ${err.message}`);
+      }
+    }
+
+    // Fix transactions ID type if it was accidentally created as UUID
+    try {
+      await client.query(`
+        DO $$ 
+        BEGIN 
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns 
+            WHERE table_name = 'transactions' AND column_name = 'id' AND data_type = 'uuid'
+          ) THEN
+            -- First, drop any constraints that might prevent the type change
+            -- (Assuming simple PK for now)
+            ALTER TABLE public.transactions ALTER COLUMN id TYPE TEXT USING id::text;
+          END IF;
+        END $$;
+      `);
+    } catch (fixErr: any) {
+      console.warn("[Database Migration] Notice: Skipping transactions ID type conversion (likely already TEXT or has dependencies):", fixErr.message);
+    }
 
     // New: Featured Services Table
     await client.query(`
@@ -2794,7 +2822,8 @@ export async function getApp(): Promise<express.Application> {
 
   // Robots.txt for Search Engines & SEO Crawlers
   app.get(["/robots.txt", "/robot.txt"], (req, res) => {
-    const baseUrl = process.env.VITE_APP_URL || `${req.protocol}://${req.get('host')}`;
+    const rawBaseUrl = process.env.VITE_SITE_URL || process.env.VITE_APP_URL || `${req.protocol}://${req.get('host')}`;
+    const cleanBaseUrl = rawBaseUrl.replace(/\/+$/, '');
     const robotsTxt = `# robots.txt for ErrandRunner
 User-agent: *
 Allow: /
@@ -2803,17 +2832,19 @@ Disallow: /connectionadmin
 Disallow: /dbconfig
 Disallow: /reset-password
 
-Sitemap: ${baseUrl}/sitemap.xml
+Sitemap: ${cleanBaseUrl}/sitemap.xml
+Sitemap: https://errandly.site/sitemap.xml
 `;
     res.header('Content-Type', 'text/plain; charset=utf-8');
     res.send(robotsTxt);
   });
 
-  // XML Sitemap for Google Search Console
+  // XML Sitemap for Google Search Console & SEO
   app.get("/sitemap.xml", (req, res) => {
-    const baseUrl = process.env.VITE_APP_URL || `${req.protocol}://${req.get('host')}`;
+    const rawBaseUrl = process.env.VITE_SITE_URL || (req.get('host')?.includes('localhost') ? 'https://errandly.site' : `${req.protocol}://${req.get('host')}`);
+    const cleanBaseUrl = rawBaseUrl.replace(/\/+$/, '');
     const pages = [
-      '',
+      '/',
       '/privacy',
       '/privacy-policy',
       '/terms',
@@ -2824,9 +2855,9 @@ Sitemap: ${baseUrl}/sitemap.xml
     const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${pages.map(page => `  <url>
-    <loc>${baseUrl}${page}</loc>
+    <loc>${cleanBaseUrl}${page === '/' ? '/' : page}</loc>
     <changefreq>weekly</changefreq>
-    <priority>${page === '' ? '1.0' : '0.8'}</priority>
+    <priority>${page === '/' ? '1.0' : '0.8'}</priority>
   </url>`).join('\n')}
 </urlset>`;
 
