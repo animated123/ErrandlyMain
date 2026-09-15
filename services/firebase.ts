@@ -5,20 +5,30 @@ import { getStorage } from 'firebase/storage';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 
 // Get Firebase configuration
-let firebaseConfig: any = (firebaseAppletConfig as any).default || firebaseAppletConfig;
+const rawConfig: any = (firebaseAppletConfig as any).default || firebaseAppletConfig;
+let firebaseConfig: any = rawConfig ? { ...rawConfig } : null;
+
+// Ensure authDomain is set to auth.errandly.site for custom domain Google OAuth
+const configuredAuthDomain = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_FIREBASE_AUTH_DOMAIN) 
+  || firebaseConfig?.authDomain 
+  || 'auth.errandly.site';
+
+if (firebaseConfig) {
+  firebaseConfig.authDomain = configuredAuthDomain;
+}
 
 if (!firebaseConfig || !firebaseConfig.apiKey) {
   try {
     const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
-    const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
+    const authDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'auth.errandly.site';
     const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
     const storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET;
     const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || firebaseConfig?.firestoreDatabaseId;
     
-    if (apiKey && authDomain && projectId) {
+    if (apiKey && projectId) {
       firebaseConfig = {
         apiKey,
-        authDomain,
+        authDomain: authDomain || 'auth.errandly.site',
         projectId,
         storageBucket,
         messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,

@@ -478,9 +478,9 @@ export const firebaseService = {
 
   getFirebaseInfo: () => {
     return {
-      projectId: "local-applet-db",
-      appId: "decoupled",
-      authDomain: "disabled-completely"
+      projectId: (auth?.app?.options?.projectId) || "gen-lang-client-0499210555",
+      appId: (auth?.app?.options?.appId) || "1:130225300272:web:d51c2e4995568a207a1ef5",
+      authDomain: (auth?.app?.options?.authDomain) || "auth.errandly.site"
     };
   },
 
@@ -1625,7 +1625,8 @@ export const firebaseService = {
     if (provider === 'google') {
       if (auth && auth.app) {
         try {
-          console.log('[Google Auth] Initiating PRIMARY login via Firebase Google Provider...');
+          const currentAuthDomain = auth.app?.options?.authDomain || 'auth.errandly.site';
+          console.log('[Google Auth] Initiating PRIMARY login via Firebase Google Provider with authDomain:', currentAuthDomain);
           const { GoogleAuthProvider, signInWithPopup, signInWithRedirect } = await import('firebase/auth');
           const fbProvider = new GoogleAuthProvider();
           fbProvider.setCustomParameters({ prompt: 'select_account' });
