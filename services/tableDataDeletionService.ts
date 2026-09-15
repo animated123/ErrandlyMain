@@ -9,6 +9,7 @@ export interface DeleteTableDataOptions {
   dryRun?: boolean;
   force?: boolean;
   keepAdmin?: boolean;
+  existingPool?: any;
 }
 
 export interface TableStat {
@@ -47,7 +48,11 @@ const KNOWN_POSTGRES_TABLES = [
   'settings',
   'firebase_infrastructure',
   'categories',
-  'profiles'
+  'profiles',
+  'users',
+  'complaints',
+  'complaint_tickets',
+  'verification_codes'
 ];
 
 const KNOWN_JSON_TABLES = [
@@ -63,7 +68,10 @@ const KNOWN_JSON_TABLES = [
   'featured_services',
   'service_listings',
   'settings',
-  'firebase_infrastructure'
+  'firebase_infrastructure',
+  'complaints',
+  'complaint_tickets',
+  'verification_codes'
 ];
 
 const KNOWN_FIRESTORE_COLLECTIONS = [
@@ -82,7 +90,10 @@ const KNOWN_FIRESTORE_COLLECTIONS = [
   'saved_places',
   'featured_services',
   'service_listings',
-  'otp_codes'
+  'otp_codes',
+  'complaints',
+  'complaint_tickets',
+  'verification_codes'
 ];
 
 function isValidPgUrl(url: any): boolean {
@@ -97,60 +108,66 @@ export async function deleteSupabaseData(options: DeleteTableDataOptions = {}): 
   const {
     tables = null,
     dryRun = false,
-    keepAdmin = false
+    keepAdmin = false,
+    existingPool = null
   } = options;
 
-  let dbConfig: any = {
-    host: 'db.ksflmdvqvseiprebgrcp.supabase.co',
-    port: 5432,
-    user: 'postgres',
-    password: process.env.SUPABASE_DB_PASSWORD || 'Company1.Codexict',
-    database: 'postgres'
-  };
+  let pool: any = existingPool;
+  let poolOwned = false;
 
-  const configPath = path.join(process.cwd(), 'database_config.json');
-  if (fs.existsSync(configPath)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      dbConfig = { ...dbConfig, ...parsed };
-    } catch (e: any) {
-      console.warn('Warning: Could not parse database_config.json:', e.message);
-    }
-  }
-
-  const appConfigPath = path.join(process.cwd(), 'app_config.json');
-  if (fs.existsSync(appConfigPath)) {
-    try {
-      const appCfg = JSON.parse(fs.readFileSync(appConfigPath, 'utf8'));
-      if (appCfg.database) {
-        dbConfig = { ...dbConfig, ...appCfg.database };
-      }
-    } catch (_e: any) {
-      // Ignore config read error
-    }
-  }
-
-  if (isValidPgUrl(process.env.SUPABASE_DATABASE_URL)) {
-    dbConfig.connectionString = process.env.SUPABASE_DATABASE_URL;
-  } else if (isValidPgUrl(process.env.DATABASE_URL)) {
-    dbConfig.connectionString = process.env.DATABASE_URL;
-  }
-
-  const poolOpts: any = dbConfig.connectionString ? {
-    connectionString: dbConfig.connectionString,
-    ssl: { rejectUnauthorized: false }
-  } : {
-    host: dbConfig.host,
-    port: dbConfig.port,
-    user: dbConfig.user,
-    password: dbConfig.password,
-    database: dbConfig.database || dbConfig.name,
-    ssl: { rejectUnauthorized: false }
-  };
-
-  let pool: any = null;
   try {
-    pool = new Pool(poolOpts);
+    if (!pool) {
+      let dbConfig: any = {
+        host: 'db.ksflmdvqvseiprebgrcp.supabase.co',
+        port: 5432,
+        user: 'postgres',
+        password: process.env.SUPABASE_DB_PASSWORD || 'Company1.Codexict',
+        database: 'postgres'
+      };
+
+      const configPath = path.join(process.cwd(), 'database_config.json');
+      if (fs.existsSync(configPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          dbConfig = { ...dbConfig, ...parsed };
+        } catch (e: any) {
+          console.warn('Warning: Could not parse database_config.json:', e.message);
+        }
+      }
+
+      const appConfigPath = path.join(process.cwd(), 'app_config.json');
+      if (fs.existsSync(appConfigPath)) {
+        try {
+          const appCfg = JSON.parse(fs.readFileSync(appConfigPath, 'utf8'));
+          if (appCfg.database) {
+            dbConfig = { ...dbConfig, ...appCfg.database };
+          }
+        } catch (_e: any) {
+          // Ignore config read error
+        }
+      }
+
+      if (isValidPgUrl(process.env.SUPABASE_DATABASE_URL)) {
+        dbConfig.connectionString = process.env.SUPABASE_DATABASE_URL;
+      } else if (isValidPgUrl(process.env.DATABASE_URL)) {
+        dbConfig.connectionString = process.env.DATABASE_URL;
+      }
+
+      const poolOpts: any = dbConfig.connectionString ? {
+        connectionString: dbConfig.connectionString,
+        ssl: { rejectUnauthorized: false }
+      } : {
+        host: dbConfig.host,
+        port: dbConfig.port,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        database: dbConfig.database || dbConfig.name,
+        ssl: { rejectUnauthorized: false }
+      };
+
+      pool = new Pool(poolOpts);
+      poolOwned = true;
+    }
     const client = await pool.connect();
     client.release();
 
@@ -206,7 +223,7 @@ export async function deleteSupabaseData(options: DeleteTableDataOptions = {}): 
   } catch (err: any) {
     return { success: false, database: 'supabase', error: err.message };
   } finally {
-    if (pool) {
+    if (pool && poolOwned) {
       try { 
         await pool.end(); 
       } catch (_e: any) {
@@ -223,71 +240,77 @@ export async function deleteLocalPgData(options: DeleteTableDataOptions = {}): P
   const {
     tables = null,
     dryRun = false,
-    keepAdmin = false
+    keepAdmin = false,
+    existingPool = null
   } = options;
 
-  let localDbConfig: any = {
-    host: process.env.LOCAL_PGHOST || '127.0.0.1',
-    port: parseInt(process.env.LOCAL_PGPORT || '5432'),
-    user: process.env.LOCAL_PGUSER || 'postgres',
-    password: process.env.LOCAL_PGPASSWORD || 'admin',
-    database: process.env.LOCAL_PGDATABASE || 'Errandly'
-  };
+  let pool: any = existingPool;
+  let poolOwned = false;
 
-  const appConfigPath = path.join(process.cwd(), 'app_config.json');
-  if (fs.existsSync(appConfigPath)) {
-    try {
-      const appCfg = JSON.parse(fs.readFileSync(appConfigPath, 'utf8'));
-      if (appCfg.localDatabase) {
-        localDbConfig = {
-          host: appCfg.localDatabase.host || localDbConfig.host,
-          port: appCfg.localDatabase.port || localDbConfig.port,
-          user: appCfg.localDatabase.user || localDbConfig.user,
-          password: appCfg.localDatabase.password !== undefined ? appCfg.localDatabase.password : localDbConfig.password,
-          database: appCfg.localDatabase.name || localDbConfig.database,
-          connectionString: isValidPgUrl(appCfg.localDatabase.connectionString) ? appCfg.localDatabase.connectionString : undefined
-        };
-      }
-    } catch (_e: any) {
-      // Ignore local DB app_config read error
-    }
-  }
-
-  const localDbConfigPath = path.join(process.cwd(), 'local_db_config.json');
-  if (fs.existsSync(localDbConfigPath)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(localDbConfigPath, 'utf8'));
-      localDbConfig = { ...localDbConfig, ...parsed };
-      if (!isValidPgUrl(localDbConfig.connectionString)) {
-        delete localDbConfig.connectionString;
-      }
-    } catch (_e: any) {
-      // Ignore local DB config read error
-    }
-  }
-
-  if (isValidPgUrl(process.env.LOCAL_DATABASE_URL)) {
-    localDbConfig.connectionString = process.env.LOCAL_DATABASE_URL;
-  }
-
-  const isRemote = localDbConfig.host && !localDbConfig.host.includes('127.0.0.1') && !localDbConfig.host.includes('localhost');
-  const poolOpts: any = localDbConfig.connectionString ? {
-    connectionString: localDbConfig.connectionString,
-    connectionTimeoutMillis: 3000,
-    ...(isRemote ? { ssl: { rejectUnauthorized: false } } : {})
-  } : {
-    host: localDbConfig.host,
-    port: localDbConfig.port,
-    user: localDbConfig.user,
-    password: localDbConfig.password,
-    database: localDbConfig.database,
-    connectionTimeoutMillis: 3000,
-    ...(isRemote ? { ssl: { rejectUnauthorized: false } } : {})
-  };
-
-  let pool: any = null;
   try {
-    pool = new Pool(poolOpts);
+    if (!pool) {
+      let localDbConfig: any = {
+        host: process.env.LOCAL_PGHOST || '127.0.0.1',
+        port: parseInt(process.env.LOCAL_PGPORT || '5432'),
+        user: process.env.LOCAL_PGUSER || 'postgres',
+        password: process.env.LOCAL_PGPASSWORD || 'admin',
+        database: process.env.LOCAL_PGDATABASE || 'Errandly'
+      };
+
+      const appConfigPath = path.join(process.cwd(), 'app_config.json');
+      if (fs.existsSync(appConfigPath)) {
+        try {
+          const appCfg = JSON.parse(fs.readFileSync(appConfigPath, 'utf8'));
+          if (appCfg.localDatabase) {
+            localDbConfig = {
+              host: appCfg.localDatabase.host || localDbConfig.host,
+              port: appCfg.localDatabase.port || localDbConfig.port,
+              user: appCfg.localDatabase.user || localDbConfig.user,
+              password: appCfg.localDatabase.password !== undefined ? appCfg.localDatabase.password : localDbConfig.password,
+              database: appCfg.localDatabase.name || localDbConfig.database,
+              connectionString: isValidPgUrl(appCfg.localDatabase.connectionString) ? appCfg.localDatabase.connectionString : undefined
+            };
+          }
+        } catch (_e: any) {
+          // Ignore local DB app_config read error
+        }
+      }
+
+      const localDbConfigPath = path.join(process.cwd(), 'local_db_config.json');
+      if (fs.existsSync(localDbConfigPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(localDbConfigPath, 'utf8'));
+          localDbConfig = { ...localDbConfig, ...parsed };
+          if (!isValidPgUrl(localDbConfig.connectionString)) {
+            delete localDbConfig.connectionString;
+          }
+        } catch (_e: any) {
+          // Ignore local DB config read error
+        }
+      }
+
+      if (isValidPgUrl(process.env.LOCAL_DATABASE_URL)) {
+        localDbConfig.connectionString = process.env.LOCAL_DATABASE_URL;
+      }
+
+      const isRemote = localDbConfig.host && !localDbConfig.host.includes('127.0.0.1') && !localDbConfig.host.includes('localhost');
+      const poolOpts: any = localDbConfig.connectionString ? {
+        connectionString: localDbConfig.connectionString,
+        connectionTimeoutMillis: 3000,
+        ...(isRemote ? { ssl: { rejectUnauthorized: false } } : {})
+      } : {
+        host: localDbConfig.host,
+        port: localDbConfig.port,
+        user: localDbConfig.user,
+        password: localDbConfig.password,
+        database: localDbConfig.database,
+        connectionTimeoutMillis: 3000,
+        ...(isRemote ? { ssl: { rejectUnauthorized: false } } : {})
+      };
+
+      pool = new Pool(poolOpts);
+      poolOwned = true;
+    }
     const client = await pool.connect();
     client.release();
 
@@ -343,7 +366,7 @@ export async function deleteLocalPgData(options: DeleteTableDataOptions = {}): P
   } catch (err: any) {
     return { success: false, database: 'local_pg', error: `Local PG offline or unreachable: ${err.message}` };
   } finally {
-    if (pool) {
+    if (pool && poolOwned) {
       try { 
         await pool.end(); 
       } catch (_e: any) {

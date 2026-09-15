@@ -7542,11 +7542,11 @@ Please proceed with the task according to safety guidelines and update milestone
       const targetDb = String(db).toLowerCase();
 
       if (targetDb === 'all' || targetDb === 'supabase' || targetDb === 'primary') {
-        results.supabase = await deleteSupabaseData({ tables, dryRun, force: true, keepAdmin });
+        results.supabase = await deleteSupabaseData({ tables, dryRun, force: true, keepAdmin, existingPool: primaryPgPool });
       }
 
       if (targetDb === 'all' || targetDb === 'local_pg') {
-        results.local_pg = await deleteLocalPgData({ tables, dryRun, force: true, keepAdmin });
+        results.local_pg = await deleteLocalPgData({ tables, dryRun, force: true, keepAdmin, existingPool: localPgPool });
       }
 
       if (targetDb === 'all' || targetDb === 'local_json' || targetDb === 'json') {
