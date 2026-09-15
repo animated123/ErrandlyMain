@@ -3401,7 +3401,11 @@ Please proceed with the task according to safety guidelines and update milestone
     }
 
     try {
-      const fullUrl = endpoint.endsWith("/") ? `${endpoint}sms/send` : `${endpoint}/sms/send`;
+      // Robust endpoint construction to avoid double-appending /sms/send
+      let fullUrl = endpoint;
+      if (!fullUrl.toLowerCase().includes('/sms/send')) {
+        fullUrl = fullUrl.endsWith("/") ? `${fullUrl}sms/send` : `${fullUrl}/sms/send`;
+      }
       
       console.log(`[SMS] Sending to ${targetPhone} via ${fullUrl}`);
       const response = await fetch(fullUrl, {
@@ -3415,7 +3419,8 @@ Please proceed with the task according to safety guidelines and update milestone
           recipient: targetPhone, // For Talksasa
           phone: targetPhone,     // For Textsasa
           message,
-          sender_id: senderId
+          sender_id: senderId,
+          type: 'plain' // Required for TalkSasa v3
         })
       });
 
@@ -3512,7 +3517,11 @@ Please proceed with the task according to safety guidelines and update milestone
 
     if (token) {
       try {
-        const fullUrl = endpoint.endsWith("/") ? `${endpoint}sms/send` : `${endpoint}/sms/send`;
+        // Robust endpoint construction to avoid double-appending /sms/send
+        let fullUrl = endpoint;
+        if (!fullUrl.toLowerCase().includes('/sms/send')) {
+          fullUrl = fullUrl.endsWith("/") ? `${fullUrl}sms/send` : `${fullUrl}/sms/send`;
+        }
         const message = `Your ErrandRunner verification code is: ${otp}. Valid for 10 minutes.`;
 
         const response = await fetch(fullUrl, {
@@ -3526,7 +3535,8 @@ Please proceed with the task according to safety guidelines and update milestone
             recipient: targetPhone,
             phone: targetPhone,
             message,
-            sender_id: senderId
+            sender_id: senderId,
+            type: 'plain' // Required for TalkSasa v3
           })
         });
 
@@ -7595,7 +7605,12 @@ Please proceed with the task according to safety guidelines and update milestone
     }
 
     try {
-      const fullUrl = endpoint.endsWith("/") ? `${endpoint}sms/send` : `${endpoint}/sms/send`;
+      // Robust endpoint construction to avoid double-appending /sms/send
+      let fullUrl = endpoint;
+      if (!fullUrl.toLowerCase().includes('/sms/send')) {
+        fullUrl = fullUrl.endsWith("/") ? `${fullUrl}sms/send` : `${fullUrl}/sms/send`;
+      }
+      
       const response = await fetch(fullUrl, {
         method: "POST",
         headers: {
@@ -7606,7 +7621,8 @@ Please proceed with the task according to safety guidelines and update milestone
         body: JSON.stringify({
           sender_id: senderId,
           recipient: targetPhone,
-          message: message
+          message: message,
+          type: 'plain' // Required for TalkSasa v3
         })
       });
       const text = await response.text();

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, List, PlusCircle, Map, UserCircle, Bell, LogOut, Menu, X, Search, ShieldAlert, MapPin, ShieldCheck } from 'lucide-react';
+import { Home, List, PlusCircle, Map, UserCircle, Bell, LogOut, Menu, X, Search, ShieldAlert, MapPin, ShieldCheck, MessageSquare, Compass } from 'lucide-react';
 import { User, AppNotification, UserRole, AppSettings } from '../../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Logo } from './Logo';
@@ -15,6 +15,7 @@ interface LayoutProps {
   notifications: AppNotification[];
   connectionStatus: 'testing' | 'success' | 'failed';
   appSettings?: AppSettings;
+  onStartTour?: () => void;
 }
 
 export default React.memo(function Layout({ 
@@ -25,21 +26,23 @@ export default React.memo(function Layout({
   children, 
   notifications,
   connectionStatus,
-  appSettings
+  appSettings,
+  onStartTour
 }: LayoutProps) {
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const navItems = [
-    { id: 'dashboard', label: 'Home', icon: Home },
-    { id: 'my-errands', label: 'Errands', icon: List },
+    { id: 'dashboard', label: 'Home', icon: Home, tourId: 'tour-nav-home' },
+    { id: 'my-errands', label: 'Errands', icon: List, tourId: 'tour-nav-errands' },
     { 
       id: user?.role === UserRole.RUNNER ? 'find' : 'create', 
       label: user?.role === UserRole.RUNNER ? 'Find' : 'Post', 
       icon: user?.role === UserRole.RUNNER ? Search : PlusCircle, 
-      primary: true 
+      primary: true,
+      tourId: 'tour-nav-create'
     },
-    { id: 'live-map', label: 'Map', icon: Map },
-    { id: 'active', label: 'Profile', icon: UserCircle },
+    { id: 'live-map', label: 'Map', icon: Map, tourId: 'tour-nav-map' },
+    { id: 'active', label: 'Profile', icon: UserCircle, tourId: 'tour-nav-profile' },
   ];
 
   return (
@@ -66,6 +69,7 @@ export default React.memo(function Layout({
               return (
                 <button
                   key={item.id}
+                  id={item.tourId}
                   onClick={() => setActiveTab(item.id)}
                   className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-300 group relative ${
                     isActive 
@@ -86,9 +90,42 @@ export default React.memo(function Layout({
                 </button>
               );
             })}
+
+            {/* Quick Support Chat Item in Sidebar */}
+            <button
+              id="tour-nav-support"
+              onClick={() => setActiveTab('support-chat')}
+              className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-300 group relative ${
+                activeTab === 'support-chat'
+                  ? 'bg-primary text-white shadow-lg shadow-primary/20 dark:shadow-none'
+                  : 'text-slate-400 hover:text-secondary dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800/50'
+              }`}
+            >
+              <MessageSquare size={20} className={activeTab === 'support-chat' ? '' : 'group-hover:scale-110 transition-transform text-indigo-500'} />
+              <span className="text-sm font-black uppercase tracking-widest leading-none">
+                Support
+              </span>
+              {activeTab === 'support-chat' && (
+                <motion.div 
+                  layoutId="active-pill"
+                  className="ml-auto w-2 h-2 bg-white rounded-full shadow-sm"
+                />
+              )}
+            </button>
           </nav>
 
           <div className="mt-auto pt-8">
+            {/* Guided Tour Banner Button in Sidebar */}
+            {onStartTour && (
+              <button
+                onClick={onStartTour}
+                className="w-full mb-4 flex items-center justify-center gap-2.5 py-3 px-4 bg-primary/5 dark:bg-primary/10 hover:bg-primary/10 dark:hover:bg-primary/20 text-primary rounded-2xl text-xs font-bold transition-all border border-primary/20"
+              >
+                <Compass size={16} />
+                <span>Take Guided Tour</span>
+              </button>
+            )}
+
             {user && (
               <div className="p-5 bg-slate-50 dark:bg-slate-800/30 rounded-[2rem] border border-slate-100 dark:border-slate-800 backdrop-blur-sm">
                 <div className="flex items-center gap-4 mb-6">
@@ -163,6 +200,34 @@ export default React.memo(function Layout({
             </div>
             
             <div className="flex items-center gap-2">
+              {/* Live Support shortcut */}
+              <button 
+                id="tour-support-chat"
+                onClick={() => setActiveTab('support-chat')}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all border text-xs font-bold ${
+                  activeTab === 'support-chat'
+                    ? 'bg-primary text-white border-primary shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-primary hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200/80 dark:border-slate-800'
+                }`}
+                title="Live Operations & Support Chat"
+              >
+                <MessageSquare size={16} className={activeTab === 'support-chat' ? 'text-white' : 'text-primary'} />
+                <span className="hidden sm:inline">Support</span>
+              </button>
+
+              {/* Guided Tour button */}
+              {onStartTour && (
+                <button 
+                  id="tour-restart-btn"
+                  onClick={onStartTour}
+                  className="flex items-center gap-1.5 px-3 py-2 text-slate-600 dark:text-slate-300 hover:text-primary hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-all border border-slate-200/80 dark:border-slate-800 text-xs font-bold"
+                  title="Getting Started Guided Tour"
+                >
+                  <Compass size={16} className="text-amber-500" />
+                  <span className="hidden lg:inline">Tour</span>
+                </button>
+              )}
+
               <button className="p-2.5 text-muted-foreground hover:text-primary hover:bg-primary/5 rounded-xl transition-all relative group">
                 <Bell size={20} />
                 {unreadCount > 0 && (
@@ -235,6 +300,7 @@ export default React.memo(function Layout({
                 return (
                   <button
                     key={item.id}
+                    id={`mobile-${item.tourId}`}
                     onClick={() => setActiveTab(item.id)}
                     className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all shadow-xl relative group z-30 ${
                       isActive ? 'bg-primary text-white scale-110 -translate-y-4' : 'bg-primary text-white hover:scale-105 active:scale-95'
@@ -248,6 +314,7 @@ export default React.memo(function Layout({
               return (
                 <button
                   key={item.id}
+                  id={`mobile-${item.tourId}`}
                   onClick={() => setActiveTab(item.id)}
                   className={`relative flex-1 flex flex-col items-center gap-1 py-2.5 transition-all rounded-2xl z-10 ${
                     isActive ? 'text-primary' : 'text-slate-400 hover:text-secondary dark:text-slate-500 dark:hover:text-white'

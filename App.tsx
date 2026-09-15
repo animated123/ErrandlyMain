@@ -11,7 +11,7 @@ import {
   FileText, Activity, MessageCircle, LayoutGrid,
   ChevronRight, Volume2, CheckCircle2, AlertTriangle, Droplets, Wifi, WifiOff, Shield, Car, Footprints, ShieldCheck, Heart, Edit2, UserMinus, Receipt,
   Settings, Palette, ImageIcon as LucideImageIcon, Save, Upload, Download,
-  HelpCircle, PlusCircle, Filter, UserCircle, Send,
+  HelpCircle, PlusCircle, Filter, UserCircle, Send, Compass,
   Mic, Square, Play, Pause, ChevronUp, ChevronDown, RefreshCw, ZoomIn, Users,
   Quote, Trophy, History as HistoryIcon, ArrowLeft, Circle, Eye, Server, Database, Cpu, Code, Share2, Package
 } from 'lucide-react';
@@ -53,6 +53,7 @@ import SupportChatOverlay from './src/components/SupportChatOverlay';
 import { API_BASE_URL, ACTION_SERVER_URL } from './services/apiConfig';
 import ResetPasswordModal from './src/components/ResetPasswordModal';
 import PhoneVerificationModal from './src/components/PhoneVerificationModal';
+import GuidedTour from './src/components/GuidedTour';
 import EmailVerificationModal from './src/components/EmailVerificationModal';
 import CameraCapture from './src/components/CameraCapture';
 import MapComponent from './src/components/MapComponent';
@@ -194,6 +195,30 @@ export default function App() {
     }
     _setActiveTab(tab);
   };
+
+  // Getting Started Guided Tour state for first-time and returning users
+  const [isTourOpen, setIsTourOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      const hasCompletedTour = localStorage.getItem('errandly_tour_completed');
+      if (!hasCompletedTour) {
+        // Automatically welcome first-time users with the guided tour after initial screen settles
+        const timer = setTimeout(() => {
+          setIsTourOpen(true);
+        }, 1200);
+        return () => clearTimeout(timer);
+      }
+    } catch {
+      // Ignore localStorage restrictions
+    }
+  }, []);
+
+  const handleStartTour = useCallback(() => {
+    _setActiveTab('dashboard');
+    setIsTourOpen(true);
+  }, []);
+
   const [errands, setErrands] = useState<Errand[]>([]);
   const [isLoadingErrands, setIsLoadingErrands] = useState(true);
   const [availableErrands, setAvailableErrands] = useState<Errand[]>([]);
@@ -1129,6 +1154,7 @@ export default function App() {
             notifications={notifications}
             connectionStatus={connectionStatus}
             appSettings={appSettings}
+            onStartTour={handleStartTour}
             onNotificationClick={(notif) => {
             if (notif.errandId) {
               const errand = errands.concat(availableErrands).find(e => e.id === notif.errandId);
@@ -1176,6 +1202,7 @@ export default function App() {
 
                     <div className="flex flex-wrap sm:flex-nowrap items-center gap-3">
                       <button 
+                        id="tour-post-errand-btn"
                         onClick={() => setActiveTab(user?.role === UserRole.RUNNER ? 'find' : 'create')}
                         className="flex-1 sm:flex-none px-5 py-3 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-2 active:scale-95"
                       >
@@ -1258,7 +1285,7 @@ export default function App() {
                   </div>
 
                   {/* Card 4: Fleet / Status */}
-                  <div className="bg-card text-card-foreground p-4 md:p-5 rounded-2xl border border-border shadow-sm flex flex-col justify-between">
+                  <div id="tour-live-map-card" className="bg-card text-card-foreground p-4 md:p-5 rounded-2xl border border-border shadow-sm flex flex-col justify-between">
                     <div className="flex items-center justify-between mb-3">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Network Status</span>
                       <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
@@ -1298,7 +1325,7 @@ export default function App() {
                     </div>
 
                     {/* Category Fast-Launch Grid */}
-                    <div className="bg-card text-card-foreground p-5 md:p-6 rounded-2xl border border-border shadow-sm space-y-4">
+                    <div id="tour-errand-categories" className="bg-card text-card-foreground p-5 md:p-6 rounded-2xl border border-border shadow-sm space-y-4">
                       <div className="flex items-center justify-between">
                         <div>
                           <h2 className="text-base font-bold text-foreground tracking-tight font-display">Errand Categories</h2>
@@ -1539,6 +1566,39 @@ export default function App() {
                         />
                       ))
                     )}
+                  </div>
+                </div>
+
+                {/* 24/7 Operations & Support Center Strip */}
+                <div 
+                  id="tour-support-card"
+                  className="bg-card text-card-foreground p-5 md:p-6 rounded-2xl border border-border shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                      <MessageSquare size={22} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-foreground">24/7 Operations & Support Center</h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">Need help with an ongoing errand, rider routing, or payment escrow? Our live team is ready.</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                    <button
+                      onClick={() => setActiveTab('support-chat')}
+                      className="flex-1 sm:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-2 active:scale-95"
+                    >
+                      <MessageSquare size={14} />
+                      <span>Live Support Chat</span>
+                    </button>
+                    <button
+                      onClick={handleStartTour}
+                      className="px-3.5 py-2.5 bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-xl text-xs font-bold transition-all border border-border flex items-center gap-1.5 active:scale-95"
+                      title="Replay Guided Tour"
+                    >
+                      <Compass size={14} className="text-amber-500" />
+                      <span className="hidden sm:inline">Tour</span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1863,6 +1923,7 @@ export default function App() {
                 
                 <div className="pt-4 border-t border-border space-y-1.5 text-left">
                   <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-3 pb-1">Support & Policies</p>
+                  <ProfileMenuItem icon={<Compass size={16} className="text-amber-500" />} label="Getting Started Tour" onClick={handleStartTour} />
                   <ProfileMenuItem icon={<HelpCircle size={16} />} label="Complaint Center & FAQ" onClick={() => { setProfileView('help'); window.scrollTo(0,0); }} />
                   <ProfileMenuItem icon={<Calculator size={16} />} label="Errand Price Guide" onClick={() => setShowPriceGuideModal(true)} />
                   <ProfileMenuItem icon={<Phone size={16} />} label="Contact Helpline" onClick={() => setShowContactUsModal(true)} />
@@ -2007,6 +2068,7 @@ export default function App() {
                           {user.role !== UserRole.RUNNER && (
                             <ProfileMenuItem icon={<Briefcase size={16} />} label="Apply to Become a Runner" onClick={() => navigateTo('/application-runner')} />
                           )}
+                          <ProfileMenuItem icon={<Compass size={16} className="text-amber-500" />} label="Getting Started Tour" onClick={handleStartTour} />
                           <ProfileMenuItem icon={<HelpCircle size={16} />} label="Complaint Center & FAQ" onClick={() => { setProfileView('help'); window.scrollTo(0,0); }} />
                           <div className="h-px bg-border my-1 mx-2" />
                           <ProfileMenuItem icon={<LogOut size={16} />} label="Sign Out" onClick={() => setShowLogoutConfirm(true)} destructive />
@@ -2702,6 +2764,15 @@ export default function App() {
         />
       )}
       {showLoyaltyModal && <LoyaltyBenefitsModal onClose={() => setShowLoyaltyModal(false)} />}
+      
+      {/* Getting Started Guided Tour */}
+      <GuidedTour
+        isOpen={isTourOpen}
+        onClose={() => setIsTourOpen(false)}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        userName={user?.name || 'Friend'}
+      />
       
       {showPriceRequestModal && (
         <PriceRequestModal 
