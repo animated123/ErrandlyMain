@@ -2673,31 +2673,58 @@ export const firebaseService = {
   // Verification logic continues...
   generateEmailVerificationCode: async (userId: string, email: string) => {
     try {
-      console.log(`[AuthService] Requesting email verification proxy for ${userId}`);
-      return await NotificationService.sendEmailVerificationProxy(userId, email);
-    } catch (error) {
-      console.error('Error generating email verification code:', error);
+      if (!auth || !auth.currentUser) throw new Error("No authenticated user found");
+      
+      // If already verified, don't send
+      if (auth.currentUser.emailVerified) {
+        return { success: true, message: "Email already verified" };
+      }
+
+      console.log(`[AuthService] Sending native Firebase email verification for ${userId}`);
+      const { sendEmailVerification } = await import('firebase/auth');
+      await sendEmailVerification(auth.currentUser);
+      return { success: true, message: "Verification email sent" };
+    } catch (error: any) {
+      if (error?.code === 'auth/too-many-requests' || String(error?.message).includes('too-many-requests')) {
+        console.warn('[AuthService] Firebase rate limit hit for email verification. Skipping.');
+        return { success: true, message: "A verification email was recently sent. Please check your inbox or try again in a few minutes." };
+      }
+      console.debug('Error sending email verification (logged as debug):', error);
       throw error;
     }
   },
 
-  verifyEmailCode: async (userId: string, email: string, code: string) => {
+  checkEmailVerification: async (userId: string) => {
     try {
-      if (!email) throw new Error("User email not found");
+      if (!auth || !auth.currentUser) return false;
       
-      console.log(`[AuthService] Verifying email code via proxy for ${userId}`);
-      await NotificationService.confirmEmailVerificationProxy(userId, email, code);
+      const { reload } = await import('firebase/auth');
+      await reload(auth.currentUser);
       
-      // Update cache
-      if (firebaseService._currentUserCache && (firebaseService._currentUserCache.id === userId || (firebaseService._currentUserCache as any).uid === userId)) {
-        firebaseService._currentUserCache.emailVerified = true;
+      const isVerified = auth.currentUser.emailVerified;
+      
+      if (isVerified) {
+        // Update database
+        if (supabase) {
+          await supabase.from('profiles').update({ email_verified: true }).eq('id', userId);
+        }
+        
+        // Update cache
+        if (firebaseService._currentUserCache && (firebaseService._currentUserCache.id === userId || (firebaseService._currentUserCache as any).uid === userId)) {
+          firebaseService._currentUserCache.emailVerified = true;
+        }
       }
       
-      return true;
-    } catch (error: any) {
-      console.error('Error verifying email code:', error);
-      throw error;
+      return isVerified;
+    } catch (error) {
+      console.error('Error checking email verification:', error);
+      return false;
     }
+  },
+
+  verifyEmailCode: async (userId: string, email: string, code: string) => {
+    // This is now legacy since we use links, but we'll implement it as a check for consistency
+    return await firebaseService.checkEmailVerification(userId);
   },
 
   sendPhoneVerificationCode: async (userId: string, phone: string) => {
@@ -2764,7 +2791,24 @@ export const firebaseService = {
     return cloudinaryService.uploadFile(file, folder);
   },
 
+  sendPasswordResetEmail: async (email: string): Promise<boolean> => {
+    try {
+      if (!auth) throw new Error("Firebase Auth not initialized");
+      const { sendPasswordResetEmail } = await import('firebase/auth');
+      await sendPasswordResetEmail(auth, email);
+      return true;
+    } catch (error: any) {
+      if (error?.code === 'auth/too-many-requests' || String(error?.message).includes('too-many-requests')) {
+        console.warn('[firebaseService] Password reset rate limit hit. Informing user.');
+        throw new Error("Too many reset attempts. Please check your inbox for the most recent link or wait a few minutes.");
+      }
+      console.debug('[firebaseService] sendPasswordResetEmail error:', error);
+      throw error;
+    }
+  },
+
   sendResetOtp: async (phone: string): Promise<{ success: boolean; email?: string; code?: string; devMode?: boolean }> => {
+    // Redirect to password reset if we can resolve the email, or stick to backend if phone-only
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/reset-via-otp/send`, {
         method: 'POST',

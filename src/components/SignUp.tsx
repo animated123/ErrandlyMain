@@ -40,6 +40,13 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
         formData.password
       );
 
+      // Trigger native Firebase email verification
+      try {
+        await firebaseService.generateEmailVerificationCode(completeUser.id, completeUser.email);
+      } catch (verifErr) {
+        console.warn("[SignUp] Verification email trigger failed:", verifErr);
+      }
+
       setSyncStatus('success');
       if (onSuccess) onSuccess(completeUser);
 

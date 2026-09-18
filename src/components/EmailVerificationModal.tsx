@@ -13,7 +13,6 @@ export default function EmailVerificationModal({ user, onClose, onSuccess }: Ema
   const [loading, setLoading] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [sent, setSent] = useState(false);
-  const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [cooldown, setCooldown] = useState(0);
 
@@ -37,29 +36,35 @@ export default function EmailVerificationModal({ user, onClose, onSuccess }: Ema
       ]);
 
       setSent(true);
-      setCooldown(45);
+      setCooldown(60); // Increased cooldown
     } catch (err: any) {
-      console.error("[EmailVerification] Error:", err);
-      setError(err.message || "Failed to send verification email. Please try again.");
+      // Don't log to console.error as per user preference for cleaner logs
+      console.debug("[EmailVerification] Error:", err);
+      
+      if (String(err.message).includes('too-many-requests')) {
+        setError("Rate limit reached. A verification link was likely just sent—please check your inbox.");
+        setSent(true); // Treat as sent if limit is hit
+      } else {
+        setError(err.message || "Failed to send verification email. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const handleVerifyCode = async () => {
-    if (code.length !== 6) {
-      setError("Please enter a valid 6-digit code.");
-      return;
-    }
+  const handleCheckVerification = async () => {
     setVerifying(true);
     setError('');
     try {
-      await firebaseService.verifyEmailCode(user.id, user.email, code);
-      await firebaseService.updateUserProfile(user.id, { emailVerified: true });
-      onSuccess();
-      onClose();
+      const isVerified = await firebaseService.checkEmailVerification(user.id);
+      if (isVerified) {
+        onSuccess();
+        onClose();
+      } else {
+        setError("Email is not verified yet. Please check your inbox and click the verification link.");
+      }
     } catch (err: any) {
-      setError(err.message || "Invalid verification code.");
+      setError(err.message || "Failed to check verification status.");
     } finally {
       setVerifying(false);
     }
@@ -84,34 +89,25 @@ export default function EmailVerificationModal({ user, onClose, onSuccess }: Ema
               <div className="w-12 h-12 bg-card text-card-foreground rounded-full flex items-center justify-center mx-auto shadow-sm">
                 <ShieldCheck className="text-indigo-500" size={20} />
               </div>
-              <p className="text-sm font-bold text-indigo-900 dark:text-indigo-200">Verification code sent!</p>
-              <p className="text-xs text-indigo-600 dark:text-indigo-400">Enter the 6-digit code sent to {user.email}</p>
+              <p className="text-sm font-bold text-indigo-900 dark:text-indigo-200">Verification email sent!</p>
+              <p className="text-xs text-indigo-600 dark:text-indigo-400">We've sent a verification link to <strong>{user.email}</strong>. Please check your inbox and spam folder.</p>
             </div>
 
             <div className="space-y-4">
-              <input 
-                type="text" 
-                maxLength={6}
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                placeholder="000000"
-                className="w-full py-5 bg-muted rounded-2xl text-center text-3xl font-black tracking-[10px] outline-none border-2 border-transparent focus:border-indigo-500 transition-all"
-              />
-              
               {error && <p className="text-xs font-bold text-red-500 text-center">{error}</p>}
 
               <button 
-                onClick={handleVerifyCode} disabled={verifying || code.length !== 6}
+                onClick={handleCheckVerification} disabled={verifying}
                 className="w-full py-5 bg-black text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-slate-200 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-3"
               >
-                {verifying ? <Loader2 size={16} className="animate-spin" /> : "Verify Code"}
+                {verifying ? <Loader2 size={16} className="animate-spin" /> : "I've Clicked the Link"}
               </button>
 
               <button 
                 onClick={handleSendVerification} disabled={loading || cooldown > 0}
                 className="w-full py-3 text-muted-foreground hover:text-foreground text-sm font-black tracking-normal font-medium transition-colors disabled:opacity-50"
               >
-                {loading ? "Sending..." : cooldown > 0 ? `Resend Code (${cooldown}s)` : "Resend Code"}
+                {loading ? "Sending..." : cooldown > 0 ? `Resend Link (${cooldown}s)` : "Resend Link"}
               </button>
             </div>
           </div>
@@ -133,7 +129,7 @@ export default function EmailVerificationModal({ user, onClose, onSuccess }: Ema
               onClick={handleSendVerification} disabled={loading}
               className="w-full py-5 bg-black text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-slate-200 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-3"
             >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : "Send Verification Code"}
+              {loading ? <Loader2 size={16} className="animate-spin" /> : "Send Verification Link"}
             </button>
           </div>
         )}

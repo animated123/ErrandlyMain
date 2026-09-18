@@ -22,10 +22,8 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
   const [error, setError] = useState<string | null>(null);
 
   // Forgot password specific states
-  const [phoneInput, setPhoneInput] = useState('');
+  const [resetEmailInput, setResetEmailInput] = useState('');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [resolvedUserEmail, setResolvedUserEmail] = useState<string | null>(null);
-  const [devOtp, setDevOtp] = useState<string | null>(null);
 
   useEffect(() => {
     setMode(initialMode);
@@ -70,26 +68,15 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
     }
   };
 
-  const handleRequestOtp = async (e: React.FormEvent) => {
+  const handleRequestPasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
     setError(null);
     setSuccessMsg(null);
     try {
-      const res = await firebaseService.sendResetOtp(phoneInput);
-      if (res.success) {
-        setSuccessMsg(res.message || "A temporary password has been sent to your phone number.");
-        if (res.email) {
-          setResolvedUserEmail(res.email);
-          // Auto-fill login email field
-          setAuthForm(prev => ({ ...prev, email: res.email || "" }));
-        }
-        if (res.devMode && res.code) {
-          setDevOtp(res.code);
-        }
-      } else {
-        setError("Could not complete password recovery request.");
-      }
+      await firebaseService.sendPasswordResetEmail(resetEmailInput);
+      setSuccessMsg("A password reset link has been sent to your email address. Please check your inbox.");
+      setAuthForm(prev => ({ ...prev, email: resetEmailInput }));
     } catch (err: any) {
       setError(err.message || "Failed to process forgot password request.");
     } finally {
@@ -167,7 +154,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
                   >
                     <div>
                       <h2 className="text-3xl font-black text-[#0a2e5c] dark:text-white tracking-tight leading-none mb-2 font-display">Reset Password</h2>
-                      <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Enter your phone number to receive a temporary sign-in OTP</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Enter your email to receive a secure password reset link</p>
                     </div>
 
                     {error && (
@@ -179,18 +166,8 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
                     {successMsg ? (
                       <div className="space-y-6">
                         <div className="p-5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 rounded-3xl text-sm font-semibold border border-emerald-100 dark:border-emerald-900/30 space-y-3">
-                          <p className="font-extrabold uppercase text-xs tracking-wider text-emerald-800 dark:text-emerald-300">✓ OTP Code Sent</p>
+                          <p className="font-extrabold uppercase text-xs tracking-wider text-emerald-800 dark:text-emerald-300">✓ Reset Link Sent</p>
                           <p className="text-xs font-medium leading-relaxed">{successMsg}</p>
-                          {resolvedUserEmail && (
-                            <div className="bg-white/50 dark:bg-slate-900/50 p-3 rounded-2xl border border-emerald-200/50 dark:border-emerald-900/50 font-mono text-xs text-center">
-                              Member ID: <strong className="text-emerald-800 dark:text-emerald-300">{resolvedUserEmail}</strong>
-                            </div>
-                          )}
-                          {devOtp && (
-                            <div className="bg-amber-100 dark:bg-amber-950/50 p-3 rounded-2xl border border-amber-200 dark:border-amber-900/50 text-xs font-bold text-center text-amber-800 dark:text-amber-300 animate-pulse">
-                              ⚠️ Dev Mode Passcode: <strong className="font-mono text-sm tracking-widest">{devOtp}</strong>
-                            </div>
-                          )}
                         </div>
 
                         <button 
@@ -198,29 +175,28 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
                           onClick={() => {
                             setMode('login');
                             setSuccessMsg(null);
-                            setDevOtp(null);
                             setError(null);
                           }}
                           className="w-full py-5 bg-[#0a2e5c] dark:bg-primary text-white rounded-[1.5rem] font-black uppercase text-xs tracking-[0.2em] shadow-lg hover:bg-opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
                         >
-                          Authenticate with OTP <ArrowRight size={16} />
+                          Return to Login <ArrowRight size={16} />
                         </button>
                       </div>
                     ) : (
-                      <form onSubmit={handleRequestOtp} className="space-y-5">
+                      <form onSubmit={handleRequestPasswordReset} className="space-y-5">
                         <div className="space-y-2">
-                          <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Registered Phone Number</label>
+                          <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Email Address</label>
                           <div className="relative group">
                             <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
-                              <Phone className="text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
+                              <Mail className="text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
                             </div>
                             <input 
-                              type="tel" 
+                              type="email" 
                               required
-                              value={phoneInput}
-                              onChange={(e) => setPhoneInput(e.target.value)}
-                              className="w-full pl-14 pr-6 py-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[1.5rem] font-bold text-[#0a2e5c] dark:text-white outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm placeholder:text-slate-300 font-mono text-sm"
-                              placeholder="e.g. 0712345678"
+                              value={resetEmailInput}
+                              onChange={(e) => setResetEmailInput(e.target.value)}
+                              className="w-full pl-14 pr-6 py-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-[1.5rem] font-bold text-[#0a2e5c] dark:text-white outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all shadow-sm placeholder:text-slate-300"
+                              placeholder="email@example.com"
                             />
                           </div>
                         </div>
@@ -230,7 +206,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
                           disabled={isProcessing}
                           className="w-full py-5 bg-[#0a2e5c] dark:bg-primary text-white rounded-[1.5rem] font-black uppercase text-xs tracking-[0.2em] shadow-xl shadow-slate-900/10 hover:shadow-primary/20 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-4 mt-6"
                         >
-                          {isProcessing ? <Loader2 size={18} className="animate-spin" /> : "Request Temporary OTP"}
+                          {isProcessing ? <Loader2 size={18} className="animate-spin" /> : "Send Reset Link"}
                           {!isProcessing && <ArrowRight size={16} />}
                         </button>
 
