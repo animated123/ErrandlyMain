@@ -1854,6 +1854,10 @@ let firebaseConfig: any = null;
 try {
   if (fs.existsSync(firebaseConfigPath)) {
     firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+    if (firebaseConfig && firebaseConfig.projectId) {
+      process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
+      process.env.GCLOUD_PROJECT = firebaseConfig.projectId;
+    }
   }
 } catch (e) {
   console.warn("Could not load firebase-applet-config.json:", e);
@@ -1881,6 +1885,10 @@ function reloadFirebaseConfig() {
   try {
     if (fs.existsSync(firebaseConfigPath)) {
       firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
+      if (firebaseConfig && firebaseConfig.projectId) {
+        process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
+        process.env.GCLOUD_PROJECT = firebaseConfig.projectId;
+      }
     }
   } catch (e) {
     console.warn("Could not reload firebase-applet-config.json:", e);
@@ -2585,6 +2593,7 @@ const getFetch = () => {
 if (!admin.apps.length) {
   try {
     if (firebaseConfig && firebaseConfig.projectId) {
+      process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId; // Force env var for better detection
       console.log(`[Firebase Admin] Initializing with projectId from config: ${firebaseConfig.projectId}`);
       const options: any = {
         projectId: firebaseConfig.projectId,
@@ -4612,7 +4621,7 @@ Please proceed with the task according to safety guidelines and update milestone
       `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-1.5-flash",
         contents: prompt,
         config: { responseMimeType: "application/json" }
       });
@@ -4631,7 +4640,7 @@ Please proceed with the task according to safety guidelines and update milestone
       const ai = getGoogleGenAIClient();
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-1.5-flash",
         contents: `Parse this errand description into a JSON object with title, category (one of: General, Delivery, Shopping, Mama Fua, House Hunting), and location: "${text || ''}"`,
         config: { responseMimeType: "application/json" }
       });
@@ -4653,7 +4662,7 @@ Please proceed with the task according to safety guidelines and update milestone
       const ai = getGoogleGenAIClient();
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-1.5-flash",
         contents: [
           { inlineData: { data: base64, mimeType: "image/jpeg" } },
           { text: "Extract the total amount from this receipt image. Return only the number." }
@@ -4699,7 +4708,9 @@ Please proceed with the task according to safety guidelines and update milestone
         handleCodeInApp: true
       };
 
-      const link = await admin.auth().generateEmailVerificationLink(email, actionCodeSettings);
+      const authInstance = admin.auth();
+      // Ensure the project ID is available to the auth instance if possible
+      const link = await authInstance.generateEmailVerificationLink(email, actionCodeSettings);
       const html = getVerificationEmailTemplate(name || email.split('@')[0], link);
       
       const transporter = getSmtpTransporter();
