@@ -1912,7 +1912,7 @@ export const firebaseService = {
                            lowercaseEmail.includes('supaadmin') ||
                            lowercaseEmail.startsWith('supaadmin@');
 
-      const profilePayload = {
+      const profilePayload: any = {
         id: userId,
         email: lowercaseEmail,
         username: name,
@@ -1920,6 +1920,9 @@ export const firebaseService = {
         role: isSuperAdmin ? 'admin' : (role || 'REQUESTER'),
         is_runner: (role === UserRole.RUNNER),
         is_admin: isSuperAdmin,
+        phone_verified: false,
+        email_verified: false,
+        is_verified: false,
         wallet_balance: isSuperAdmin ? 10000 : 0,
         balance: isSuperAdmin ? 10000 : 0,
         completed_errands: 0,
@@ -2682,7 +2685,13 @@ export const firebaseService = {
 
       console.log(`[AuthService] Sending native Firebase email verification for ${userId}`);
       const { sendEmailVerification } = await import('firebase/auth');
-      await sendEmailVerification(auth.currentUser);
+      
+      const actionCodeSettings = {
+        url: window.location.origin, // Dynamic URL based on current environment
+        handleCodeInApp: true
+      };
+      
+      await sendEmailVerification(auth.currentUser, actionCodeSettings);
       return { success: true, message: "Verification email sent" };
     } catch (error: any) {
       if (error?.code === 'auth/too-many-requests' || String(error?.message).includes('too-many-requests')) {
@@ -2795,7 +2804,13 @@ export const firebaseService = {
     try {
       if (!auth) throw new Error("Firebase Auth not initialized");
       const { sendPasswordResetEmail } = await import('firebase/auth');
-      await sendPasswordResetEmail(auth, email);
+      
+      const actionCodeSettings = {
+        url: window.location.origin, // Dynamic URL based on current environment
+        handleCodeInApp: true
+      };
+      
+      await sendPasswordResetEmail(auth, email, actionCodeSettings);
       return true;
     } catch (error: any) {
       if (error?.code === 'auth/too-many-requests' || String(error?.message).includes('too-many-requests')) {
