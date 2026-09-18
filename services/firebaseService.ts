@@ -1562,22 +1562,38 @@ export const firebaseService = {
       const finalId = dbUser?.id || authId;
       const existingExtra = safeParseExtraData(dbUser?.extra_data || dbUser?.extraData);
 
+      const isPhoneVerified = dbUser ? Boolean(dbUser.phone_verified) : Boolean(existingExtra?.phone_verified || existingExtra?.phoneVerified);
+      const isEmailVerified = dbUser 
+        ? Boolean(dbUser.email_verified || authUser?.emailVerified || authUser?.email_confirmed_at) 
+        : Boolean(authUser?.emailVerified || authUser?.email_confirmed_at || existingExtra?.email_verified || existingExtra?.emailVerified);
+
       const profilePayload: any = {
         id: finalId,
         email: email || dbUser?.email || '',
         username: dbUser?.username || name,
-        phone: dbUser?.phone || (phone ? actionService.formatPhoneNumber(phone) : '254700000000'),
+        phone: dbUser?.phone || (phone ? actionService.formatPhoneNumber(phone) : (existingExtra?.phone || '')),
         role: isSuperAdmin ? 'admin' : (dbUser?.role || userMeta.role || 'REQUESTER'),
         is_runner: dbUser ? Boolean(dbUser.is_runner) : (userMeta.role === 'RUNNER'),
         is_admin: isSuperAdmin || (dbUser ? Boolean(dbUser.is_admin) : false),
+        phone_verified: isPhoneVerified,
+        email_verified: isEmailVerified,
+        is_verified: dbUser ? Boolean(dbUser.is_verified) : false,
+        rating: dbUser?.rating !== undefined && dbUser?.rating !== null ? Number(dbUser.rating) : 5,
+        rating_count: dbUser?.rating_count !== undefined && dbUser?.rating_count !== null ? Number(dbUser.rating_count) : 0,
         wallet_balance: dbUser ? Number(dbUser.wallet_balance || 0) : (isSuperAdmin ? 10000 : 0),
         balance: dbUser ? Number(dbUser.balance || 0) : (isSuperAdmin ? 10000 : 0),
+        completed_errands: dbUser?.completed_errands !== undefined && dbUser?.completed_errands !== null ? Number(dbUser.completed_errands) : 0,
+        total_tasks: dbUser?.total_tasks !== undefined && dbUser?.total_tasks !== null ? Number(dbUser.total_tasks) : 0,
+        biography: dbUser?.biography || '',
+        theme: dbUser?.theme || 'light',
         avatar: dbUser?.avatar || avatar,
         profile_photo: dbUser?.profile_photo || avatar,
         created_at: dbUser?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString(),
         extra_data: {
           ...existingExtra,
+          phone_verified: isPhoneVerified,
+          email_verified: isEmailVerified,
           auth_provider: source,
           auth_primary: source === 'firebase'
         }
@@ -2921,6 +2937,12 @@ export const firebaseService = {
         throw new Error(data.message || data.error || "Invalid verification code");
       }
       
+      // Update currentUserCache immediately if matched
+      if (firebaseService._currentUserCache && (firebaseService._currentUserCache.id === userId || (firebaseService._currentUserCache as any).uid === userId)) {
+        firebaseService._currentUserCache.phoneVerified = true;
+        firebaseService._currentUserCache.phone = formattedPhone;
+      }
+
       return true;
     } catch (error: any) {
       console.error('Error verifying phone code:', error);
@@ -2962,6 +2984,18 @@ export const firebaseService = {
 
   updatePassword: async (email: string, newPass: string): Promise<boolean> => {
     try {
+      // 1. Direct Firebase Auth password update if user is currently signed in via Firebase
+      if (auth && auth.currentUser) {
+        try {
+          const { updatePassword: fbUpdatePassword } = await import('firebase/auth');
+          await fbUpdatePassword(auth.currentUser, newPass);
+          console.log('[firebaseService] Firebase Auth password successfully set/updated');
+        } catch (fbErr: any) {
+          console.debug('[firebaseService] Firebase auth direct password update note:', fbErr?.message);
+        }
+      }
+
+      // 2. Direct backend update (bcrypt hash in database & Supabase Auth)
       const response = await fetch(`${API_BASE_URL}/api/auth/update-password`, {
         method: 'POST',
         headers: {

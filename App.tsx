@@ -13,7 +13,7 @@ import {
   Settings, Palette, ImageIcon as LucideImageIcon, Save, Upload, Download,
   HelpCircle, PlusCircle, Filter, UserCircle, Send, Compass,
   Mic, Square, Play, Pause, ChevronUp, ChevronDown, RefreshCw, ZoomIn, Users,
-  Quote, Trophy, History as HistoryIcon, ArrowLeft, Circle, Eye, Server, Database, Cpu, Code, Share2, Package
+  Quote, Trophy, History as HistoryIcon, ArrowLeft, Circle, Eye, EyeOff, KeyRound, Lock, Server, Database, Cpu, Code, Share2, Package
 } from 'lucide-react';
 import { 
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -2011,6 +2011,67 @@ export default function App() {
                           </div>
                         </div>
 
+                        {/* Interactive Verification Status Card */}
+                        {(!user.phoneVerified || !user.emailVerified) && (
+                          <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 shadow-sm space-y-3">
+                            <div className="flex items-center gap-3">
+                              <ShieldAlert className="text-amber-600 dark:text-amber-400 shrink-0" size={20} />
+                              <div>
+                                <h4 className="text-sm font-black text-amber-900 dark:text-amber-200">Account Verification</h4>
+                                <p className="text-xs text-amber-700/80 dark:text-amber-400/80">Verify your details to unlock full errand actions.</p>
+                              </div>
+                            </div>
+                            <div className="space-y-2 pt-1">
+                              {/* Phone verification item */}
+                              <div className="flex items-center justify-between p-2.5 bg-background rounded-xl border border-border">
+                                <div className="flex items-center gap-2">
+                                  <Phone size={14} className={user.phoneVerified ? "text-emerald-500" : "text-amber-500"} />
+                                  <div>
+                                    <span className="text-xs font-bold text-foreground">Phone Number</span>
+                                    {user.phone && <p className="text-[10px] text-muted-foreground">{formatPhoneDisplay(user.phone)}</p>}
+                                  </div>
+                                </div>
+                                {user.phoneVerified ? (
+                                  <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                    <ShieldCheck size={14} /> Verified
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowPhoneVerificationModal(true)}
+                                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black tracking-normal transition-colors"
+                                  >
+                                    Verify Phone
+                                  </button>
+                                )}
+                              </div>
+                              {/* Email verification item */}
+                              <div className="flex items-center justify-between p-2.5 bg-background rounded-xl border border-border">
+                                <div className="flex items-center gap-2">
+                                  <Mail size={14} className={user.emailVerified ? "text-emerald-500" : "text-amber-500"} />
+                                  <div>
+                                    <span className="text-xs font-bold text-foreground">Email Address</span>
+                                    {user.email && <p className="text-[10px] text-muted-foreground truncate max-w-[150px]">{user.email}</p>}
+                                  </div>
+                                </div>
+                                {user.emailVerified ? (
+                                  <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                    <ShieldCheck size={14} /> Verified
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowEmailVerificationModal(true)}
+                                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-black tracking-normal transition-colors"
+                                  >
+                                    Verify Email
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Runner On-Duty Status Switch */}
                         {user.role === UserRole.RUNNER && (
                           <div className="bg-card text-card-foreground border border-border rounded-2xl p-5 shadow-sm space-y-3">
@@ -2811,6 +2872,7 @@ export default function App() {
           user={user}
           onClose={() => setShowPhoneVerificationModal(false)}
           onSuccess={async () => {
+            setUser(prev => prev ? { ...prev, phoneVerified: true } : null);
             const updated = await firebaseService.getCurrentUser();
             if (updated) setUser(updated);
           }}
@@ -2822,6 +2884,7 @@ export default function App() {
           user={user}
           onClose={() => setShowEmailVerificationModal(false)}
           onSuccess={async () => {
+            setUser(prev => prev ? { ...prev, emailVerified: true } : null);
             const updated = await firebaseService.getCurrentUser();
             if (updated) setUser(updated);
           }}
@@ -6955,6 +7018,46 @@ const ProfileEditor: React.FC<{
   const [isUploading, setIsUploading] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
 
+  // Security & Password state for Google and standard users
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [showPasswordSection, setShowPasswordSection] = useState(false);
+
+  const isGoogleUser = user.extra_data?.auth_provider === 'google' || 
+    user.extra_data?.auth_provider === 'google.com' ||
+    user.extra_data?.auth_primary === false;
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (!newPassword || newPassword.length < 6) {
+      setPasswordError('Password must be at least 6 characters long.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match. Please verify and retry.');
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      await firebaseService.updatePassword(user.email, newPassword);
+      setPasswordSuccess('Password saved successfully! You can now log in using your email and password alongside Google Sign-in.');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      setPasswordError(err.message || 'Failed to update password. Please try again.');
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
+
   const handleVerifyEmail = async () => {
     setIsVerifying(true);
     try {
@@ -6967,6 +7070,10 @@ const ProfileEditor: React.FC<{
   const handleVerifyPhone = async () => {
     setIsVerifying(true);
     try {
+      if (formData.phone && formData.phone !== user.phone) {
+        await firebaseService.updateUserProfile(user.id, { phone: formData.phone });
+        user.phone = formData.phone;
+      }
       await onVerifyPhone();
     } finally {
       setIsVerifying(false);
@@ -7088,7 +7195,7 @@ const ProfileEditor: React.FC<{
         <div className="space-y-1.5">
           <div className="flex items-center justify-between ml-1">
             <label className="text-sm font-black tracking-normal font-medium text-muted-foreground">Phone Number {isPhoneDisabled && '(Locked)'}</label>
-            {user.phone && !user.phoneVerified && (
+            {(user.phone || formData.phone) && !user.phoneVerified && (
               <button 
                 type="button"
                 onClick={handleVerifyPhone}
@@ -7131,6 +7238,113 @@ const ProfileEditor: React.FC<{
           {isSaving ? <LoadingSpinner color="white" /> : "Save Changes"}
         </button>
       </form>
+
+      {/* Account Security & Password Section */}
+      <div className="bg-card text-card-foreground p-6 rounded-2xl border border-border shadow-sm space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
+              <KeyRound size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-black text-foreground">Account Security & Password</h3>
+                {isGoogleUser && (
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                    Google Sign-In Account
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground font-medium mt-1">
+                {isGoogleUser 
+                  ? "Set a password so you can sign in directly using your email and password in addition to Google Sign-In."
+                  : "Update your login password to keep your ErrandRunner account secure."}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setShowPasswordSection(!showPasswordSection);
+              setPasswordError('');
+              setPasswordSuccess('');
+            }}
+            className="px-3.5 py-2 rounded-xl text-xs font-black bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+          >
+            {showPasswordSection ? 'Hide' : (isGoogleUser ? 'Set Password' : 'Change Password')}
+          </button>
+        </div>
+
+        {showPasswordSection && (
+          <form onSubmit={handleUpdatePassword} className="pt-4 border-t border-border/60 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="space-y-1.5">
+              <label className="text-xs font-black tracking-normal text-muted-foreground ml-1">New Password</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Minimum 6 characters"
+                  className="w-full p-4 pr-12 brand-input rounded-2xl font-bold text-foreground text-sm outline-none"
+                  required
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-black tracking-normal text-muted-foreground ml-1">Confirm New Password</label>
+              <input
+                type={showPassword ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your new password"
+                className="w-full p-4 brand-input rounded-2xl font-bold text-foreground text-sm outline-none"
+                required
+                minLength={6}
+              />
+            </div>
+
+            {passwordError && (
+              <div className="p-3.5 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 rounded-xl text-red-600 dark:text-red-400 text-xs font-bold">
+                {passwordError}
+              </div>
+            )}
+
+            {passwordSuccess && (
+              <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/50 rounded-xl text-emerald-700 dark:text-emerald-300 text-xs font-bold flex items-center gap-2">
+                <CheckCircle size={16} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <span>{passwordSuccess}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isUpdatingPassword || !newPassword || !confirmPassword}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-100 dark:shadow-none transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              {isUpdatingPassword ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Updating Password...</span>
+                </>
+              ) : (
+                <>
+                  <Lock size={16} />
+                  <span>{isGoogleUser ? "Set Account Password" : "Save New Password"}</span>
+                </>
+              )}
+            </button>
+          </form>
+        )}
+      </div>
     </div>
   );
 };
