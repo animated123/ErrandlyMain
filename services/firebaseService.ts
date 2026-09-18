@@ -1771,25 +1771,24 @@ export const firebaseService = {
 
       let authResult: { source: 'supabase' | 'firebase' | 'backend'; authUser: any; session: any } | null = null;
 
-      // Sequential preference: Firebase -> Supabase -> Backend
+      // Primary strategy: Race the available cloud providers (Supabase & Firebase)
       try {
-        authResult = await tryFirebase();
-      } catch (fbErr: any) {
-        console.debug('[Auth Login] Firebase primary note:', fbErr?.message || fbErr);
+        authResult = await Promise.any([trySupabase(), tryFirebase()]);
+      } catch (raceErr) {
+        console.info('[Auth Login] Cloud auth providers offline or failed, seamlessly failing over to Backend Auth Service...');
+      }
+
+      // Alternative service failover: If Firebase/Supabase are offline or failed, use Backend Auth
+      if (!authResult) {
         try {
-          authResult = await trySupabase();
-        } catch (supaErr: any) {
-          console.debug('[Auth Login] Supabase secondary note:', supaErr?.message || supaErr);
-          try {
-            authResult = await tryBackendAuth();
-          } catch (apiErr: any) {
-            console.debug('[Auth Login] Backend tertiary note:', apiErr?.message || apiErr);
-          }
+          authResult = await tryBackendAuth();
+        } catch (apiErr: any) {
+          throw new Error(apiErr?.message || 'Invalid email/phone or password. Please verify your credentials.');
         }
       }
 
       if (!authResult) {
-        throw new Error('Invalid email/phone or password. Please verify your credentials.');
+        throw new Error('Authentication failed across all available services.');
       }
 
       if (authResult.source === 'backend') {
@@ -1820,30 +1819,37 @@ export const firebaseService = {
 
       const lowercaseEmail = email.toLowerCase().trim();
 
-      // Step 1: Primary Service - Firebase Auth
-      let fbUser: any = null;
-      if (auth && auth.app) {
-        try {
-          const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
-          const fbPromise = createUserWithEmailAndPassword(auth, lowercaseEmail, pass);
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Firebase signUp timeout')), 5000)
-          );
-          const cred = await Promise.race([fbPromise, timeoutPromise]) as any;
-          if (cred?.user) {
-            await updateProfile(cred.user, { displayName: name }).catch(() => {});
-            fbUser = cred.user;
-          }
-        } catch (fbErr: any) {
-          if (fbErr?.code === 'auth/email-already-in-use' || String(fbErr?.message).includes('email-already-in-use')) {
-            console.info('[Register] Email already in Firebase.');
-          } else {
-            console.warn('[Register] Firebase auth note:', fbErr?.message || fbErr);
+      // Step 1: Register in Backend Database Service first (creates profile + bcrypt hash)
+      let backendUser: any = null;
+      let backendToken: string | null = null;
+      try {
+        const backendRes = await firebaseService._callAuthApi('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            email: lowercaseEmail,
+            phone: formattedPhone,
+            password: pass,
+            role: role || UserRole.REQUESTER
+          })
+        });
+        if (backendRes?.success && backendRes?.user) {
+          backendUser = backendRes.user;
+          backendToken = backendRes.token;
+        } else if (backendRes?.error) {
+          if (String(backendRes.error).toLowerCase().includes('already registered')) {
+            throw new Error(backendRes.error);
           }
         }
+      } catch (backendErr: any) {
+        if (backendErr?.message && backendErr.message.toLowerCase().includes('already registered')) {
+          throw backendErr;
+        }
+        console.warn('[Register] Backend registration fallback note:', backendErr?.message || backendErr);
       }
 
-      // Step 2: Secondary Service - Supabase Auth
+      // Step 2: Alternative Service: Supabase Auth
       let supaUser: any = null;
       let supaSession: any = null;
       try {
@@ -1862,7 +1868,7 @@ export const firebaseService = {
             }
           });
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Supabase signUp timeout')), 5000)
+            setTimeout(() => reject(new Error('Supabase signUp timeout')), 4000)
           );
           const { data, error } = await Promise.race([supaPromise, timeoutPromise]) as any;
           if (error) {
@@ -1873,32 +1879,34 @@ export const firebaseService = {
           }
         }
       } catch (err: any) {
-        console.warn('[Register] Supabase auth note:', err?.message || err);
+        console.warn('[Register] Supabase auth note (service offline or failed):', err?.message || err);
       }
 
-      // Step 3: Tertiary Service - Backend API
-      let backendUser: any = null;
-      try {
-        const backendRes = await firebaseService._callAuthApi('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name,
-            email: lowercaseEmail,
-            phone: formattedPhone,
-            password: pass,
-            role: role || UserRole.REQUESTER
-          })
-        });
-        if (backendRes?.success && backendRes?.user) {
-          backendUser = backendRes.user;
+      // Step 3: Alternative Service: Firebase Auth
+      let fbUser: any = null;
+      if (auth && auth.app) {
+        try {
+          const { createUserWithEmailAndPassword, updateProfile } = await import('firebase/auth');
+          const fbPromise = createUserWithEmailAndPassword(auth, lowercaseEmail, pass);
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Firebase signUp timeout')), 4000)
+          );
+          const cred = await Promise.race([fbPromise, timeoutPromise]) as any;
+          if (cred?.user) {
+            await updateProfile(cred.user, { displayName: name }).catch(() => {});
+            fbUser = cred.user;
+          }
+        } catch (fbErr: any) {
+          if (fbErr?.code === 'auth/email-already-in-use' || String(fbErr?.message).includes('email-already-in-use')) {
+            console.info('[Register] Email already registered in Firebase; syncing profile with database.');
+          } else {
+            console.warn('[Register] Firebase auth note (service offline or failed):', fbErr?.message || fbErr);
+          }
         }
-      } catch (backendErr: any) {
-        console.warn('[Register] Backend registration note:', backendErr?.message || backendErr);
       }
 
       // Step 4: Resolve user profile ID across services
-      const userId = fbUser?.uid || supaUser?.id || backendUser?.id || `usr_${Math.random().toString(36).substring(2, 11)}`;
+      const userId = backendUser?.id || supaUser?.id || fbUser?.uid || `usr_${Math.random().toString(36).substring(2, 11)}`;
       const isSuperAdmin = lowercaseEmail === 'errands@codexict.co.ke' ||
                            lowercaseEmail === 'ngugimaina4@gmail.com' ||
                            lowercaseEmail.includes('supaadmin') ||
@@ -2675,28 +2683,22 @@ export const firebaseService = {
         return { success: true, message: "Email already verified" };
       }
 
-      console.log(`[AuthService] Triggering custom branded verification email for ${email}`);
+      console.log(`[AuthService] Sending native Firebase email verification for ${userId}`);
+      const { sendEmailVerification } = await import('firebase/auth');
       
-      const response = await fetch(`${API_BASE_URL}/api/auth/send-verification-email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          name: auth.currentUser.displayName || email.split('@')[0],
-          continueUrl: getAuthRedirectUrl()
-        })
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Failed to send verification email");
-
-      return { success: true, message: "A beautifully crafted verification email has been sent to your inbox. Please check it to continue." };
+      const actionCodeSettings = {
+        url: window.location.origin, // Dynamic URL based on current environment
+        handleCodeInApp: true
+      };
+      
+      await sendEmailVerification(auth.currentUser, actionCodeSettings);
+      return { success: true, message: "Verification email sent" };
     } catch (error: any) {
       if (error?.code === 'auth/too-many-requests' || String(error?.message).includes('too-many-requests')) {
-        console.warn('[AuthService] Firebase rate limit hit for email verification.');
+        console.warn('[AuthService] Firebase rate limit hit for email verification. Skipping.');
         return { success: true, message: "A verification email was recently sent. Please check your inbox or try again in a few minutes." };
       }
-      console.error('Error sending verification email:', error);
+      console.debug('Error sending email verification (logged as debug):', error);
       throw error;
     }
   },

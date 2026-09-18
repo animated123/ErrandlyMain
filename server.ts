@@ -50,8 +50,6 @@ try {
   console.warn('[Env] Notice loading env file:', envErr?.message);
 }
 
-import { getVerificationEmailTemplate } from "./services/emailTemplates.js";
-
 // Global captured logs tracker
 interface LogEntry {
   timestamp: string;
@@ -1419,17 +1417,6 @@ async function executeDbOperation(tableName: string, chainCalls: Array<{ method:
   }
 
   // Tier 3: Resilient Local JSON Database Fallback
-  if (isWriteOp && (tableName === 'profiles' || tableName === 'wallets')) {
-    const writeCall = chainCalls.find(c => ['insert', 'update', 'upsert'].includes(c.method));
-    if (writeCall) {
-      const body = writeCall.args[0];
-      if (body && (body.wallet_balance !== undefined || body.balance !== undefined || body.walletBalance !== undefined)) {
-        console.warn(`[Database Tier 3] Security Block: Skipping JSON fallback for balance-sensitive update on '${tableName}'.`);
-        throw new Error("Financial systems are currently in read-only mode due to a primary database connection issue. Please try again in a few minutes.");
-      }
-    }
-  }
-
   const res = await executeLocalDbOperation(tableName, chainCalls);
   if (isWriteOp) {
     mirrorWriteToActiveSources(tableName, chainCalls, 'json');
@@ -1541,10 +1528,6 @@ const LOCAL_DB_PATH = isVercelEnv
   ? path.join("/tmp", "local_db.json")
   : path.join(process.cwd(), "local_db.json");
 
-const WALLET_LOGS_PATH = isVercelEnv
-  ? path.join("/tmp", "wallet_logs.json")
-  : path.join(process.cwd(), "wallet_logs.json");
-
 const DEFAULT_APP_SETTINGS = {
   id: 'app',
   primary_color: '#2891e2',
@@ -1602,41 +1585,6 @@ function loadLocalDb(): Record<string, any[]> {
 
 function saveLocalDb(db: Record<string, any[]>) {
   safeWriteJsonFile(LOCAL_DB_PATH, db);
-}
-
-function logWalletTransaction(tableName: string, data: any) {
-  if (tableName !== 'profiles' && tableName !== 'transactions') return;
-  
-  // Only log if it looks like a balance update or transaction
-  const hasBalance = data.wallet_balance !== undefined || data.balance !== undefined || data.walletBalance !== undefined;
-  const isTransaction = tableName === 'transactions';
-  
-  if (!hasBalance && !isTransaction) return;
-
-  try {
-    let logs = [];
-    if (fs.existsSync(WALLET_LOGS_PATH)) {
-      try {
-        logs = JSON.parse(fs.readFileSync(WALLET_LOGS_PATH, 'utf-8'));
-      } catch (e) { logs = []; }
-    }
-    if (!Array.isArray(logs)) logs = [];
-    
-    logs.push({
-      timestamp: new Date().toISOString(),
-      table: tableName,
-      data: data,
-      audit_id: `audit_${Math.random().toString(36).substr(2, 9)}`
-    });
-    
-    // Keep last 1000 logs
-    if (logs.length > 1000) logs = logs.slice(-1000);
-    
-    safeWriteJsonFile(WALLET_LOGS_PATH, logs);
-    console.log(`[Wallet Audit] Logged ${tableName} activity to local audit trail.`);
-  } catch (err) {
-    console.warn('[Wallet Audit] Failed to write local log:', err);
-  }
 }
 
 async function executeLocalDbOperation(tableName: string, chainCalls: Array<{ method: string, args: any[] }>) {
@@ -1854,10 +1802,6 @@ let firebaseConfig: any = null;
 try {
   if (fs.existsSync(firebaseConfigPath)) {
     firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
-    if (firebaseConfig && firebaseConfig.projectId) {
-      process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
-      process.env.GCLOUD_PROJECT = firebaseConfig.projectId;
-    }
   }
 } catch (e) {
   console.warn("Could not load firebase-applet-config.json:", e);
@@ -1885,10 +1829,6 @@ function reloadFirebaseConfig() {
   try {
     if (fs.existsSync(firebaseConfigPath)) {
       firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf8"));
-      if (firebaseConfig && firebaseConfig.projectId) {
-        process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
-        process.env.GCLOUD_PROJECT = firebaseConfig.projectId;
-      }
     }
   } catch (e) {
     console.warn("Could not reload firebase-applet-config.json:", e);
@@ -2130,10 +2070,6 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
       });
-      // Add local audit logging for wallet sensitive data
-      const writeCallA = chainCalls.find(c => ['insert', 'update', 'upsert'].includes(c.method));
-      if (writeCallA) logWalletTransaction(tableName, writeCallA.args[0]);
-
       mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
       });
@@ -2146,10 +2082,6 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
       });
-      // Add local audit logging for wallet sensitive data
-      const writeCallB = chainCalls.find(c => ['insert', 'update', 'upsert'].includes(c.method));
-      if (writeCallB) logWalletTransaction(tableName, writeCallB.args[0]);
-
       mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
       });
@@ -2167,9 +2099,6 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
       mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
       });
-      // Add local audit logging for wallet sensitive data
-      const writeCallD = chainCalls.find(c => ['insert', 'update', 'upsert'].includes(c.method));
-      if (writeCallD) logWalletTransaction(tableName, writeCallD.args[0]);
     } else if (sourceUsed === 'firebase') {
       if (primaryPgPool && primaryPgConnected) {
         executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
@@ -2184,9 +2113,6 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
       });
-      // Add local audit logging for wallet sensitive data
-      const writeCallC = chainCalls.find(c => ['insert', 'update', 'upsert'].includes(c.method));
-      if (writeCallC) logWalletTransaction(tableName, writeCallC.args[0]);
     }
   } catch (err: any) {
     console.warn(`[Sync Mirror Exception on '${tableName}']:`, err?.message);
@@ -2370,27 +2296,15 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
 
         // Special handling for profiles: intelligently reconcile balances, permissions, and passwords
         if (tableName === 'profiles') {
-          // Purely trust Supabase (Primary) for account balance as requested
-          const primaryBalance = recPrimary ? Number(recPrimary.wallet_balance !== undefined ? recPrimary.wallet_balance : (recPrimary.balance || recPrimary.walletBalance || 0)) : null;
-          
-          if (primaryBalance !== null && !isNaN(primaryBalance)) {
+          const maxWallet = Math.max(
+            ...candidates.map(c => Number(c.wallet_balance !== undefined && c.wallet_balance !== null ? c.wallet_balance : (c.balance || c.walletBalance || 0)))
+          );
+          if (!isNaN(maxWallet) && maxWallet > 0) {
             bestRecord = {
               ...bestRecord,
-              wallet_balance: primaryBalance,
-              balance: primaryBalance
+              wallet_balance: maxWallet,
+              balance: maxWallet
             };
-          } else {
-            // Fallback to max across other sources ONLY if primary is unavailable
-            const maxWallet = Math.max(
-              ...candidates.map(c => Number(c.wallet_balance !== undefined && c.wallet_balance !== null ? c.wallet_balance : (c.balance || c.walletBalance || 0)))
-            );
-            if (!isNaN(maxWallet) && maxWallet > 0) {
-              bestRecord = {
-                ...bestRecord,
-                wallet_balance: maxWallet,
-                balance: maxWallet
-              };
-            }
           }
 
           const userEmail = String(bestRecord.email || '').toLowerCase().trim();
@@ -2593,7 +2507,6 @@ const getFetch = () => {
 if (!admin.apps.length) {
   try {
     if (firebaseConfig && firebaseConfig.projectId) {
-      process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId; // Force env var for better detection
       console.log(`[Firebase Admin] Initializing with projectId from config: ${firebaseConfig.projectId}`);
       const options: any = {
         projectId: firebaseConfig.projectId,
@@ -4621,7 +4534,7 @@ Please proceed with the task according to safety guidelines and update milestone
       `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.5-flash",
         contents: prompt,
         config: { responseMimeType: "application/json" }
       });
@@ -4640,7 +4553,7 @@ Please proceed with the task according to safety guidelines and update milestone
       const ai = getGoogleGenAIClient();
 
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.5-flash",
         contents: `Parse this errand description into a JSON object with title, category (one of: General, Delivery, Shopping, Mama Fua, House Hunting), and location: "${text || ''}"`,
         config: { responseMimeType: "application/json" }
       });
@@ -4662,7 +4575,7 @@ Please proceed with the task according to safety guidelines and update milestone
       const ai = getGoogleGenAIClient();
 
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.5-flash",
         contents: [
           { inlineData: { data: base64, mimeType: "image/jpeg" } },
           { text: "Extract the total amount from this receipt image. Return only the number." }
@@ -4697,48 +4610,6 @@ Please proceed with the task according to safety guidelines and update milestone
       next();
     });
   };
-
-  app.post("/api/auth/send-verification-email", async (req, res) => {
-    try {
-      const { email, name, continueUrl } = req.body;
-      if (!email) return res.status(400).json({ error: "Email is required" });
-
-      const actionCodeSettings = {
-        url: continueUrl || "https://errandly.site",
-        handleCodeInApp: true
-      };
-
-      const authInstance = admin.auth();
-      // Ensure the project ID is available to the auth instance if possible
-      const link = await authInstance.generateEmailVerificationLink(email, actionCodeSettings);
-      const html = getVerificationEmailTemplate(name || email.split('@')[0], link);
-      
-      const transporter = getSmtpTransporter();
-      const subject = "Verify Your ErrandRunner Account";
-      
-      // Try Action Server First
-      try {
-        await sendEmailViaActionServer(email, subject, html);
-        return res.json({ success: true, message: "Verification email sent via Action Server" });
-      } catch (err) {
-        // Fallback to SMTP
-        if (transporter) {
-          const from = process.env.SMTP_FROM || "ErrandRunner <notifications@ais-errands.app>";
-          await transporter.sendMail({
-            from,
-            to: email,
-            subject,
-            html
-          });
-          return res.json({ success: true, message: "Verification email sent via SMTP" });
-        }
-        throw new Error("No email service available");
-      }
-    } catch (error: any) {
-      console.error("[Verification Email Error]:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   app.post("/api/auth/register", async (req, res) => {
     try {
@@ -4825,7 +4696,7 @@ Please proceed with the task according to safety guidelines and update milestone
         total_tasks: 0,
         theme: 'light',
         phone_verified: false,
-        email_verified: false
+        email_verified: true
       };
 
       const result = await supabase.from('profiles').insert(profilePayload);
