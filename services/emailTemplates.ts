@@ -18,177 +18,100 @@ export const getEmailTemplate = (
 
         body {
           font-family: 'DM Sans', sans-serif;
-          background-color: #f0ede8;
+          background-color: #f8f9fa;
           color: #2d2d2d;
-          padding: 32px 16px;
-        }
-
-        .wrapper {
-          max-width: 580px;
-          margin: 0 auto;
-        }
-
-        /* ── Top brand strip ── */
-        .brand {
-          text-align: center;
-          margin-bottom: 24px;
-        }
-        .brand-name {
-          font-family: 'DM Serif Display', serif;
-          font-size: 26px;
-          color: #FF6321;
-          letter-spacing: 0.5px;
-        }
-        .brand-tagline {
-          font-size: 12px;
-          color: #a08e80;
-          margin-top: 2px;
-          letter-spacing: 1.5px;
-          text-transform: uppercase;
-        }
-
-        /* ── Card ── */
-        .card {
-          background: #ffffff;
-          border-radius: 20px;
-          overflow: hidden;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.08);
-        }
-
-        /* ── Hero banner ── */
-        .hero {
-          background: linear-gradient(145deg, #FF6321 0%, #ff8c57 60%, #ffb38a 100%);
-          padding: 48px 40px 52px;
-          position: relative;
-          overflow: hidden;
-        }
-        .hero::before {
-          content: '';
-          position: absolute;
-          top: -40px; right: -40px;
-          width: 200px; height: 200px;
-          background: rgba(255,255,255,0.07);
-          border-radius: 50%;
-        }
-        .hero::after {
-          content: '';
-          position: absolute;
-          bottom: -60px; left: -30px;
-          width: 160px; height: 160px;
-          background: rgba(255,255,255,0.05);
-          border-radius: 50%;
-        }
-        .hero-greeting {
-          font-size: 13px;
-          color: rgba(255,255,255,0.8);
-          letter-spacing: 2px;
-          text-transform: uppercase;
-          margin-bottom: 10px;
-        }
-        .hero-title {
-          font-family: 'DM Serif Display', serif;
-          font-size: 32px;
-          color: #ffffff;
-          line-height: 1.2;
-        }
-
-        /* ── Body content ── */
-        .body {
-          padding: 40px 40px 36px;
-        }
-
-        .intro {
-          font-size: 15.5px;
-          color: #555;
-          line-height: 1.75;
-          margin-bottom: 32px;
-        }
-
-        /* ── Code block ── */
-        .code-label {
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 2px;
-          text-transform: uppercase;
-          color: #FF6321;
-          margin-bottom: 12px;
-        }
-        .code-box {
-          background: #fff8f5;
-          border: 2px dashed #ffc4a8;
-          border-radius: 14px;
-          padding: 24px 20px;
-          text-align: center;
-          margin-bottom: 28px;
-        }
-        .code-value {
-          font-family: 'Courier New', Courier, monospace;
-          font-size: 40px;
-          font-weight: 800;
-          color: #FF6321;
-          letter-spacing: 10px;
-        }
-        .code-expiry {
-          font-size: 12px;
-          color: #b0a098;
-          margin-top: 10px;
-        }
-
-        /* ── Action text ── */
-        .action-text {
-          font-size: 15px;
-          color: #666;
-          line-height: 1.7;
-          margin-bottom: 36px;
-        }
-
-        /* ── Divider ── */
-        .divider {
-          border: none;
-          border-top: 1px solid #f0ede8;
-          margin: 0 0 28px;
-        }
-
-        /* ── Regards block ── */
-        .regards {
-          font-size: 15px;
-          color: #555;
-          line-height: 1.8;
-        }
-        .regards .sign-off {
-          margin-bottom: 4px;
-        }
-        .regards .team-name {
-          font-weight: 700;
-          color: #FF6321;
-          font-size: 16px;
-        }
-        .regards .team-sub {
-          font-size: 13px;
-          color: #a08e80;
-        }
-
-        /* ── Security note ── */
-        .security {
-          background: #fafaf9;
-          border-left: 3px solid #ffc4a8;
-          border-radius: 0 8px 8px 0;
-          padding: 14px 18px;
-          margin-top: 32px;
-          font-size: 13px;
-          color: #a08e80;
+          padding: 40px 20px;
           line-height: 1.6;
         }
 
-        /* ── Footer ── */
-        .footer {
-          padding: 24px 40px;
-          text-align: center;
-          font-size: 12px;
-          color: #c4b8b0;
-          border-top: 1px solid #f0ede8;
-          line-height: 1.8;
+        .wrapper {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 16px;
+          overflow: hidden;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.05);
         }
+
+        .header {
+          background: #FF6321;
+          padding: 40px 40px;
+          text-align: center;
+          color: #ffffff;
+        }
+
+        .header h1 {
+          font-family: 'DM Serif Display', serif;
+          font-size: 28px;
+          margin-bottom: 8px;
+        }
+
+        .content {
+          padding: 40px;
+        }
+
+        .greeting {
+          font-size: 20px;
+          font-weight: 600;
+          color: #1a1a1a;
+          margin-bottom: 16px;
+        }
+
+        .message {
+          font-size: 16px;
+          color: #4a4a4a;
+          margin-bottom: 32px;
+        }
+
+        .code-container {
+          background: #fff5f0;
+          border: 2px solid #ffccb3;
+          border-radius: 12px;
+          padding: 24px;
+          text-align: center;
+          margin-bottom: 32px;
+        }
+
+        .code-label {
+          font-size: 14px;
+          font-weight: 600;
+          color: #FF6321;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          margin-bottom: 12px;
+        }
+
+        .code-value {
+          font-family: 'Courier New', Courier, monospace;
+          font-size: 36px;
+          font-weight: 700;
+          color: #FF6321;
+          letter-spacing: 8px;
+        }
+
+        .button {
+          display: inline-block;
+          background: #FF6321;
+          color: #ffffff !important;
+          padding: 16px 32px;
+          border-radius: 12px;
+          text-decoration: none;
+          font-weight: 600;
+          font-size: 16px;
+          text-align: center;
+          transition: background 0.2s;
+          margin-bottom: 32px;
+        }
+
+        .footer {
+          padding: 32px 40px;
+          background: #fdfdfd;
+          border-top: 1px solid #f0f0f0;
+          text-align: center;
+          font-size: 13px;
+          color: #888888;
+        }
+
         .footer a {
           color: #FF6321;
           text-decoration: none;
@@ -197,59 +120,198 @@ export const getEmailTemplate = (
     </head>
     <body>
       <div class="wrapper">
-
-        <!-- Brand -->
-        <div class="brand">
-          <div class="brand-name">ErrandRunner</div>
-          <div class="brand-tagline">Your trusted errand companion</div>
+        <div class="header">
+          <h1>ErrandRunner</h1>
+          <p>Your trusted errand companion</p>
         </div>
-
-        <div class="card">
-
-          <!-- Hero -->
-          <div class="hero">
-            <div class="hero-greeting">Hello there 👋</div>
-            <div class="hero-title">${title}</div>
-          </div>
-
-          <!-- Body -->
-          <div class="body">
-
-            <p class="intro">${message}</p>
-
-            <!-- Verification Code -->
-            <div class="code-label">Your verification code</div>
-            <div class="code-box">
+        <div class="content">
+          <div class="greeting">Hello there!</div>
+          <div class="message">${message}</div>
+          
+          ${code ? `
+            <div class="code-container">
+              <div class="code-label">Verification Code</div>
               <div class="code-value">${code}</div>
-              <div class="code-expiry">⏱ This code expires in <strong>1 hour</strong></div>
             </div>
+          ` : ''}
 
-            <p class="action-text">${actionText}</p>
-
-            <hr class="divider">
-
-            <!-- Regards -->
-            <div class="regards">
-              <div class="sign-off">Warm regards,</div>
-              <div class="team-name">The ErrandRunner Team</div>
-              <div class="team-sub">Nairobi, Kenya 🇰🇪</div>
+          ${actionText ? `
+            <div style="text-align: center;">
+              <p style="margin-bottom: 16px; font-size: 14px; color: #666;">Click the button below to continue:</p>
+              ${actionText}
             </div>
+          ` : ''}
 
-            <!-- Security note -->
-            <div class="security">
-              🔒 <strong>Didn't request this?</strong> No worries — simply ignore this email.
-              If you have any concerns, please reach out to our support team right away.
-            </div>
+          <div style="margin-top: 32px; border-top: 1px solid #eee; padding-top: 24px;">
+            <p style="font-size: 14px; color: #555;">Warm regards,<br><strong>The ErrandRunner Team</strong></p>
+          </div>
+        </div>
+        <div class="footer">
+          &copy; ${new Date().getFullYear()} ErrandRunner. All rights reserved.<br>
+          Nairobi, Kenya 🇰🇪
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
 
+export const getVerificationEmailTemplate = (
+  name: string,
+  verificationLink: string,
+  description: string = "Thank you for joining ErrandRunner! To get started and ensure the security of your account, please verify your email address."
+) => {
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Verify Your Account</title>
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap');
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+          font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+          background-color: #fcfcfc;
+          color: #1a1a1a;
+          padding: 48px 24px;
+          line-height: 1.6;
+        }
+
+        .wrapper {
+          max-width: 600px;
+          margin: 0 auto;
+          background: #ffffff;
+          border-radius: 24px;
+          overflow: hidden;
+          box-shadow: 0 12px 48px rgba(0,0,0,0.08);
+          border: 1px solid #f0f0f0;
+        }
+
+        .header {
+          background: linear-gradient(135deg, #FF6321 0%, #e85210 100%);
+          padding: 60px 48px;
+          text-align: center;
+          color: #ffffff;
+        }
+
+        .header h1 {
+          font-family: 'DM Serif Display', serif;
+          font-size: 32px;
+          margin-bottom: 8px;
+          letter-spacing: -0.5px;
+        }
+
+        .header p {
+          font-size: 16px;
+          opacity: 0.9;
+          font-weight: 500;
+        }
+
+        .content {
+          padding: 48px;
+        }
+
+        .greeting {
+          font-size: 24px;
+          font-weight: 700;
+          color: #111111;
+          margin-bottom: 20px;
+          letter-spacing: -0.5px;
+        }
+
+        .message {
+          font-size: 16px;
+          color: #404040;
+          margin-bottom: 40px;
+        }
+
+        .btn-container {
+          text-align: center;
+          margin-bottom: 40px;
+        }
+
+        .button {
+          display: inline-block;
+          background: #FF6321;
+          color: #ffffff !important;
+          padding: 18px 40px;
+          border-radius: 16px;
+          text-decoration: none;
+          font-weight: 700;
+          font-size: 16px;
+          text-align: center;
+          box-shadow: 0 8px 24px rgba(255, 99, 33, 0.25);
+          transition: all 0.3s ease;
+        }
+
+        .secondary-text {
+          font-size: 14px;
+          color: #666666;
+          margin-bottom: 40px;
+          padding: 24px;
+          background: #f9f9f9;
+          border-radius: 16px;
+          border: 1px solid #f0f0f0;
+        }
+
+        .footer {
+          padding: 40px 48px;
+          background: #f8f8f8;
+          border-top: 1px solid #eeeeee;
+          text-align: center;
+          font-size: 13px;
+          color: #888888;
+        }
+
+        .footer a {
+          color: #FF6321;
+          text-decoration: none;
+          font-weight: 600;
+        }
+
+        .brand-footer {
+          margin-bottom: 12px;
+          font-weight: 700;
+          color: #1a1a1a;
+          font-size: 15px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <div class="header">
+          <h1>ErrandRunner</h1>
+          <p>Your trusted errand companion</p>
+        </div>
+        <div class="content">
+          <div class="greeting">Hi ${name}, welcome!</div>
+          <div class="message">
+            ${description}
+          </div>
+          
+          <div class="btn-container">
+            <a href="${verificationLink}" class="button">Verify My Account</a>
           </div>
 
-          <!-- Footer -->
-          <div class="footer">
-            &copy; ${new Date().getFullYear()} ErrandRunner App. All rights reserved.<br>
-            You're receiving this because an action was initiated on your account.<br>
-            <a href="#">Unsubscribe</a> &nbsp;·&nbsp; <a href="#">Privacy Policy</a>
+          <div class="secondary-text">
+            <strong>Link not working?</strong><br>
+            Copy and paste this URL into your browser:<br>
+            <span style="color: #FF6321; word-break: break-all;">${verificationLink}</span>
           </div>
 
+          <div style="border-top: 1px solid #f0f0f0; padding-top: 32px;">
+            <p style="font-size: 15px; color: #404040;">Warm regards,<br><strong style="color: #FF6321;">The ErrandRunner Team</strong></p>
+          </div>
+        </div>
+        <div class="footer">
+          <div class="brand-footer">ErrandRunner App</div>
+          &copy; ${new Date().getFullYear()} ErrandRunner. All rights reserved.<br>
+          Providing reliable errand services across Nairobi, Kenya 🇰🇪<br><br>
+          <a href="#">Privacy Policy</a> &nbsp;·&nbsp; <a href="#">Terms of Service</a>
         </div>
       </div>
     </body>
