@@ -2672,226 +2672,29 @@ export const firebaseService = {
 
   // Verification logic continues...
   generateEmailVerificationCode: async (userId: string, email: string) => {
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const emailLower = email.toLowerCase().trim();
-    
     try {
-      const insertPayload = {
-        phone_number: emailLower, // Store directly as email address in the phone_number field
-        code: code,
-        expires_at: new Date(Date.now() + 3600000).toISOString(), // 1 hour
-        created_at: new Date().toISOString(),
-        is_used: false
-      };
-
-      let insertSuccess = false;
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/db/otp_codes/insert`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            body: insertPayload
-          })
-        });
-        if (response.ok) {
-          insertSuccess = true;
-          console.log(`[Email OTP] Verification code inserted via proxy for ${emailLower}`);
-        }
-      } catch (err) {
-        console.warn(`[Email OTP] Proxy insert failed (will try direct SDK):`, err);
-      }
-
-      if (!insertSuccess) {
-        const { error } = await supabase
-          .from('otp_codes')
-          .insert(insertPayload);
-        if (error) throw error;
-        console.log(`[Email OTP] Verification code inserted via direct SDK for ${emailLower}`);
-      }
-
-      // ----------------------------------------------------
-      // RESILIENCY FALLBACK: Also store on the user profile
-      // ----------------------------------------------------
-      try {
-        await firebaseService.updateUserProfile(userId, { 
-          emailVerificationCode: code,
-          emailVerificationExpires: new Date(Date.now() + 3600000).toISOString() // 1 hour
-        } as any);
-        console.log(`[Email OTP] Also saved code to profiles table as fallback for ${userId}`);
-      } catch (fallbackErr) {
-        console.warn(`[Email OTP] Resiliency update profiles failed (non-blocking):`, fallbackErr);
-      }
-
-      // Using the new NotificationService as requested by the user
-      await NotificationService.sendVerificationEmail(email, code);
-      return { success: true };
+      console.log(`[AuthService] Requesting email verification proxy for ${userId}`);
+      return await NotificationService.sendEmailVerificationProxy(userId, email);
     } catch (error) {
       console.error('Error generating email verification code:', error);
       throw error;
     }
   },
 
-  verifyEmailCode: async (userId: string, code: string) => {
+  verifyEmailCode: async (userId: string, email: string, code: string) => {
     try {
-      if (!supabase) throw new Error("Supabase is not configured.");
+      if (!email) throw new Error("User email not found");
       
-      // Fetch user profile to get their email address
-      let row: any = null;
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/db/profiles/select`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            match: { id: userId }
-          })
-        });
-        if (response.ok) {
-          const resJson = await response.json();
-          row = resJson.data?.[0] || null;
-        }
-      } catch (err) {
-        console.warn(`[verifyEmailCode] Proxy profile select failed, falling back to direct SDK select:`, err);
-      }
-
-      if (!row) {
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
-        row = data;
-      }
-
-      if (!row) throw new Error("User not found");
+      console.log(`[AuthService] Verifying email code via proxy for ${userId}`);
+      await NotificationService.confirmEmailVerificationProxy(userId, email, code);
       
-      const user = mapSupabaseToProfile(row);
-      let emailLower = '';
-      if (user.email) {
-        emailLower = user.email.toLowerCase().trim();
-      } else if (row.email) {
-        emailLower = String(row.email).toLowerCase().trim();
-        user.email = row.email;
-      } else {
-        try {
-          const cachedProfileStr = localStorage.getItem('errand_runner_user_profile');
-          if (cachedProfileStr) {
-            const cachedProfile = JSON.parse(cachedProfileStr);
-            if (cachedProfile && cachedProfile.email) {
-              emailLower = String(cachedProfile.email).toLowerCase().trim();
-              user.email = cachedProfile.email;
-            }
-          }
-        } catch (e) {
-          console.warn('[verifyEmailCode] Failed to get email from localStorage cache:', e);
-        }
-      }
-
-      if (!emailLower) {
-        throw new Error("Could not find a valid email address associated with your account.");
-      }
-
-      const cleanedCode = String(code).trim();
-
-      // Retrieve the latest code record from otp_codes for this email (supports direct email and email: prefix matching)
-      let otpRow: any = null;
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/db/otp_codes/select`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            match: { 
-              is_used: false
-            },
-            or: `phone_number.eq.${emailLower},phone_number.eq.email:${emailLower}`
-          })
-        });
-        if (response.ok) {
-          const resJson = await response.json();
-          const rows = resJson.data || [];
-          if (rows.length > 0) {
-            rows.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-            otpRow = rows[0];
-          }
-        }
-      } catch (err) {
-        console.warn(`[verifyEmailCode] Proxy select from otp_codes failed, falling back to direct SDK:`, err);
-      }
-
-      if (!otpRow) {
-        const { data, error } = await supabase
-          .from('otp_codes')
-          .select('*')
-          .eq('is_used', false)
-          .or(`phone_number.eq.${emailLower},phone_number.eq.email:${emailLower}`)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (!error) {
-          otpRow = data;
-        }
+      // Update cache
+      if (firebaseService._currentUserCache && (firebaseService._currentUserCache.id === userId || (firebaseService._currentUserCache as any).uid === userId)) {
+        firebaseService._currentUserCache.emailVerified = true;
       }
       
-      let storedCode = otpRow ? String(otpRow.code).trim() : null;
-      let expiresAt = otpRow ? otpRow.expires_at : null;
-
-      // ----------------------------------------------------
-      // RESILIENCY FALLBACK: Check profile if database row not found
-      // ----------------------------------------------------
-      if (!storedCode && user.emailVerificationCode) {
-        storedCode = String(user.emailVerificationCode).trim();
-        expiresAt = user.emailVerificationExpires;
-        console.log(`[EmailVerification] Stored OTP not found in otp_codes, falling back to profile stored code: "${storedCode}"`);
-      }
-      
-      console.log(`[EmailVerification] Verifying email code for User ID: ${userId}, Email: ${user.email}. Provided code: "${cleanedCode}", Stored OTP: "${storedCode}"`);
-
-      const selectMasterCodes = ['123456', '000000', '111111'];
-      const isMasterCode = selectMasterCodes.includes(cleanedCode);
-      const isCodeMatch = storedCode === cleanedCode;
-
-      if (!isCodeMatch && !isMasterCode) {
-        throw new Error("Invalid verification code");
-      }
-
-      // Check expiry only for non-master code matches
-      if (!isMasterCode && expiresAt) {
-        if (new Date(expiresAt) < new Date()) {
-          throw new Error("Verification code has expired");
-        }
-      }
-
-      // Mark the OTP as used in otp_codes
-      if (otpRow) {
-        let markSuccess = false;
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/db/otp_codes/update`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              match: { id: otpRow.id },
-              body: { is_used: true }
-            })
-          });
-          if (response.ok) markSuccess = true;
-        } catch (err) {
-          console.warn(`[verifyEmailCode] Proxy update otp_codes failed, falling back to direct SDK:`, err);
-        }
-        
-        if (!markSuccess) {
-          await supabase.from('otp_codes').update({ is_used: true }).eq('id', otpRow.id);
-        }
-      }
-
-      // Mark user profile as emailVerified: true and clear fallback verification codes
-      await firebaseService.updateUserProfile(userId, { 
-        emailVerified: true,
-        emailVerificationCode: null,
-        emailVerificationExpires: null
-      } as any);
-      
-      console.log(`[EmailVerification] User email successfully verified for User ID: ${userId}`);
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error verifying email code:', error);
       throw error;
     }

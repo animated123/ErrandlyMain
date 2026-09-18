@@ -31,6 +31,45 @@ export const NotificationService = {
     }
   },
 
+  /**
+   * Dedicated endpoint for email verification that handles generation and persistence on the server.
+   */
+  sendEmailVerificationProxy: async (userId: string, email: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/email/verify/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, email })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || data.message || "Failed to send verification code");
+      }
+      return await response.json();
+    } catch (error: any) {
+      console.error('[NotificationService] Email proxy send error:', error);
+      throw error;
+    }
+  },
+
+  confirmEmailVerificationProxy: async (userId: string, email: string, code: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/email/verify/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, email, code })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || data.message || "Invalid verification code");
+      }
+      return await response.json();
+    } catch (error: any) {
+      console.error('[NotificationService] Email proxy confirm error:', error);
+      throw error;
+    }
+  },
+
   sendRunnerApplicationReceived: async (email: string, name: string) => {
     try {
       const message = `Hi ${name}, thank you for applying to be a runner at Errand Runner. We've received your application and our team is currently reviewing it. We will notify you once a decision is made.`;
