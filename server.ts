@@ -3676,7 +3676,7 @@ Please proceed with the task according to safety guidelines and update milestone
   });
 
   // --- Email Verification Endpoints ---
-  app.post("/api/email/verify/send", async (req, res) => {
+  app.post(["/api/email/verify/send", "/api/auth/send-verification-email"], async (req, res) => {
     try {
       const { email, userId } = req.body;
       if (!email) return res.status(400).json({ error: "Email address is required" });
@@ -3825,7 +3825,7 @@ Please proceed with the task according to safety guidelines and update milestone
     }
   });
 
-  app.post("/api/email/verify/confirm", async (req, res) => {
+  app.post(["/api/email/verify/confirm", "/api/auth/verify-email"], async (req, res) => {
     try {
       const { email, code, userId } = req.body;
       if (!email || !code) return res.status(400).json({ error: "Email and code are required" });
