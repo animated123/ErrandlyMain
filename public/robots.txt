@@ -1,0 +1,13 @@
+# robots.txt for ErrandRunner
+# Kenya's Premier On-Demand Errand, Shopping & Logistics Network
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /connectionadmin
+Disallow: /dbconfig
+Disallow: /reset-password
+
+# Search Engine Sitemaps
+Sitemap: https://errandly.site/sitemap.xml
+Sitemap: /sitemap.xml

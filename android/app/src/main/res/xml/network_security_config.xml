@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">gateway.errandly.site</domain>
+        <domain includeSubdomains="true">errandly.site</domain>
+        <domain includeSubdomains="true">ais-dev-sfwiwu2qvvdcyzjabft4um-22650132817.europe-west1.run.app</domain>
+        <domain includeSubdomains="true">action-backend-api-798918228047.us-west1.run.app</domain>
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>
