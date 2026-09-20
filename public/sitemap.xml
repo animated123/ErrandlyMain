@@ -1,32 +1,105 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!-- Primary Homepage & Errand Coordination Network -->
   <url>
     <loc>https://errandly.site/</loc>
+    <lastmod>2026-09-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
+
+  <!-- Services & Errand Portfolio -->
   <url>
-    <loc>https://errandly.site/application-runner</loc>
+    <loc>https://errandly.site/services</loc>
+    <lastmod>2026-09-20</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
+
+  <!-- Transparent Pricing Calculator & Standard Rates -->
+  <url>
+    <loc>https://errandly.site/pricing</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Network Trust, Vetting & Safety Standards -->
+  <url>
+    <loc>https://errandly.site/standards</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Become a Runner Partner Guide & Earnings -->
+  <url>
+    <loc>https://errandly.site/runners</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Runner Official Onboarding Application Form -->
+  <url>
+    <loc>https://errandly.site/application-runner</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Help Center, Knowledge Base & FAQ -->
+  <url>
+    <loc>https://errandly.site/help</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Pre-Priced Services Catalog Menu -->
+  <url>
+    <loc>https://errandly.site/menu</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Post an Errand (Client Portal) -->
+  <url>
+    <loc>https://errandly.site/post</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Find Open Errands (Runner Marketplace) -->
+  <url>
+    <loc>https://errandly.site/find</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Live Logistics & Errands Map -->
+  <url>
+    <loc>https://errandly.site/map</loc>
+    <lastmod>2026-09-20</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Legal: Privacy Policy -->
   <url>
     <loc>https://errandly.site/privacy</loc>
+    <lastmod>2026-09-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
-  <url>
-    <loc>https://errandly.site/privacy-policy</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-  </url>
+
+  <!-- Legal: Terms of Service -->
   <url>
     <loc>https://errandly.site/terms</loc>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-  </url>
-  <url>
-    <loc>https://errandly.site/terms-of-service</loc>
+    <lastmod>2026-09-20</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>

@@ -64,8 +64,13 @@ import {
   FAQModal, PrivacyPolicyModal, TermsOfServiceModal 
 } from './src/components/LegalModals';
 import { 
-  HelpPage
+  HelpPage as LegacyHelpView
 } from './src/components/InfoPages';
+import { ServicesPage } from './src/pages/ServicesPage';
+import { PricingPage } from './src/pages/PricingPage';
+import { StandardsPage } from './src/pages/StandardsPage';
+import { HelpPage } from './src/pages/HelpPage';
+import { PartnerGuidePage } from './src/pages/PartnerGuidePage';
 import { LandingPage } from './src/components/LandingPage';
 import { PublicLegalPage } from './src/components/PublicLegalPage';
 import RunnerApplicationPage from './src/components/RunnerApplicationPage';
@@ -155,8 +160,22 @@ export default function App() {
     const pageParam = params.get('page');
     if (pageParam === 'privacy' || pageParam === 'privacy-policy') return '/privacy';
     if (pageParam === 'terms' || pageParam === 'terms-of-service') return '/terms';
+    if (pageParam === 'services') return '/services';
+    if (pageParam === 'pricing') return '/pricing';
+    if (pageParam === 'standards') return '/standards';
+    if (pageParam === 'help' || pageParam === 'support') return '/help';
+    if (pageParam === 'runners' || pageParam === 'partner') return '/runners';
+    if (pageParam === 'application-runner') return '/application-runner';
+
     if (window.location.hash === '#/privacy' || window.location.hash === '#privacy') return '/privacy';
     if (window.location.hash === '#/terms' || window.location.hash === '#terms') return '/terms';
+    if (window.location.hash === '#/services' || window.location.hash === '#services') return '/services';
+    if (window.location.hash === '#/pricing' || window.location.hash === '#pricing') return '/pricing';
+    if (window.location.hash === '#/standards' || window.location.hash === '#standards') return '/standards';
+    if (window.location.hash === '#/help' || window.location.hash === '#help') return '/help';
+    if (window.location.hash === '#/runners' || window.location.hash === '#runners') return '/runners';
+    if (window.location.hash === '#/application-runner' || window.location.hash === '#application-runner') return '/application-runner';
+
     const rawPath = window.location.pathname || '/';
     if (rawPath.length > 1 && rawPath.endsWith('/')) {
       return rawPath.replace(/\/+$/, '');
@@ -182,7 +201,28 @@ export default function App() {
     const cleanPath = path.length > 1 && path.endsWith('/') ? path.replace(/\/+$/, '') : path;
     window.history.pushState({}, '', cleanPath);
     setCurrentPath(cleanPath);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  useEffect(() => {
+    if (currentPath === '/post' || currentPath === '/create') {
+      _setActiveTab('create');
+    } else if (currentPath === '/find') {
+      _setActiveTab('find');
+    } else if (currentPath === '/map') {
+      _setActiveTab('live-map');
+    } else if (currentPath === '/menu') {
+      _setActiveTab('menu');
+    } else if (currentPath === '/errands' || currentPath === '/my-errands') {
+      _setActiveTab('my-errands');
+    } else if (currentPath === '/support') {
+      _setActiveTab('support-chat');
+    } else if (currentPath === '/profile') {
+      _setActiveTab('active');
+    } else if (currentPath === '/' || currentPath === '/dashboard') {
+      _setActiveTab('dashboard');
+    }
+  }, [currentPath]);
   
   const setActiveTab = (tab: string) => {
     if (user && (tab === 'create' || tab === 'find')) {
@@ -194,6 +234,21 @@ export default function App() {
       }
     }
     _setActiveTab(tab);
+    const tabToPath: Record<string, string> = {
+      'dashboard': '/',
+      'my-errands': '/errands',
+      'create': '/post',
+      'find': '/find',
+      'live-map': '/map',
+      'active': '/profile',
+      'support-chat': '/support',
+      'menu': '/menu',
+      'admin': '/admin'
+    };
+    if (tabToPath[tab] && window.location.pathname !== tabToPath[tab]) {
+      window.history.pushState({}, '', tabToPath[tab]);
+      setCurrentPath(tabToPath[tab]);
+    }
   };
 
   // Getting Started Guided Tour state for first-time and returning users
@@ -1046,6 +1101,23 @@ export default function App() {
     );
   }
 
+  const renderGlobalAuthModal = () => (
+    <AuthModal 
+      isOpen={showAuthModal} 
+      onClose={() => setShowAuthModal(false)} 
+      onAuthSuccess={(u) => {
+        setUser(u);
+        setShowAuthModal(false);
+        if (postLoginRedirectPath) {
+          navigateTo(postLoginRedirectPath);
+          setPostLoginRedirectPath(null);
+        }
+      }} 
+      initialMode={authModalMode}
+      logoUrl={appSettings.logoUrl}
+    />
+  );
+
   if (currentPath === '/privacy' || currentPath === '/privacy-policy') {
     return (
       <ErrorBoundary>
@@ -1055,6 +1127,7 @@ export default function App() {
           onBackToHome={() => navigateTo('/')}
           onNavigateTo={(p) => navigateTo(p)}
         />
+        {renderGlobalAuthModal()}
       </ErrorBoundary>
     );
   }
@@ -1068,6 +1141,7 @@ export default function App() {
           onBackToHome={() => navigateTo('/')}
           onNavigateTo={(p) => navigateTo(p)}
         />
+        {renderGlobalAuthModal()}
       </ErrorBoundary>
     );
   }
@@ -1080,6 +1154,102 @@ export default function App() {
           appSettings={appSettings} 
           onBackToHome={() => navigateTo('/')} 
         />
+        {renderGlobalAuthModal()}
+      </ErrorBoundary>
+    );
+  }
+
+  if (currentPath === '/services') {
+    return (
+      <ErrorBoundary>
+        <ServicesPage 
+          currentPath={currentPath}
+          onNavigateTo={(p) => navigateTo(p)}
+          user={user}
+          appSettings={appSettings}
+          isDarkMode={isDarkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
+          onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
+          onLogout={() => firebaseService.logout().then(() => setUser(null))}
+        />
+        {renderGlobalAuthModal()}
+      </ErrorBoundary>
+    );
+  }
+
+  if (currentPath === '/pricing') {
+    return (
+      <ErrorBoundary>
+        <PricingPage 
+          currentPath={currentPath}
+          onNavigateTo={(p) => navigateTo(p)}
+          user={user}
+          appSettings={appSettings}
+          isDarkMode={isDarkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
+          onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
+          onLogout={() => firebaseService.logout().then(() => setUser(null))}
+        />
+        {renderGlobalAuthModal()}
+      </ErrorBoundary>
+    );
+  }
+
+  if (currentPath === '/standards') {
+    return (
+      <ErrorBoundary>
+        <StandardsPage 
+          currentPath={currentPath}
+          onNavigateTo={(p) => navigateTo(p)}
+          user={user}
+          appSettings={appSettings}
+          isDarkMode={isDarkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
+          onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
+          onLogout={() => firebaseService.logout().then(() => setUser(null))}
+        />
+        {renderGlobalAuthModal()}
+      </ErrorBoundary>
+    );
+  }
+
+  if (currentPath === '/help') {
+    return (
+      <ErrorBoundary>
+        <HelpPage 
+          currentPath={currentPath}
+          onNavigateTo={(p) => navigateTo(p)}
+          user={user}
+          appSettings={appSettings}
+          isDarkMode={isDarkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
+          onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
+          onLogout={() => firebaseService.logout().then(() => setUser(null))}
+        />
+        {renderGlobalAuthModal()}
+      </ErrorBoundary>
+    );
+  }
+
+  if (currentPath === '/runners' || currentPath === '/become-a-partner') {
+    return (
+      <ErrorBoundary>
+        <PartnerGuidePage 
+          currentPath={currentPath}
+          onNavigateTo={(p) => navigateTo(p)}
+          user={user}
+          appSettings={appSettings}
+          isDarkMode={isDarkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
+          onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
+          onLogout={() => firebaseService.logout().then(() => setUser(null))}
+        />
+        {renderGlobalAuthModal()}
       </ErrorBoundary>
     );
   }
@@ -1088,6 +1258,23 @@ export default function App() {
     const clean = (path || '/').replace(/\/+$/, '') || '/';
     return (
       clean === '/' ||
+      clean === '/services' ||
+      clean === '/pricing' ||
+      clean === '/standards' ||
+      clean === '/help' ||
+      clean === '/runners' ||
+      clean === '/become-a-partner' ||
+      clean === '/menu' ||
+      clean === '/post' ||
+      clean === '/create' ||
+      clean === '/find' ||
+      clean === '/map' ||
+      clean === '/errands' ||
+      clean === '/my-errands' ||
+      clean === '/profile' ||
+      clean === '/support' ||
+      clean === '/dashboard' ||
+      clean === '/admin' ||
       clean === '/connectionadmin' ||
       clean.startsWith('/connectionadmin') ||
       clean === '/dbconfig' ||
@@ -1109,6 +1296,7 @@ export default function App() {
           onBackToHome={() => navigateTo('/')} 
           onNavigateTo={(p) => navigateTo(p)} 
         />
+        {renderGlobalAuthModal()}
       </ErrorBoundary>
     );
   }
@@ -2716,7 +2904,7 @@ export default function App() {
 
                 {profileView === 'help' && user && (
                   <div className="animate-in slide-in-from-right-4 duration-300">
-                    <HelpPage 
+                    <LegacyHelpView 
                       onBack={() => setProfileView('main')} 
                       user={{
                         id: user.id,

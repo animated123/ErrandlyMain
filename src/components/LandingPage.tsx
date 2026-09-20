@@ -338,20 +338,21 @@ export const LandingPage: React.FC<LandingPageProps> = React.memo(({
         <div className="hidden lg:flex items-center gap-6 xl:gap-8">
           <div className="flex items-center gap-4 xl:gap-6">
             {[
-              { label: 'Services', id: 'services', page: 'services' },
-              { label: 'Elite Pricing', id: 'pricing', page: 'pricing' },
-              { label: 'Network Standards', id: 'about', page: 'standards' },
-              { label: 'Help', id: 'footer', page: 'help' },
-              { label: 'Become a Partner', id: 'pricing', highlight: true, page: 'partner' },
+              { label: 'Home', path: '/' },
+              { label: 'Services', path: '/services' },
+              { label: 'Elite Pricing', path: '/pricing' },
+              { label: 'Network Standards', path: '/standards' },
+              { label: 'Help', path: '/help' },
+              { label: 'Become a Partner', path: '/runners', highlight: true },
             ].map(item => (
-              <button 
+              <a 
                 key={item.label} 
-                onClick={() => {
-                  if (item.page) {
-                    setActiveInfoPage(item.page as any);
+                href={item.path}
+                onClick={(e) => {
+                  if (onNavigateTo) {
+                    e.preventDefault();
+                    onNavigateTo(item.path);
                     window.scrollTo({ top: 0, behavior: 'smooth' });
-                  } else {
-                    document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth' });
                   }
                 }}
                 className={`text-[9px] xl:text-[10px] font-black uppercase tracking-widest transition-colors cursor-pointer ${
@@ -359,7 +360,7 @@ export const LandingPage: React.FC<LandingPageProps> = React.memo(({
                 }`}
               >
                 {item.label}
-              </button>
+              </a>
             ))}
           </div>
           <div className="flex items-center gap-2.5">
@@ -401,21 +402,22 @@ export const LandingPage: React.FC<LandingPageProps> = React.memo(({
             >
               <div className="flex flex-col gap-4 mb-6">
                 {[
-                  { label: 'Services', id: 'services', page: 'services' },
-                  { label: 'Elite Pricing', id: 'pricing', page: 'pricing' },
-                  { label: 'Network Standards', id: 'about', page: 'standards' },
-                  { label: 'Help', id: 'footer', page: 'help' },
-                  { label: 'Become a Partner', id: 'pricing', highlight: true, page: 'partner' },
+                  { label: 'Home', path: '/' },
+                  { label: 'Services', path: '/services' },
+                  { label: 'Elite Pricing', path: '/pricing' },
+                  { label: 'Network Standards', path: '/standards' },
+                  { label: 'Help & FAQ', path: '/help' },
+                  { label: 'Become a Partner', path: '/runners', highlight: true },
                 ].map(item => (
-                  <button 
+                  <a 
                     key={item.label} 
-                    onClick={() => {
+                    href={item.path}
+                    onClick={(e) => {
                       setMobileMenuOpen(false);
-                      if (item.page) {
-                        setActiveInfoPage(item.page as any);
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo(item.path);
                         window.scrollTo({ top: 0, behavior: 'smooth' });
-                      } else {
-                        document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth' });
                       }
                     }}
                     className={`text-left py-2 text-[11px] font-black uppercase tracking-widest border-b border-slate-50 dark:border-slate-900/50 transition-colors ${
@@ -423,7 +425,7 @@ export const LandingPage: React.FC<LandingPageProps> = React.memo(({
                     }`}
                   >
                     {item.label}
-                  </button>
+                  </a>
                 ))}
               </div>
               <div className="flex flex-col gap-3">
@@ -929,17 +931,95 @@ export const LandingPage: React.FC<LandingPageProps> = React.memo(({
             <div>
               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-[#0a2e5c] dark:text-white mb-8">Network</h4>
               <ul className="space-y-4 text-sm font-bold text-slate-500">
-                <li onClick={() => setActiveInfoPage('standards')} className="hover:text-primary transition-colors cursor-pointer">Network Standards</li>
-                <li onClick={() => setActiveInfoPage('services')} className="hover:text-primary transition-colors cursor-pointer">Our Services</li>
-                <li onClick={() => setActiveInfoPage('pricing')} className="hover:text-primary transition-colors cursor-pointer">Elite Pricing</li>
-                <li onClick={() => setActiveInfoPage('partner')} className="hover:text-primary transition-colors cursor-pointer">Become a Partner</li>
+                <li>
+                  <a 
+                    href="/standards" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/standards');
+                      }
+                    }} 
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                  >
+                    Network Standards
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="/services" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/services');
+                      }
+                    }} 
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                  >
+                    Our Services
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="/pricing" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/pricing');
+                      }
+                    }} 
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                  >
+                    Elite Pricing
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="/runners" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/runners');
+                      }
+                    }} 
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                  >
+                    Become a Partner
+                  </a>
+                </li>
               </ul>
             </div>
             <div>
               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-[#0a2e5c] dark:text-white mb-8">Help & Support</h4>
               <ul className="space-y-4 text-sm font-bold text-slate-500">
-                <li onClick={() => setActiveInfoPage('help')} className="hover:text-primary transition-colors cursor-pointer">Help Center</li>
-                <li onClick={() => setActiveInfoPage('help')} className="hover:text-primary transition-colors cursor-pointer">Contact Us</li>
+                <li>
+                  <a 
+                    href="/help" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/help');
+                      }
+                    }} 
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                  >
+                    Help Center & FAQ
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="/help" 
+                    onClick={(e) => {
+                      if (onNavigateTo) {
+                        e.preventDefault();
+                        onNavigateTo('/help');
+                      }
+                    }} 
+                    className="hover:text-primary transition-colors cursor-pointer block"
+                  >
+                    Contact Us
+                  </a>
+                </li>
                 <li>
                   <a 
                     href="/terms" 
