@@ -148,7 +148,6 @@ export interface Errand {
   numberOfHousesViewed?: number;
   runnerTasks?: string[];
   propertyType?: string;
-  vibe?: string;
   aiEstimatedScale?: number;
   aiEstimationBreakdown?: {
     baseFee: number;

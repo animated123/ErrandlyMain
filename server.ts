@@ -646,6 +646,7 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
         requester_id TEXT,
         requester_name TEXT,
         requester_phone TEXT,
+        requester_email TEXT,
         requester_is_verified BOOLEAN,
         runner_id TEXT,
         runner_name TEXT,
@@ -656,7 +657,7 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
         dropoff_location TEXT,
         dropoff_coordinates JSONB,
         deadline TEXT,
-        location TEXT,
+        location JSONB,
         dispute_reason TEXT,
         bids JSONB DEFAULT '[]'::jsonb,
         checklist JSONB DEFAULT '[]'::jsonb,
@@ -675,6 +676,7 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS runner_is_verified BOOLEAN;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS requester_name TEXT;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS requester_phone TEXT;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS requester_email TEXT;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS requester_is_verified BOOLEAN;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS pickup_location TEXT;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS pickup_coordinates JSONB;
@@ -684,6 +686,7 @@ async function ensurePostgreSqlSchema(targetPool: any = primaryPgPool || localPg
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS accepted_price NUMERIC;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS checklist JSONB DEFAULT '[]'::jsonb;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS bids JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS location JSONB;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
       ALTER TABLE public.errands ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
     `);
@@ -3426,14 +3429,14 @@ Please proceed with the task according to safety guidelines and update milestone
   app.post("/api/sms/send", async (req, res) => {
     const { recipient, message, phone } = req.body;
     const targetPhone = normalizePhone(phone || recipient);
-    const token = process.env.TEXTSASA_API_TOKEN || process.env.TALKSASA_API_TOKEN;
-    let rawEndpoint = (process.env.TEXTSASA_API_ENDPOINT || process.env.TALKSASA_API_ENDPOINT || "https://api.textsasa.com/api/v1/").trim();
+    const token = process.env.TALKSASA_API_TOKEN || process.env.TEXTSASA_API_TOKEN;
+    let rawEndpoint = (process.env.TALKSASA_API_ENDPOINT || process.env.TEXTSASA_API_ENDPOINT || "https://bulksms.talksasa.com/api/v3/").trim();
     rawEndpoint = rawEndpoint.replace(/^(POST|GET|PUT|DELETE)\s+/i, '').trim();
     if (!rawEndpoint.startsWith('http://') && !rawEndpoint.startsWith('https://')) {
       rawEndpoint = `https://${rawEndpoint}`;
     }
     const endpoint = rawEndpoint;
-    const senderId = process.env.TEXTSASA_SENDER_ID || process.env.TALKSASA_SENDER_ID || "ErrandRun";
+    const senderId = process.env.TALKSASA_SENDER_ID || process.env.TEXTSASA_SENDER_ID || "Errandly";
 
     if (!token) {
       return res.status(500).json({ error: "SMS API token is not configured" });
@@ -3505,7 +3508,7 @@ Please proceed with the task according to safety guidelines and update milestone
           .eq('phone', targetPhone)
           .maybeSingle();
 
-        if (existingProfile && existingProfile.id !== userId) {
+        if (existingProfile && userId && existingProfile.id !== userId) {
           console.warn(`[OTP] REJECTED: Phone ${targetPhone} already registered to user ${existingProfile.id} (Supabase)`);
           return res.status(400).json({ 
             error: "PHONE_ALREADY_EXISTS", 
@@ -3546,14 +3549,14 @@ Please proceed with the task according to safety guidelines and update milestone
       console.warn(`[OTP] Supabase Persistence failed, using memory cache:`, dbErr.message);
     }
 
-    const token = process.env.TEXTSASA_API_TOKEN || process.env.TALKSASA_API_TOKEN;
-    let rawEndpoint = (process.env.TEXTSASA_API_ENDPOINT || process.env.TALKSASA_API_ENDPOINT || "https://api.textsasa.com/api/v1/").trim();
+    const token = process.env.TALKSASA_API_TOKEN || process.env.TEXTSASA_API_TOKEN;
+    let rawEndpoint = (process.env.TALKSASA_API_ENDPOINT || process.env.TEXTSASA_API_ENDPOINT || "https://bulksms.talksasa.com/api/v3/").trim();
     rawEndpoint = rawEndpoint.replace(/^(POST|GET|PUT|DELETE)\s+/i, '').trim();
     if (!rawEndpoint.startsWith('http://') && !rawEndpoint.startsWith('https://')) {
       rawEndpoint = `https://${rawEndpoint}`;
     }
     const endpoint = rawEndpoint;
-    const senderId = process.env.TEXTSASA_SENDER_ID || process.env.TALKSASA_SENDER_ID || "ErrandRun";
+    const senderId = process.env.TALKSASA_SENDER_ID || process.env.TEXTSASA_SENDER_ID || "Errandly";
 
     let smsSent = false;
     let smsErrorMessage = "";

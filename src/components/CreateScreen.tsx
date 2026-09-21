@@ -15,6 +15,7 @@ import {
   Home, 
   Package, 
   Map as MapIcon, 
+  MapPinned,
   X, 
   Target, 
   Navigation, 
@@ -28,7 +29,9 @@ import {
   Bookmark, 
   RotateCcw,
   Layers,
-  ArrowRight
+  ArrowRight,
+  PlusCircle,
+  DollarSign
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import GoogleMapRoutePicker from './GoogleMapRoutePicker';
@@ -363,117 +366,121 @@ export default function CreateScreen({
   const missingNotice = getMissingFieldNotice();
 
   return (
-    <div className="max-w-4xl mx-auto px-3 sm:px-6 py-4 space-y-6 pb-28">
-      {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-            Post an Errand
-          </h1>
-          <p className="text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Connect with verified runners across Nairobi. Quick dispatch, live updates & email receipt.
-          </p>
-        </div>
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 md:px-8 py-8 space-y-12 pb-32">
+      {/* Executive Header */}
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h1 className="text-3xl md:text-4xl font-black text-slate-900 dark:text-white tracking-tight font-display">
+              Post an Errand
+            </h1>
+            <p className="text-sm font-medium text-slate-500 dark:text-slate-400 max-w-xl">
+              Connect with verified local runners for custom deliveries, shopping, laundry, and specialized town services across Nairobi.
+            </p>
+          </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          {drafts.length > 0 && (
+          <div className="flex items-center gap-2">
+            {drafts.length > 0 && (
+              <button 
+                type="button"
+                onClick={() => setShowDrafts(!showDrafts)}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+              >
+                <Bookmark size={14} className="text-[#2891e2]" />
+                Drafts ({drafts.length})
+              </button>
+            )}
+
             <button 
               type="button"
-              onClick={() => setShowDrafts(!showDrafts)}
-              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+              onClick={handleSaveDraft}
+              className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
             >
-              <Bookmark size={14} className="text-[#2891e2]" />
-              Drafts ({drafts.length})
+              <Save size={14} />
+              Save
             </button>
-          )}
 
-          <button 
-            type="button"
-            onClick={handleSaveDraft}
-            className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
-            title="Save draft"
-          >
-            Save Draft
-          </button>
-
-          <button 
-            type="button"
-            onClick={handleResetForm}
-            className="px-2.5 py-1.5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 rounded-lg text-xs font-medium transition-all flex items-center gap-1"
-            title="Reset form"
-          >
-            <RotateCcw size={13} />
-            Reset
-          </button>
+            <button 
+              type="button"
+              onClick={handleResetForm}
+              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+              title="Reset Form"
+            >
+              <RotateCcw size={18} />
+            </button>
+          </div>
         </div>
+
+        {/* Form Error Banner */}
+        {errors?.create && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-xl flex items-start gap-3 text-rose-700 dark:text-rose-300"
+          >
+            <AlertCircle size={18} className="shrink-0 mt-0.5" />
+            <div className="text-sm font-semibold">{errors.create}</div>
+          </motion.div>
+        )}
       </div>
 
-      {/* Saved Drafts Drawer */}
-      {showDrafts && drafts.length > 0 && (
-        <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Saved Errand Drafts</span>
-            <button 
-              type="button" 
-              onClick={() => setShowDrafts(false)}
-              className="text-xs text-slate-400 hover:text-slate-600"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-            {drafts.map((d) => (
-              <div 
-                key={d.id} 
-                onClick={() => handleLoadDraft(d)}
-                className="p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-[#2891e2] rounded-lg cursor-pointer transition-all flex items-start justify-between group"
-              >
-                <div className="min-w-0 pr-2">
-                  <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                    {d.form?.title || d.form?.category || 'Untitled Draft'}
-                  </p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
-                    {new Date(d.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                </div>
-                <button 
-                  type="button" 
-                  onClick={(e) => handleDeleteDraft(d.id, e)}
-                  className="text-slate-400 hover:text-rose-500 transition-colors p-1"
-                >
-                  <Trash2 size={13} />
-                </button>
+      {/* Saved Drafts List */}
+      <AnimatePresence>
+        {showDrafts && drafts.length > 0 && (
+          <motion.div 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Your Saved Drafts</h3>
+                <button onClick={() => setShowDrafts(false)} className="text-slate-400 hover:text-slate-600"><X size={16} /></button>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Form Error Banner */}
-      {errors?.create && (
-        <div className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-xl flex items-start gap-3 text-rose-700 dark:text-rose-300">
-          <AlertCircle size={18} className="shrink-0 mt-0.5" />
-          <div className="text-sm font-semibold">{errors.create}</div>
-        </div>
-      )}
-
-      <form onSubmit={postErrand} className="space-y-6">
-        
-        {/* ===================================================================
-            SECTION 1: CATEGORY SELECTION (OPEN & PROPORTIONAL)
-            =================================================================== */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-[#0a2e5c] text-white text-xs font-bold flex items-center justify-center">1</span>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Choose Service Category</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {drafts.map((d) => (
+                  <div 
+                    key={d.id} 
+                    onClick={() => handleLoadDraft(d)}
+                    className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-[#2891e2] rounded-xl cursor-pointer transition-all flex items-start justify-between group shadow-sm"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                        {d.form?.title || d.form?.category || 'Untitled Draft'}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-1 uppercase font-bold tracking-tight">
+                        {new Date(d.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    <button 
+                      type="button" 
+                      onClick={(e) => handleDeleteDraft(d.id, e)}
+                      className="text-slate-400 hover:text-rose-500 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-            <span className="text-xs font-semibold text-slate-400">
-              Selected: <strong className="text-slate-700 dark:text-slate-200">{errandForm.category}</strong>
-            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <form onSubmit={postErrand} className="space-y-16">
+        
+        {/* Step 1: Service Category */}
+        <div className="space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-black flex items-center justify-center">1</div>
+            <div>
+              <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Choose Category</h2>
+              <p className="text-xs font-medium text-slate-500">What kind of task do you need help with?</p>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
             {categories.map((cat) => {
               const Icon = cat.icon;
               const isSelected = errandForm.category === cat.id;
@@ -482,778 +489,603 @@ export default function CreateScreen({
                   key={cat.id}
                   type="button"
                   onClick={() => setErrandForm({ ...errandForm, category: cat.id })}
-                  className={`p-3.5 rounded-xl border text-left transition-all flex flex-col justify-between gap-2.5 relative group ${
+                  className={`p-5 rounded-2xl border-2 text-left transition-all flex flex-col gap-4 relative group ${
                     isSelected 
-                      ? 'border-[#2891e2] bg-sky-50/50 dark:bg-sky-950/20 ring-1 ring-[#2891e2]' 
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'
+                      ? 'border-[#2891e2] bg-[#2891e2]/5 dark:bg-[#2891e2]/10 shadow-md shadow-[#2891e2]/10' 
+                      : 'border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-200 dark:hover:border-slate-700'
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${cat.color}`}>
-                      <Icon size={18} />
-                    </div>
-                    {isSelected && (
-                      <div className="w-4 h-4 rounded-full bg-[#2891e2] text-white flex items-center justify-center">
-                        <Check size={11} strokeWidth={3} />
-                      </div>
-                    )}
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${cat.color} ${isSelected ? 'scale-110' : ''} transition-transform`}>
+                    <Icon size={24} />
                   </div>
-                  <div>
-                    <p className={`text-xs font-bold leading-tight ${isSelected ? 'text-[#0a2e5c] dark:text-sky-300' : 'text-slate-800 dark:text-slate-200'}`}>
+                  <div className="space-y-1">
+                    <p className={`text-sm font-black leading-tight ${isSelected ? 'text-[#0a2e5c] dark:text-sky-300' : 'text-slate-800 dark:text-slate-200'}`}>
                       {cat.label}
                     </p>
-                    <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-1">
+                    <p className="text-[10px] font-medium text-slate-400 leading-relaxed">
                       {cat.desc}
                     </p>
                   </div>
+                  {isSelected && (
+                    <div className="absolute top-4 right-4 w-5 h-5 rounded-full bg-[#2891e2] text-white flex items-center justify-center shadow-lg">
+                      <Check size={12} strokeWidth={4} />
+                    </div>
+                  )}
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* ===================================================================
-            SECTION 2: TASK ESSENTIALS (TITLE, INSTRUCTIONS, URGENCY)
-            =================================================================== */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="w-6 h-6 rounded-full bg-[#0a2e5c] text-white text-xs font-bold flex items-center justify-center">2</span>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">Task Details</h2>
-          </div>
-
-          {/* Errand Title */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-              Task Title <span className="text-rose-500">*</span>
-            </label>
-            <input 
-              type="text"
-              value={errandForm.title || ''}
-              onChange={(e) => setErrandForm({ ...errandForm, title: e.target.value })}
-              placeholder="e.g. Pick and deliver laptop charger from Kilimani"
-              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-900 dark:text-white outline-none focus:border-[#2891e2] focus:ring-2 focus:ring-[#2891e2]/10 transition-all"
-            />
-            {/* Quick Title Chips */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <span className="text-[11px] font-medium text-slate-400">Suggestions:</span>
-              {getSuggestions().map((suggestion, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setErrandForm({ ...errandForm, title: suggestion })}
-                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-md text-[11px] font-medium transition-colors"
-                >
-                  {suggestion}
-                </button>
-              ))}
+        {/* Step 2: Task Details */}
+        <div className="space-y-8">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-black flex items-center justify-center">2</div>
+            <div>
+              <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Task Essentials</h2>
+              <p className="text-xs font-medium text-slate-500">Provide clear instructions for your runner.</p>
             </div>
           </div>
 
-          {/* Description */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-              Instructions & Notes
-            </label>
-            <textarea 
-              value={errandForm.description || ''}
-              onChange={(e) => setErrandForm({ ...errandForm, description: e.target.value })}
-              placeholder="Give details: gate codes, contact person, specific brand requirements, elevator status..."
-              rows={3}
-              className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-900 dark:text-white outline-none focus:border-[#2891e2] focus:ring-2 focus:ring-[#2891e2]/10 transition-all resize-none"
-            />
-          </div>
+          <div className="space-y-6">
+            {/* Title & Description */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Task Title</label>
+                  <input 
+                    type="text"
+                    value={errandForm.title || ''}
+                    onChange={(e) => setErrandForm({ ...errandForm, title: e.target.value })}
+                    placeholder="Briefly describe what needs to be done..."
+                    className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-[#2891e2] focus:bg-white dark:focus:bg-slate-900 rounded-2xl text-base font-bold text-slate-900 dark:text-white outline-none transition-all"
+                  />
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {getSuggestions().map((s, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setErrandForm({ ...errandForm, title: s })}
+                        className="px-3 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 rounded-lg text-[10px] font-bold uppercase transition-colors"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-          {/* Urgency Selector */}
-          <div className="space-y-1.5 pt-1">
-            <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-              Urgency Level
-            </label>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { level: 'Normal', desc: 'Standard (today)' },
-                { level: 'High', desc: 'Priority (1-2 hrs)' },
-                { level: 'Urgent', desc: 'Immediate (< 45 min)' }
-              ].map((item) => {
-                const isSelected = (errandForm.urgency || 'Normal').toLowerCase() === item.level.toLowerCase();
-                return (
-                  <button
-                    key={item.level}
-                    type="button"
-                    onClick={() => setErrandForm({ ...errandForm, urgency: item.level })}
-                    className={`py-2 px-3 rounded-xl border text-center transition-all ${
-                      isSelected 
-                        ? 'border-[#2891e2] bg-sky-50 dark:bg-sky-950/30 text-[#0a2e5c] dark:text-sky-300 font-bold' 
-                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-xs font-bold">{item.level}</p>
-                    <p className="text-[10px] opacity-75 mt-0.5">{item.desc}</p>
-                  </button>
-                );
-              })}
+                <div className="space-y-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Instructions & Notes</label>
+                  <textarea 
+                    value={errandForm.description || ''}
+                    onChange={(e) => setErrandForm({ ...errandForm, description: e.target.value })}
+                    placeholder="Specific details like gate codes, contact person, or delicate handling..."
+                    rows={5}
+                    className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-[#2891e2] focus:bg-white dark:focus:bg-slate-900 rounded-2xl text-base font-medium text-slate-900 dark:text-white outline-none transition-all resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                {/* Urgency */}
+                <div className="space-y-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Urgency Level</label>
+                  <div className="grid grid-cols-1 gap-2">
+                    {[
+                      { level: 'Normal', desc: 'Standard turnaround (today)', icon: Clock },
+                      { level: 'High', desc: 'Priority request (1-2 hours)', icon: Zap },
+                      { level: 'Urgent', desc: 'Immediate attention (ASAP)', icon: ShieldAlert }
+                    ].map((item) => {
+                      const isSelected = (errandForm.urgency || 'Normal').toLowerCase() === item.level.toLowerCase();
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.level}
+                          type="button"
+                          onClick={() => setErrandForm({ ...errandForm, urgency: item.level })}
+                          className={`p-4 rounded-2xl border-2 transition-all flex items-center gap-4 ${
+                            isSelected 
+                              ? 'border-[#2891e2] bg-[#2891e2]/5 text-[#0a2e5c] dark:text-sky-300' 
+                              : 'border-slate-100 dark:border-slate-800 hover:border-slate-200'
+                          }`}
+                        >
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSelected ? 'bg-[#2891e2] text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                            <Icon size={20} />
+                          </div>
+                          <div className="text-left">
+                            <p className="text-sm font-black">{item.level}</p>
+                            <p className="text-[10px] font-medium opacity-60">{item.desc}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* ===================================================================
-            SECTION 3: CASCADING CATEGORY SPECIFICS (SMOOTH & INTEGRATED)
-            =================================================================== */}
-        
-        {/* Mama Fua Specifics */}
-        {errandForm.category === ErrandCategory.MAMA_FUA && (
-          <div className="bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-900/60 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">3</span>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">Mama Fua Laundry Options</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => pdfService.downloadMamaFuaPDF(errandForm as any)}
-                className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
-              >
-                <Download size={13} />
-                Download Rate Card
-              </button>
-            </div>
-
-            {/* Load Size */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Laundry Load Size
-              </label>
-              <div className="grid grid-cols-3 gap-2.5">
-                {[
-                  { size: 'Small', label: '1–2 Basins', price: 'KSh 350' },
-                  { size: 'Medium', label: '3–4 Basins', price: 'KSh 700' },
-                  { size: 'Large', label: 'Full Sack / Bulk', price: 'KSh 1,050' }
-                ].map((load) => {
-                  const isSelected = (errandForm.loadSize || 'Small') === load.size;
-                  return (
-                    <button
-                      key={load.size}
-                      type="button"
-                      onClick={() => setErrandForm({ ...errandForm, loadSize: load.size })}
-                      className={`p-3 rounded-xl border text-center transition-all ${
-                        isSelected 
-                          ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 font-bold ring-1 ring-blue-600' 
-                          : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-700 dark:text-slate-300'
-                      }`}
-                    >
-                      <p className="text-xs font-bold">{load.size}</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">{load.label}</p>
-                      <p className="text-xs font-black text-blue-600 mt-1">{load.price}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Service Types */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Service Specifics (Select all that apply)
-              </label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {['Wash & Hang', 'Hand Wash Only', 'Ironing (+KSh 200)', 'House Cleaning'].map((type) => {
-                  const isSelected = (errandForm.serviceTypes || []).includes(type);
-                  return (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => {
-                        const current = errandForm.serviceTypes || [];
-                        const updated = isSelected ? current.filter((t: string) => t !== type) : [...current, type];
-                        setErrandForm({ ...errandForm, serviceTypes: updated });
-                      }}
-                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all text-center ${
-                        isSelected 
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Supplies & Water */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500">Detergent</label>
-                <div className="flex gap-1.5">
-                  {[true, false].map((val) => (
-                    <button
-                      key={val ? 'yes' : 'no'}
-                      type="button"
-                      onClick={() => setErrandForm({ ...errandForm, detergentProvided: val })}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold border ${
-                        (errandForm.detergentProvided ?? true) === val 
-                          ? 'bg-blue-600 text-white border-blue-600' 
-                          : 'border-slate-200 dark:border-slate-700 text-slate-600'
-                      }`}
-                    >
-                      {val ? 'I Provide' : 'Runner Buys'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500">Water Supply</label>
-                <div className="flex gap-1.5">
-                  {['Constant', 'Buying/Bowser'].map((val) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setErrandForm({ ...errandForm, waterAvailability: val })}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold border ${
-                        (errandForm.waterAvailability || 'Constant') === val 
-                          ? 'bg-blue-600 text-white border-blue-600' 
-                          : 'border-slate-200 dark:border-slate-700 text-slate-600'
-                      }`}
-                    >
-                      {val}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500">Hanging Area</label>
-                <div className="flex gap-1.5">
-                  {['Outdoor Lines', 'Indoor Rack'].map((val) => (
-                    <button
-                      key={val}
-                      type="button"
-                      onClick={() => setErrandForm({ ...errandForm, hangingPreference: val })}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold border ${
-                        (errandForm.hangingPreference || 'Outdoor Lines') === val 
-                          ? 'bg-blue-600 text-white border-blue-600' 
-                          : 'border-slate-200 dark:border-slate-700 text-slate-600'
-                      }`}
-                    >
-                      {val}
-                    </button>
-                  ))}
-                </div>
-              </div>
+        {/* Step 3: Specific Requirements & Locations */}
+        <div className="space-y-12">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-black flex items-center justify-center">3</div>
+            <div>
+              <h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Requirement Logic</h2>
+              <p className="text-xs font-medium text-slate-500">Fine-tune the specifics based on your service.</p>
             </div>
           </div>
-        )}
 
-        {/* Shopping / Market Shopping Specifics */}
-        {(errandForm.category === ErrandCategory.SHOPPING || errandForm.category === ErrandCategory.MARKET_SHOPPING || errandForm.category === ErrandCategory.GIKOMBA_STRAWS) && (
-          <div className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-emerald-600 text-white text-xs font-bold flex items-center justify-center">3</span>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">Shopping Item List</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => pdfService.downloadShoppingPDF(errandForm as any)}
-                className="text-xs font-bold text-emerald-600 hover:text-emerald-800 flex items-center gap-1"
-              >
-                <Download size={13} />
-                Download PDF
-              </button>
-            </div>
-
-            {/* Item Input */}
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  value={newItem}
-                  onChange={(e) => setNewItem(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addItem())}
-                  placeholder="e.g. 2kg Sugar, 1 tray Eggs, 500ml Milk..."
-                  className="flex-1 px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 transition-all"
-                />
-                <button 
-                  type="button"
-                  onClick={addItem}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1"
-                >
-                  <Plus size={15} /> Add
-                </button>
-              </div>
-
-              {/* Items List Chips */}
-              <div className="flex flex-wrap gap-2 pt-1">
-                {(errandForm.shoppingItems || []).length === 0 ? (
-                  <p className="text-xs text-slate-400 italic py-1">No items added yet. Type an item above and press Enter or Add.</p>
-                ) : (
-                  (errandForm.shoppingItems || []).map((item: string, idx: number) => (
-                    <div 
-                      key={idx} 
-                      className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs font-semibold"
-                    >
-                      <span>{item}</span>
-                      <button 
-                        type="button" 
-                        onClick={() => removeItem(idx)}
-                        className="text-emerald-500 hover:text-rose-500 transition-colors"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Shopping Notes & Market Section */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Preferred Brands / Substitutions</label>
-                <input 
-                  type="text" 
-                  value={errandForm.shoppingList || ''}
-                  onChange={(e) => setErrandForm({ ...errandForm, shoppingList: e.target.value })}
-                  placeholder="e.g. Broadways bread, Tuzo milk if available"
-                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Payment for Goods</label>
-                <div className="flex gap-2">
-                  {['Cash on Delivery', 'Mobile Money / M-Pesa'].map((method) => (
-                    <button
-                      key={method}
-                      type="button"
-                      onClick={() => setErrandForm({ ...errandForm, paymentMethod: method })}
-                      className={`flex-1 py-2 px-2 rounded-xl text-xs font-bold border transition-all ${
-                        (errandForm.paymentMethod || 'Cash on Delivery') === method 
-                          ? 'bg-emerald-600 text-white border-emerald-600' 
-                          : 'border-slate-200 dark:border-slate-700 text-slate-600'
-                      }`}
-                    >
-                      {method}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Saka Keja (House Hunting) Specifics */}
-        {errandForm.category === ErrandCategory.HOUSE_HUNTING && (
-          <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900/60 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-amber-600 text-white text-xs font-bold flex items-center justify-center">3</span>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">House Hunting Specifications</h2>
-              </div>
-              <span className="text-xs font-bold text-amber-600">Saka Keja Protocol</span>
-            </div>
-
-            {/* House Type */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Property Type <span className="text-rose-500">*</span>
-              </label>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {houseTypes.map((type) => {
-                  const isSelected = errandForm.houseType === type;
-                  return (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setErrandForm({ ...errandForm, houseType: type })}
-                      className={`py-2 px-2 rounded-xl text-xs font-bold border text-center transition-all ${
-                        isSelected 
-                          ? 'bg-amber-600 text-white border-amber-600 shadow-sm' 
-                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Target Estates Autocomplete */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Target Estates / Neighborhoods (Up to 3) <span className="text-rose-500">*</span>
-              </label>
-              <PlacesAutocomplete 
-                apiKey={googlePlacesApiKey}
-                placeholder="Search area (e.g. Roysambu, Kilimani, Ruaka, Ngong Rd)..."
-                onPlaceSelect={(data) => {
-                  if ((errandForm.targetEstates || []).length >= 3) return;
-                  const current = errandForm.targetEstates || [];
-                  if (!current.includes(data.address)) {
-                    setErrandForm({ ...errandForm, targetEstates: [...current, data.address] });
-                  }
-                }}
-                icon={<MapPin size={15} className="text-amber-600" />}
-              />
-              <div className="flex flex-wrap gap-2 pt-1">
-                {(errandForm.targetEstates || []).map((estate: string, idx: number) => (
-                  <div key={idx} className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-900 border border-amber-200 rounded-lg text-xs font-bold">
-                    <span>{estate}</span>
-                    <button 
-                      type="button" 
-                      onClick={() => setErrandForm({ ...errandForm, targetEstates: (errandForm.targetEstates || []).filter((_: any, i: number) => i !== idx) })}
-                      className="text-amber-700 hover:text-rose-600"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Rent Range & Move Date */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Min Rent Budget (KSh)</label>
-                <input 
-                  type="number" 
-                  value={errandForm.rentBudgetMin || ''}
-                  onChange={(e) => setErrandForm({ ...errandForm, rentBudgetMin: Number(e.target.value) })}
-                  placeholder="e.g. 15000"
-                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Max Rent Budget (KSh) *</label>
-                <input 
-                  type="number" 
-                  value={errandForm.rentBudgetMax || ''}
-                  onChange={(e) => setErrandForm({ ...errandForm, rentBudgetMax: Number(e.target.value) })}
-                  placeholder="e.g. 30000"
-                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Desired Move-in Date</label>
-                <input 
-                  type="date" 
-                  value={errandForm.moveInDate || ''}
-                  onChange={(e) => setErrandForm({ ...errandForm, moveInDate: e.target.value })}
-                  className="w-full px-3.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold"
-                />
-              </div>
-            </div>
-
-            {/* Runner Tasks */}
-            <div className="space-y-1.5 pt-2">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Runner Verification Checklist
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {runnerTasks.map((task) => {
-                  const isChecked = (errandForm.runnerTasks || []).includes(task.id);
-                  return (
-                    <button
-                      key={task.id}
-                      type="button"
-                      onClick={() => toggleRunnerTask(task.id)}
-                      className={`p-3 rounded-xl border text-left transition-all flex items-start gap-2.5 ${
-                        isChecked 
-                          ? 'border-amber-500 bg-amber-50/70 dark:bg-amber-950/30' 
-                          : 'border-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      <div className={`w-4 h-4 rounded mt-0.5 flex items-center justify-center border ${
-                        isChecked ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300'
-                      }`}>
-                        {isChecked && <Check size={11} strokeWidth={3} />}
-                      </div>
-                      <div>
-                        <p className="text-xs font-bold text-slate-900 dark:text-white">{task.label}</p>
-                        <p className="text-[11px] text-slate-500">{task.desc}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Package Delivery Specifics */}
-        {errandForm.category === ErrandCategory.PACKAGE_DELIVERY && (
-          <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-rose-600 text-white text-xs font-bold flex items-center justify-center">3</span>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Delivery Package Details</h2>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Package Description <span className="text-rose-500">*</span>
-                </label>
-                <input 
-                  type="text" 
-                  value={errandForm.packageDescription || ''}
-                  onChange={(e) => setErrandForm({ ...errandForm, packageDescription: e.target.value })}
-                  placeholder="e.g. Enveloped documents, Electronics, Clothes package..."
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold outline-none focus:border-rose-500"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Approximate Value / Care
-                </label>
-                <input 
-                  type="text" 
-                  value={errandForm.packageCost ? `KSh ${errandForm.packageCost}` : ''}
-                  onChange={(e) => setErrandForm({ ...errandForm, packageCost: Number(e.target.value.replace(/\D/g, '')) })}
-                  placeholder="e.g. Fragile, Handle with care"
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold outline-none focus:border-rose-500"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ===================================================================
-            SECTION 4: LOCATIONS & ROUTING (CLEAN & OPEN)
-            =================================================================== */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-1">
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-[#0a2e5c] text-white text-xs font-bold flex items-center justify-center">4</span>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Locations & Route</h2>
-            </div>
-            
-            {/* Delivery Mode Toggle */}
-            {(errandForm.category === ErrandCategory.MAMA_FUA || errandForm.category === ErrandCategory.GENERAL) && (
-              <label className="flex items-center gap-2 cursor-pointer self-start sm:self-auto bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300">
-                <input 
-                  type="checkbox"
-                  checked={errandForm.isInHouse || false}
-                  onChange={(e) => setErrandForm({ ...errandForm, isInHouse: e.target.checked })}
-                  className="rounded border-slate-300 text-[#0a2e5c] focus:ring-[#0a2e5c]"
-                />
-                On-site task (Runner comes to my house / office)
-              </label>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Pickup / Starting Point */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                  <MapPin size={14} className="text-[#2891e2]" />
-                  {errandForm.isInHouse ? 'Service Location' : 'Pickup / Starting Location'} 
-                  <span className="text-rose-500">*</span>
-                </label>
+          {/* Mama Fua Specifics */}
+          {errandForm.category === ErrandCategory.MAMA_FUA && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-center justify-between border-b-2 border-blue-100 dark:border-blue-900/30 pb-4">
+                <h3 className="text-lg font-black text-blue-600 dark:text-blue-400">Laundry & Cleaning Options</h3>
                 <button
                   type="button"
-                  onClick={() => setShowMapPicker(true)}
-                  className="text-xs font-bold text-[#2891e2] hover:underline flex items-center gap-1"
+                  onClick={() => pdfService.downloadMamaFuaPDF(errandForm as any)}
+                  className="px-4 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-2 hover:bg-blue-100 transition-colors"
                 >
-                  <MapIcon size={12} /> Pin on Map
+                  <Download size={14} />
+                  Rate Card
                 </button>
               </div>
 
-              <PlacesAutocomplete 
-                apiKey={googlePlacesApiKey}
-                placeholder="Enter pickup address, estate, or landmark..."
-                initialValue={errandForm.pickup?.name || ''}
-                onPlaceSelect={(data) => {
-                  setErrandForm({
-                    ...errandForm,
-                    pickup: { name: data.address, coords: data.coords, placeId: data.placeId }
-                  });
-                }}
-                icon={<MapPin size={14} className="text-[#2891e2]" />}
-              />
-            </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                {/* Load Size */}
+                <div className="space-y-3">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Laundry Load Size</label>
+                  <div className="flex flex-col gap-2">
+                    {[
+                      { size: 'Small', label: '1–2 Basins', price: 'KSh 350' },
+                      { size: 'Medium', label: '3–4 Basins', price: 'KSh 700' },
+                      { size: 'Large', label: 'Full Sack / Bulk', price: 'KSh 1,050' }
+                    ].map((load) => {
+                      const isSelected = (errandForm.loadSize || 'Small') === load.size;
+                      return (
+                        <button
+                          key={load.size}
+                          type="button"
+                          onClick={() => setErrandForm({ ...errandForm, loadSize: load.size })}
+                          className={`p-4 rounded-2xl border-2 text-left transition-all flex items-center justify-between ${
+                            isSelected 
+                              ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200' 
+                              : 'border-slate-100 dark:border-slate-800 hover:border-slate-200'
+                          }`}
+                        >
+                          <div>
+                            <p className="text-sm font-black">{load.size}</p>
+                            <p className="text-[10px] font-medium opacity-60">{load.label}</p>
+                          </div>
+                          <p className="text-sm font-black text-blue-600">{load.price}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-            {/* Dropoff / Destination Point */}
-            {!errandForm.isInHouse && errandForm.category !== ErrandCategory.HOUSE_HUNTING && (
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <Target size={14} className="text-rose-500" />
-                    Delivery / Destination
-                  </label>
-                  <button
+                {/* Service Types */}
+                <div className="space-y-3 md:col-span-2">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Service Selection</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {['Wash & Hang', 'Hand Wash Only', 'Ironing (+KSh 200)', 'House Cleaning'].map((type) => {
+                      const isSelected = (errandForm.serviceTypes || []).includes(type);
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => {
+                            const current = errandForm.serviceTypes || [];
+                            const updated = isSelected ? current.filter((t: string) => t !== type) : [...current, type];
+                            setErrandForm({ ...errandForm, serviceTypes: updated });
+                          }}
+                          className={`p-4 rounded-2xl border-2 text-sm font-bold transition-all text-center ${
+                            isSelected 
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-600/20' 
+                              : 'bg-slate-50 dark:bg-slate-800 border-transparent text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Detergent</label>
+                      <select 
+                        value={errandForm.detergentProvided ?? true ? 'yes' : 'no'}
+                        onChange={(e) => setErrandForm({ ...errandForm, detergentProvided: e.target.value === 'yes' })}
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border-none outline-none text-xs font-bold"
+                      >
+                        <option value="yes">I Provide</option>
+                        <option value="no">Runner Buys</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Water Supply</label>
+                      <select 
+                        value={errandForm.waterAvailability || 'Constant'}
+                        onChange={(e) => setErrandForm({ ...errandForm, waterAvailability: e.target.value })}
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border-none outline-none text-xs font-bold"
+                      >
+                        <option value="Constant">Constant Tap</option>
+                        <option value="Buying/Bowser">Buying / Tanker</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Hanging Area</label>
+                      <select 
+                        value={errandForm.hangingPreference || 'Outdoor Lines'}
+                        onChange={(e) => setErrandForm({ ...errandForm, hangingPreference: e.target.value })}
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border-none outline-none text-xs font-bold"
+                      >
+                        <option value="Outdoor Lines">Outdoor Lines</option>
+                        <option value="Indoor Rack">Indoor Rack</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Shopping / Market Shopping Specifics */}
+          {(errandForm.category === ErrandCategory.SHOPPING || errandForm.category === ErrandCategory.MARKET_SHOPPING || errandForm.category === ErrandCategory.GIKOMBA_STRAWS) && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-center justify-between border-b-2 border-emerald-100 dark:border-emerald-900/30 pb-4">
+                <h3 className="text-lg font-black text-emerald-600 dark:text-emerald-400">Shopping Inventory</h3>
+                <button
+                  type="button"
+                  onClick={() => pdfService.downloadShoppingPDF(errandForm as any)}
+                  className="px-4 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-xs font-black uppercase tracking-wider flex items-center gap-2 hover:bg-emerald-100 transition-colors"
+                >
+                  <Download size={14} />
+                  Shopping List PDF
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                {/* Item Input */}
+                <div className="relative group">
+                  <input 
+                    type="text" 
+                    value={newItem}
+                    onChange={(e) => setNewItem(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addItem())}
+                    placeholder="Add item: e.g. 2kg Sugar, 1 tray Eggs..."
+                    className="w-full px-6 py-5 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-emerald-500 focus:bg-white dark:focus:bg-slate-900 rounded-2xl text-base font-bold text-slate-900 dark:text-white outline-none transition-all pr-24"
+                  />
+                  <button 
                     type="button"
-                    onClick={() => setShowMapPicker(true)}
-                    className="text-xs font-bold text-[#2891e2] hover:underline flex items-center gap-1"
+                    onClick={addItem}
+                    className="absolute right-3 top-3 bottom-3 px-6 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/20 active:scale-95"
                   >
-                    <MapIcon size={12} /> Pin on Map
+                    Add
                   </button>
                 </div>
 
-                <PlacesAutocomplete 
-                  apiKey={googlePlacesApiKey}
-                  placeholder="Enter drop-off address or recipient location..."
-                  initialValue={errandForm.dropoff?.name || ''}
-                  onPlaceSelect={(data) => {
-                    setErrandForm({
-                      ...errandForm,
-                      dropoff: { name: data.address, coords: data.coords, placeId: data.placeId }
-                    });
-                  }}
-                  icon={<Target size={14} className="text-rose-500" />}
-                />
-              </div>
-            )}
-          </div>
+                {/* Items List */}
+                <div className="flex flex-wrap gap-3">
+                  {(errandForm.shoppingItems || []).length === 0 ? (
+                    <div className="w-full p-8 border-2 border-dashed border-slate-100 dark:border-slate-800 rounded-2xl flex flex-col items-center justify-center text-slate-400 gap-2">
+                      <ShoppingBag size={24} />
+                      <p className="text-xs font-bold uppercase tracking-widest">No items in your list yet</p>
+                    </div>
+                  ) : (
+                    <AnimatePresence>
+                      {(errandForm.shoppingItems || []).map((item: string, idx: number) => (
+                        <motion.div 
+                          key={idx} 
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.8 }}
+                          className="flex items-center gap-3 px-4 py-2 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 border-2 border-emerald-100 dark:border-emerald-900/30 rounded-xl text-sm font-bold shadow-sm"
+                        >
+                          <span>{item}</span>
+                          <button 
+                            type="button" 
+                            onClick={() => removeItem(idx)}
+                            className="p-1 hover:bg-rose-500 hover:text-white rounded-md transition-all"
+                          >
+                            <X size={14} />
+                          </button>
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  )}
+                </div>
 
-          {/* Route Distance Badge */}
-          {errandForm.estimatedDistance && (
-            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between text-xs">
-              <div className="flex items-center gap-4">
-                <span className="font-semibold text-slate-500 flex items-center gap-1">
-                  <Navigation size={13} className="text-[#2891e2]" />
-                  Distance: <strong className="text-slate-800 dark:text-slate-200">{errandForm.estimatedDistance}</strong>
-                </span>
-                <span className="font-semibold text-slate-500 flex items-center gap-1">
-                  <Clock size={13} className="text-[#2891e2]" />
-                  Estimated Time: <strong className="text-slate-800 dark:text-slate-200">{errandForm.estimatedDuration}</strong>
-                </span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase tracking-widest text-slate-500">Brands / Quality Preferences</label>
+                    <input 
+                      type="text" 
+                      value={errandForm.shoppingList || ''}
+                      onChange={(e) => setErrandForm({ ...errandForm, shoppingList: e.target.value })}
+                      placeholder="e.g. Medium-sized eggs, ripe avocados only"
+                      className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border-none outline-none text-sm font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase tracking-widest text-slate-500">Goods Payment Method</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {['Cash on Delivery', 'Mobile Money'].map((method) => (
+                        <button
+                          key={method}
+                          type="button"
+                          onClick={() => setErrandForm({ ...errandForm, paymentMethod: method })}
+                          className={`p-4 rounded-xl border-2 text-xs font-black uppercase tracking-wider transition-all ${
+                            (errandForm.paymentMethod || 'Cash on Delivery') === method 
+                              ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg shadow-emerald-600/20' 
+                              : 'bg-slate-50 dark:bg-slate-800 border-transparent text-slate-500'
+                          }`}
+                        >
+                          {method}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
+            </div>
+          )}
+
+          {/* Saka Keja (House Hunting) Specifics */}
+          {errandForm.category === ErrandCategory.HOUSE_HUNTING && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-center justify-between border-b-2 border-amber-100 dark:border-amber-900/30 pb-4">
+                <h3 className="text-lg font-black text-amber-600 dark:text-amber-400">House Hunting Specifications</h3>
+                <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 dark:bg-amber-950/40 rounded-lg">
+                  <ShieldCheck size={14} className="text-amber-600" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-600">Saka Keja Protocol</span>
+                </div>
+              </div>
+
+              <div className="space-y-8">
+                {/* House Type */}
+                <div className="space-y-3">
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Property Type <span className="text-rose-500">*</span></label>
+                  <div className="flex flex-wrap gap-2">
+                    {houseTypes.map((type) => {
+                      const isSelected = errandForm.houseType === type;
+                      return (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setErrandForm({ ...errandForm, houseType: type })}
+                          className={`px-5 py-3 rounded-xl text-xs font-black uppercase tracking-wider border-2 transition-all ${
+                            isSelected 
+                              ? 'bg-amber-600 text-white border-amber-600 shadow-lg shadow-amber-600/20' 
+                              : 'bg-slate-50 dark:bg-slate-800 border-transparent text-slate-500'
+                          }`}
+                        >
+                          {type}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                  <div className="space-y-8">
+                    {/* Target Estates */}
+                    <div className="space-y-3">
+                      <label className="text-xs font-black uppercase tracking-widest text-slate-500">Target Neighborhoods (Up to 3)</label>
+                      <PlacesAutocomplete 
+                        apiKey={googlePlacesApiKey}
+                        onPlaceSelect={(data) => {
+                          const current = errandForm.targetEstates || [];
+                          if (current.length < 3 && !current.includes(data.address)) {
+                            setErrandForm({ ...errandForm, targetEstates: [...current, data.address] });
+                          }
+                        }}
+                        placeholder="Search area (e.g. Roysambu, Kilimani, Ruaka, Ngong Rd)..."
+                        className="w-full px-5 py-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border-none outline-none text-base font-bold"
+                      />
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {(errandForm.targetEstates || []).map((estate: string, idx: number) => (
+                          <div key={idx} className="flex items-center gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 rounded-xl text-xs font-black border-2 border-amber-100">
+                            <span>{estate}</span>
+                            <button onClick={() => {
+                              const updated = (errandForm.targetEstates || []).filter((_: any, i: number) => i !== idx);
+                              setErrandForm({ ...errandForm, targetEstates: updated });
+                            }}><X size={14} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Rent Budget */}
+                    <div className="space-y-3">
+                      <label className="text-xs font-black uppercase tracking-widest text-slate-500">Rent Budget (Monthly)</label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400">MIN KSH</span>
+                          <input 
+                            type="number"
+                            value={errandForm.rentBudgetMin || ''}
+                            onChange={(e) => setErrandForm({ ...errandForm, rentBudgetMin: Number(e.target.value) })}
+                            className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border-none outline-none font-black text-lg"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-slate-400">MAX KSH</span>
+                          <input 
+                            type="number"
+                            value={errandForm.rentBudgetMax || ''}
+                            onChange={(e) => setErrandForm({ ...errandForm, rentBudgetMax: Number(e.target.value) })}
+                            className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border-none outline-none font-black text-lg"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-8">
+                    {/* Runner Tasks */}
+                    <div className="space-y-4">
+                      <label className="text-xs font-black uppercase tracking-widest text-slate-500">Runner Deliverables</label>
+                      <div className="space-y-3">
+                        {runnerTasks.map((task) => {
+                          const isSelected = (errandForm.runnerTasks || []).includes(task.id);
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              onClick={() => toggleRunnerTask(task.id)}
+                              className={`w-full p-4 rounded-2xl border-2 transition-all flex items-center justify-between text-left ${
+                                isSelected 
+                                  ? 'border-amber-600 bg-amber-50 dark:bg-amber-950/30' 
+                                  : 'border-slate-50 dark:border-slate-800 hover:border-slate-100'
+                              }`}
+                            >
+                              <div>
+                                <p className="text-sm font-black text-slate-900 dark:text-white">{task.label}</p>
+                                <p className="text-[10px] font-medium text-slate-400">{task.desc}</p>
+                              </div>
+                              <div className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${isSelected ? 'bg-amber-600 text-white' : 'bg-slate-100 dark:bg-slate-800'}`}>
+                                {isSelected && <Check size={14} strokeWidth={4} />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Location Selection (Generic) */}
+          <div className="space-y-8 pt-8">
+            <div className="flex items-center justify-between border-b-2 border-slate-100 dark:border-slate-800 pb-4">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">Logistics & Locations</h3>
               <button
                 type="button"
                 onClick={() => setShowMapPicker(true)}
-                className="text-xs font-bold text-[#2891e2] hover:underline"
+                className="px-4 py-1.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:opacity-90 transition-all active:scale-95"
               >
-                Change Route
+                <MapPinned size={14} />
+                Open Interactive Map
               </button>
             </div>
-          )}
-        </div>
 
-        {/* ===================================================================
-            SECTION 5: BUDGET & PRICING (KENYAN SHILLINGS, TRANSPARENT)
-            =================================================================== */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-[#0a2e5c] text-white text-xs font-bold flex items-center justify-center">5</span>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">Budget & Pricing</h2>
-            </div>
-            {isEstimating && (
-              <span className="text-xs font-semibold text-[#2891e2] flex items-center gap-1">
-                <Loader2 size={13} className="animate-spin" /> Estimating fee...
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Budget Input */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                Runner Fee (in KSh) <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-3.5 flex items-center pointer-events-none text-slate-400 font-bold text-sm">
-                  KSh
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              {/* Pickup / Origin */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300">
+                    <MapPin size={18} />
+                  </div>
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Starting Point / Pickup</label>
                 </div>
-                <input 
-                  type="number" 
-                  value={errandForm.budget || ''}
-                  onChange={(e) => setErrandForm({ ...errandForm, budget: Number(e.target.value) })}
-                  placeholder="e.g. 500"
-                  className="w-full pl-14 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-base font-black text-slate-900 dark:text-white outline-none focus:border-[#2891e2] focus:ring-2 focus:ring-[#2891e2]/10 transition-all"
+                <PlacesAutocomplete 
+                  apiKey={googlePlacesApiKey}
+                  onPlaceSelect={(place) => setErrandForm({ ...errandForm, pickup: place })}
+                  placeholder="Enter shop, building or estate..."
+                  className="w-full px-6 py-5 bg-slate-50 dark:bg-slate-800 rounded-2xl border-none outline-none text-base font-bold"
+                  initialValue={errandForm.pickup?.name}
                 />
               </div>
 
-              {/* Quick Budget Presets */}
-              <div className="flex gap-1.5 pt-1">
-                {[300, 500, 800, 1200, 2000].map((amount) => (
-                  <button
-                    key={amount}
-                    type="button"
-                    onClick={() => setErrandForm({ ...errandForm, budget: amount })}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                      errandForm.budget === amount 
-                        ? 'bg-[#0a2e5c] text-white border-[#0a2e5c]' 
-                        : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300'
+              {/* Dropoff / Destination */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300">
+                    <Navigation size={18} />
+                  </div>
+                  <label className="text-xs font-black uppercase tracking-widest text-slate-500">Destination (Optional)</label>
+                </div>
+                <PlacesAutocomplete 
+                  apiKey={googlePlacesApiKey}
+                  onPlaceSelect={(place) => setErrandForm({ ...errandForm, dropoff: place })}
+                  placeholder="Where should the runner deliver?"
+                  className="w-full px-6 py-5 bg-slate-50 dark:bg-slate-800 rounded-2xl border-none outline-none text-base font-bold"
+                  initialValue={errandForm.dropoff?.name}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Final Payout / Budget */}
+          <div className="pt-12">
+            <div className="bg-slate-900 dark:bg-white rounded-[32px] p-8 md:p-12 text-white dark:text-slate-900 relative overflow-hidden shadow-2xl shadow-slate-900/20">
+              <div className="absolute top-0 right-0 p-12 opacity-10">
+                <DollarSign size={200} strokeWidth={1} />
+              </div>
+
+              <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <h3 className="text-3xl font-black tracking-tight">Set Your Payout</h3>
+                    <p className="text-slate-400 dark:text-slate-500 font-medium text-sm">How much are you offering the runner for this service?</p>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="text-4xl font-black">KSH</div>
+                    <input 
+                      type="number"
+                      value={errandForm.budget || ''}
+                      onChange={(e) => setErrandForm({ ...errandForm, budget: Number(e.target.value) })}
+                      className="bg-transparent border-b-4 border-slate-700 dark:border-slate-200 outline-none w-full text-5xl font-black pb-2 focus:border-[#2891e2] transition-colors"
+                      placeholder="0"
+                    />
+                  </div>
+
+                  {isEstimating && (
+                    <div className="flex items-center gap-2 text-sky-400 animate-pulse">
+                      <Sparkles size={16} />
+                      <span className="text-xs font-black uppercase tracking-widest">AI Calculating optimal rate...</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-8">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between text-xs font-black uppercase tracking-widest opacity-60">
+                      <span>Service Summary</span>
+                      <span>Rate</span>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex justify-between font-bold">
+                        <span className="opacity-80">Base Service Fee</span>
+                        <span>KSh {Math.round((errandForm.calculatedPrice || 0) * 0.8)}</span>
+                      </div>
+                      <div className="flex justify-between font-bold">
+                        <span className="opacity-80">Urgency Multiplier</span>
+                        <span>x{errandForm.urgency === 'Urgent' ? '1.5' : errandForm.urgency === 'High' ? '1.2' : '1.0'}</span>
+                      </div>
+                      <div className="pt-4 border-t border-white/10 flex justify-between text-2xl font-black">
+                        <span>Total Offer</span>
+                        <span className="text-[#2891e2]">KSh {errandForm.budget || 0}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button 
+                    type="submit"
+                    disabled={loading || !!missingNotice}
+                    className={`w-full py-6 rounded-2xl font-black text-lg uppercase tracking-[0.2em] transition-all shadow-xl flex items-center justify-center gap-3 ${
+                      loading || !!missingNotice
+                        ? 'bg-slate-800 dark:bg-slate-100 text-slate-500 cursor-not-allowed opacity-50'
+                        : 'bg-[#2891e2] hover:bg-[#2891e2]/90 text-white shadow-[#2891e2]/30 hover:-translate-y-1 active:scale-95'
                     }`}
                   >
-                    KSh {amount}
+                    {loading ? <Loader2 className="animate-spin" /> : <PlusCircle size={24} />}
+                    {loading ? 'Posting...' : 'Dispatch Errand'}
                   </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Fee Breakdown & Transparency */}
-            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
-                  <span>Estimated Total Runner Payout:</span>
-                  <span className="text-base font-black text-[#0a2e5c] dark:text-[#2891e2]">
-                    KSh {Number(errandForm.budget || 0).toLocaleString()}
-                  </span>
+                  
+                  {missingNotice && (
+                    <p className="text-center text-rose-400 text-[10px] font-black uppercase tracking-widest">{missingNotice}</p>
+                  )}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Verified runners accept or bid on your task. Escrow protection secures your funds until completion.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 pt-2 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                <ShieldCheck size={14} />
-                <span>Protected by Errandly Guarantee</span>
               </div>
             </div>
           </div>
         </div>
-
-        {/* ===================================================================
-            SECTION 6: REVIEW, EMAIL NOTICE & SUBMIT
-            =================================================================== */}
-        <div className="bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-sky-100 dark:bg-sky-950/60 text-[#2891e2] flex items-center justify-center shrink-0">
-              <Mail size={20} />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-slate-900 dark:text-white">
-                Immediate Email Confirmation
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Upon posting, an errand confirmation and live runner tracking link will be sent to{' '}
-                <strong className="text-slate-700 dark:text-slate-300">{user?.email || 'your registered email'}</strong>.
-              </p>
-            </div>
-          </div>
-
-          {missingNotice && (
-            <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 rounded-xl flex items-center gap-2 text-xs font-bold text-amber-800 dark:text-amber-300">
-              <Info size={14} className="shrink-0" />
-              <span>{missingNotice}</span>
-            </div>
-          )}
-
-          <button 
-            type="submit" 
-            disabled={loading || !!missingNotice}
-            className="w-full py-4 bg-[#0a2e5c] hover:bg-[#071f3e] disabled:bg-slate-300 dark:disabled:bg-slate-800 text-white rounded-xl font-black text-sm tracking-wide shadow-lg shadow-slate-900/10 active:scale-[0.99] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <>
-                <Loader2 size={18} className="animate-spin" />
-                <span>Broadcasting to Runners...</span>
-              </>
-            ) : (
-              <>
-                <span>Post Errand Now</span>
-                <ArrowRight size={16} />
-              </>
-            )}
-          </button>
-        </div>
-
       </form>
 
       {/* Google Map Route Modal */}

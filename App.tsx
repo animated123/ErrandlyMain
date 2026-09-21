@@ -30,6 +30,7 @@ import { cloudinaryService } from './services/cloudinaryService';
 import { firebaseService } from './services/firebaseService';
 import { geminiService } from './services/geminiService';
 import { databaseService } from './services/databaseService';
+import { actionService } from './services/actionService';
 import { generateErrandWhatsAppShareUrl, generateErrandDeepLink } from './services/whatsappNotificationService';
 import Layout from './src/components/Layout';
 import ErrandCard, { ErrandCardSkeleton, Skeleton } from './src/components/ErrandCard';
@@ -453,7 +454,6 @@ export default function App() {
     aiEstimatedScale: 1,
     aiEstimationBreakdown: null,
     propertyType: null,
-    vibe: null,
     runnerTasks: ['video', 'photos'],
     commuteDistance: 5
   });
@@ -969,79 +969,39 @@ export default function App() {
         dropoffCoordinates: errandForm.category === ErrandCategory.HOUSE_HUNTING ? { lat: 0, lng: 0 } : (errandForm.isInHouse ? (errandForm.pickup?.coords || { lat: 0, lng: 0 }) : (errandForm.dropoff?.coords || errandForm.pickup?.coords || { lat: 0, lng: 0 })),
         maxShoppingBudget: errandForm.maxShoppingBudget || 0
       };
+
+      console.log('[App.postErrand] Submitting errand:', data);
       const fbRes = await firebaseService.createErrand(data);
+      
       if (fbRes && fbRes.id) {
-        (data as any).id = fbRes.id;
+        console.log('[App.postErrand] Errand created with ID:', fbRes.id);
+        haptics.success();
+        alert("Errand posted successfully! A confirmation email has been sent and runners will be notified.");
+        
+        // Reset form
+        setErrandForm({ 
+          category: ErrandCategory.GENERAL, title: '', budget: 0, deadline: '', 
+          pickup: null, dropoff: null, laundryBaskets: 1, pricePerBasket: 250, 
+          houseType: '', rentBudgetMin: 10000, rentBudgetMax: 30000, moveInDate: '', 
+          amenities: [], targetEstates: [], runnerTasks: [],
+          additionalRequirements: '', description: '', isInHouse: false,
+          voiceNoteUrl: undefined, checklist: undefined,
+          maxShoppingBudget: 0,
+          urgency: 'Normal',
+          packageDescription: '',
+          packageCost: 0,
+          shoppingList: '',
+          marketSection: ''
+        });
+        
+        setActiveTab('dashboard');
+      } else {
+        throw new Error("No errand ID returned from database.");
       }
-      // Synchronize with local database
-      try {
-        await databaseService.createErrand(data);
-      } catch (err) {
-        console.error('[DatabaseSync] Errand sync failed:', err);
-      }
-
-      // Send confirmation email directly to the requester
-      if (user?.email) {
-        try {
-          const categoryName = data.category || 'General Task';
-          const budgetText = `KSh ${Number(data.budget || 0).toLocaleString()}`;
-          const pickupText = data.pickupLocation || 'Specified pickup point';
-          const dropoffText = data.dropoffLocation || (data.isInHouse ? 'In-house task' : 'Specified destination');
-          const trackingUrl = `${window.location.origin}/?errand=${(data as any).id || ''}`;
-          
-          actionService.sendEmail(
-            user.email,
-            `Errand Posted: ${data.title || categoryName}`,
-            `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
-              <div style="text-align: center; margin-bottom: 24px;">
-                <span style="display: inline-block; background-color: #0a2e5c; color: #ffffff; font-weight: 800; padding: 8px 16px; border-radius: 8px; font-size: 14px; letter-spacing: 0.05em;">ERRANDLY</span>
-                <h2 style="color: #0a2e5c; margin: 16px 0 6px; font-size: 22px;">Errand Posted Successfully!</h2>
-                <p style="color: #64748b; font-size: 14px; margin: 0;">Your task is now live and dispatched to verified local runners across Nairobi.</p>
-              </div>
-              <div style="background-color: #f8fafc; border-radius: 10px; padding: 18px; margin-bottom: 20px; border: 1px solid #e2e8f0;">
-                <p style="margin: 0 0 10px; font-size: 15px; color: #0f172a;"><strong>Task Title:</strong> ${data.title || 'General Errand'}</p>
-                <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Category:</strong> ${categoryName}</p>
-                <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Budget:</strong> ${budgetText}</p>
-                <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Pickup / Location:</strong> ${pickupText}</p>
-                <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Destination:</strong> ${dropoffText}</p>
-                ${data.description ? `<p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;"><strong>Instructions:</strong> ${data.description}</p>` : ''}
-              </div>
-              <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0 0 20px;">You will receive live updates as runners bid and accept your task.</p>
-              <div style="text-align: center; margin-bottom: 24px;">
-                <a href="${trackingUrl}" style="display: inline-block; background-color: #2891e2; color: #ffffff; padding: 12px 28px; font-weight: 700; border-radius: 8px; text-decoration: none; font-size: 14px;">Track Errand Status</a>
-              </div>
-              <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0 16px;" />
-              <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">&copy; ${new Date().getFullYear()} Errandly Kenya. Nairobi, Kenya.</p>
-            </div>
-            `,
-            'alert'
-          ).catch((e: any) => console.warn('[Email Confirmation] Could not dispatch email:', e));
-        } catch (mailErr) {
-          console.warn('[Email Confirmation] Exception sending email:', mailErr);
-        }
-      }
-
-      triggerHaptic();
-      alert("Errand posted successfully! A confirmation email has been sent and runners will be notified.");
-      setErrandForm({ 
-        category: ErrandCategory.GENERAL, title: '', budget: 0, deadline: '', 
-        pickup: null, dropoff: null, laundryBaskets: 1, pricePerBasket: 250, 
-        houseType: '', rentBudgetMin: 10000, rentBudgetMax: 30000, moveInDate: '', 
-        amenities: [], targetEstates: [], runnerTasks: [],
-        additionalRequirements: '', description: '', isInHouse: false,
-        voiceNoteUrl: undefined, checklist: undefined,
-        maxShoppingBudget: 0,
-        urgency: 'normal',
-        packageDescription: '',
-        packageCost: 0,
-        shoppingList: '',
-        marketSection: ''
-      });
-      setActiveTab('dashboard');
     } catch (e: any) { 
-      console.error("Post errand error:", e);
+      console.error("[App.postErrand] Critical Error:", e);
       setFormErrors({ ...formErrors, create: "Post failed: " + (e.message || "Unknown error") });
+      alert(`Post failed: ${e.message || e}`);
     } finally { 
       setIsProcessing(false); 
     }
@@ -1094,7 +1054,7 @@ export default function App() {
       await firebaseService.updateUserSettings(user.id, updates);
       setUser({ ...user, ...updates });
       
-      triggerHaptic();
+      haptics.success();
       
       // Refresh errand
       await refreshErrand();
@@ -8164,7 +8124,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
       if (selectedErrand.category !== ErrandCategory.HOUSE_HUNTING && amount <= selectedErrand.budget) {
         console.log("Accepting bid automatically");
         await firebaseService.acceptBid(selectedErrand.id, user.id, user.name, user.phone, amount, 'Ready Now');
-        triggerHaptic();
+        haptics.success();
         alert("Task assigned to you automatically!");
         setActiveDetailTab('map');
         refresh();
@@ -8656,7 +8616,7 @@ const ErrandDetailScreenLocal: React.FC<any> = ({
                   {activeDetailTab !== 'finish' ? (
                     <button
                       onClick={() => {
-                        triggerHaptic();
+                        haptics.success();
                         const tabs: ('details' | 'map' | 'chat' | 'progress' | 'finish')[] = ['details', 'map', 'chat', 'progress', 'finish'];
                         const nextIdx = tabs.indexOf(activeDetailTab) + 1;
                         if (nextIdx < tabs.length) {

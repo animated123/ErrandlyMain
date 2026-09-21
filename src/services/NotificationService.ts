@@ -163,5 +163,27 @@ How to operate as a Runner:
       console.error('WhatsApp Service Error:', error);
       return { success: false, error: error?.message || 'Network error' };
     }
+  },
+
+  sendErrandPostedEmail: async (email: string, name: string, errandId: string, title: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/notifications/send-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          to: email,
+          type: 'errand_posted',
+          name,
+          errandId,
+          errandTitle: title,
+          subject: `Errand Posted Successfully: ${title}`
+        }),
+      });
+      return await response.json();
+    } catch (error: any) {
+      console.error('Errand posted notification error:', error);
+    }
   }
 };

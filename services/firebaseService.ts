@@ -315,6 +315,7 @@ const mapErrandToSupabase = (errand: Partial<Errand>) => {
   if (errand.requesterId) data.requester_id = errand.requesterId;
   if (errand.requesterName) data.requester_name = errand.requesterName;
   if (errand.requesterPhone) data.requester_phone = errand.requesterPhone;
+  if (errand.requesterEmail) data.requester_email = errand.requesterEmail;
   if (errand.requesterIsVerified !== undefined) data.requester_is_verified = errand.requesterIsVerified;
   if (errand.runnerId) data.runner_id = errand.runnerId;
   if (errand.runnerName) data.runner_name = errand.runnerName;
@@ -500,8 +501,42 @@ export const firebaseService = {
       };
 
       const mapped = mapErrandToSupabase(insertData);
-      const { error } = await supabase.from('errands').insert(mapped);
-      if (error) throw error;
+      console.log('[firebaseService] Attempting to create errand with ID:', id);
+      
+      let supabaseSuccess = false;
+      let firestoreSuccess = false;
+      let lastError: any = null;
+
+      // Attempt Supabase write (Primary)
+      try {
+        if (supabase) {
+          const { error } = await supabase.from('errands').insert(mapped);
+          if (error) throw error;
+          console.log('[Supabase createErrand] Success');
+          supabaseSuccess = true;
+        }
+      } catch (sbError: any) {
+        lastError = sbError;
+        console.error('[Supabase createErrand] Failed:', sbError.message || sbError);
+      }
+
+      // Mirror to Firestore (Secondary/Fallback)
+      try {
+        if (firestore) {
+          const { doc, setDoc } = await import('firebase/firestore');
+          await setDoc(doc(firestore, 'errands', id), insertData);
+          console.log('[Firestore createErrand] Success');
+          firestoreSuccess = true;
+        }
+      } catch (fsError: any) {
+        lastError = fsError;
+        console.error('[Firestore createErrand] Failed:', fsError.message || fsError);
+      }
+
+      if (!supabaseSuccess && !firestoreSuccess) {
+        console.error('[firebaseService] Critical Failure: Could not write errand to ANY database.');
+        throw new Error(lastError?.message || 'Failed to save errand to database. Please try again.');
+      }
 
       // Automatically send confirmation email to requester (non-blocking)
       const recipientEmail = insertData.requesterEmail || insertData.requester_email || (auth?.currentUser?.email);
@@ -767,6 +802,8 @@ export const firebaseService = {
       });
 
       // Automatically trigger WhatsApp notification via WaSender API (non-blocking)
+      // Removed as per user request: "Remove whatapp code sending"
+      /*
       firebaseService.fetchErrandById(errandId).then(errand => {
         if (errand) {
           whatsappNotificationService.notifyErrandAccepted({
@@ -782,6 +819,7 @@ export const firebaseService = {
       }).catch(err => {
         console.warn('[WhatsApp Auto-Notify] Error fetching errand for acceptance notification:', err?.message || err);
       });
+      */
     } catch (error) {
       console.error('[Supabase error accepting bid]:', error);
     }

@@ -27,6 +27,7 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
   const [confirmationResult, setConfirmationResult] = useState<any>(null);
   const [otpCode, setOtpCode] = useState('');
   const [phoneVerified, setPhoneVerified] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,9 +50,11 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
         } else {
           // Verify the code via server
           const phoneToVerify = formData.phone?.trim();
+          setIsVerifyingOtp(true);
           await firebaseService.verifySmsCode('', phoneToVerify, otpCode);
           setPhoneVerified(true);
           setOtpSent(false);
+          setIsVerifyingOtp(false);
           // Continue to register after verification
         }
       }
