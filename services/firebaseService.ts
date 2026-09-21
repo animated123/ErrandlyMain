@@ -503,10 +503,43 @@ export const firebaseService = {
       const { error } = await supabase.from('errands').insert(mapped);
       if (error) throw error;
 
-      // Automatically trigger WhatsApp notification via WaSender API (non-blocking)
-      whatsappNotificationService.notifyErrandPosted(insertData).catch(e => {
-        console.warn('[WhatsApp Auto-Notify] Failed to trigger errand posted notification:', e?.message || e);
-      });
+      // Automatically send confirmation email to requester (non-blocking)
+      const recipientEmail = insertData.requesterEmail || insertData.requester_email || (auth?.currentUser?.email);
+      if (recipientEmail) {
+        const titleText = insertData.title || 'Your Errand';
+        const budgetText = insertData.budget ? `KSh ${Number(insertData.budget).toLocaleString()}` : 'Standard Rate';
+        const categoryText = insertData.category || 'General Task';
+        const pickupText = insertData.pickupLocation || (insertData.pickup?.name) || 'Not specified';
+        const dropoffText = insertData.dropoffLocation || (insertData.dropoff?.name) || (insertData.isInHouse ? 'In-house task' : 'Not specified');
+
+        const emailSubject = `Errand Posted: ${titleText}`;
+        const emailHtml = `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <span style="display: inline-block; background-color: #0a2e5c; color: #ffffff; font-weight: 800; padding: 8px 16px; border-radius: 8px; font-size: 14px; letter-spacing: 0.05em;">ERRANDLY</span>
+              <h2 style="color: #0a2e5c; margin: 16px 0 6px; font-size: 22px;">Errand Posted Successfully!</h2>
+              <p style="color: #64748b; font-size: 14px; margin: 0;">Your task is live and visible to verified local runners in Nairobi.</p>
+            </div>
+            <div style="background-color: #f8fafc; border-radius: 10px; padding: 18px; margin-bottom: 20px; border: 1px solid #e2e8f0;">
+              <p style="margin: 0 0 10px; font-size: 15px; color: #0f172a;"><strong>Task Title:</strong> ${titleText}</p>
+              <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Category:</strong> ${categoryText}</p>
+              <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Budget:</strong> ${budgetText}</p>
+              <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Pickup / Location:</strong> ${pickupText}</p>
+              <p style="margin: 0 0 10px; font-size: 14px; color: #334155;"><strong>Destination:</strong> ${dropoffText}</p>
+              ${insertData.description ? `<p style="margin: 0; font-size: 13px; color: #64748b; line-height: 1.5;"><strong>Instructions:</strong> ${insertData.description}</p>` : ''}
+            </div>
+            <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0 0 20px;">You will receive real-time notifications as runners bid and accept your errand request.</p>
+            <div style="text-align: center; margin-bottom: 24px;">
+              <a href="https://errandly.site/?errand=${id}" style="display: inline-block; background-color: #2891e2; color: #ffffff; padding: 12px 28px; font-weight: 700; border-radius: 8px; text-decoration: none; font-size: 14px;">Track Errand on Errandly</a>
+            </div>
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0 16px;" />
+            <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">&copy; ${new Date().getFullYear()} Errandly Kenya. All rights reserved.</p>
+          </div>
+        `;
+        actionService.sendEmail(recipientEmail, emailSubject, emailHtml, 'alert').catch(e => {
+          console.warn('[Email Auto-Notify] Failed to send errand posted confirmation email:', e?.message || e);
+        });
+      }
 
       return { id };
     } catch (error) {
