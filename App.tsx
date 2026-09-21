@@ -2319,19 +2319,15 @@ export default function App() {
                             </div>
                             <div className="space-y-2 pt-1">
                               {/* Phone verification item */}
-                              <div className="flex items-center justify-between p-2.5 bg-background rounded-xl border border-border">
-                                <div className="flex items-center gap-2">
-                                  <Phone size={14} className={user.phoneVerified ? "text-emerald-500" : "text-amber-500"} />
-                                  <div>
-                                    <span className="text-xs font-bold text-foreground">Phone Number</span>
-                                    {user.phone && <p className="text-[10px] text-muted-foreground">{formatPhoneDisplay(user.phone)}</p>}
+                              {!user.phoneVerified && (
+                                <div className="flex items-center justify-between p-2.5 bg-background rounded-xl border border-border">
+                                  <div className="flex items-center gap-2">
+                                    <Phone size={14} className="text-amber-500" />
+                                    <div>
+                                      <span className="text-xs font-bold text-foreground">Phone Number</span>
+                                      {user.phone && <p className="text-[10px] text-muted-foreground">{formatPhoneDisplay(user.phone)}</p>}
+                                    </div>
                                   </div>
-                                </div>
-                                {user.phoneVerified ? (
-                                  <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                                    <ShieldCheck size={14} /> Verified
-                                  </span>
-                                ) : (
                                   <button
                                     type="button"
                                     onClick={() => setShowPhoneVerificationModal(true)}
@@ -2339,8 +2335,8 @@ export default function App() {
                                   >
                                     Verify Phone
                                   </button>
-                                )}
-                              </div>
+                                </div>
+                              )}
                               {/* Email verification item */}
                               <div className="flex items-center justify-between p-2.5 bg-background rounded-xl border border-border">
                                 <div className="flex items-center gap-2">

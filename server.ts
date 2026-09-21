@@ -3784,12 +3784,21 @@ Please proceed with the task according to safety guidelines and update milestone
         // Mark as used instead of deleting if you prefer, or just delete. 
         // Based on image having is_used, we can mark it.
         await supabase.from('otp_codes').update({ is_used: true }).eq('phone_number', phone);
+        
         if (userId) {
           try {
             await supabase.from('profiles').update({ phone_verified: true, phone }).eq('id', userId);
             console.log(`[OTP] Updated phone_verified: true directly on profile for user ${userId}`);
           } catch (profErr: any) {
-            console.warn(`[OTP] Could not update profile phone_verified:`, profErr.message);
+            console.warn(`[OTP] Could not update profile phone_verified by ID:`, profErr.message);
+          }
+        } else if (phone) {
+          try {
+            // Update by phone if userId is not available (e.g. during login flow)
+            await supabase.from('profiles').update({ phone_verified: true }).eq('phone', phone);
+            console.log(`[OTP] Updated phone_verified: true on profile for phone ${phone}`);
+          } catch (profErr: any) {
+            console.warn(`[OTP] Could not update profile phone_verified by phone:`, profErr.message);
           }
         }
       }
@@ -4756,7 +4765,7 @@ Please proceed with the task according to safety guidelines and update milestone
 
   app.post("/api/auth/register", async (req, res) => {
     try {
-      const { name, email, phone, password } = req.body;
+      const { name, email, phone, password, phone_verified } = req.body;
       if (!name || !email || !phone || !password) {
         return res.status(400).json({ error: "All fields are required" });
       }
@@ -4838,7 +4847,7 @@ Please proceed with the task according to safety guidelines and update milestone
         completed_errands: 0,
         total_tasks: 0,
         theme: 'light',
-        phone_verified: false,
+        phone_verified: phone_verified || false,
         email_verified: false
       };
 

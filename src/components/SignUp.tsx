@@ -73,7 +73,9 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
         formData.username, 
         formData.email, 
         formData.phone, 
-        formData.password
+        formData.password,
+        UserRole.REQUESTER,
+        phoneVerified
       );
 
       console.log("[SignUp] Registration successful:", completeUser.id);

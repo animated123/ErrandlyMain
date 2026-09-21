@@ -1881,7 +1881,7 @@ export const firebaseService = {
     }
   },
 
-  register: async (name: string, email: string, phone: string, pass: string, role?: UserRole): Promise<User> => {
+  register: async (name: string, email: string, phone: string, pass: string, role?: UserRole, phoneVerified?: boolean): Promise<User> => {
     try {
       if (!phone || phone.trim() === '') throw new Error('Registration failed: Phone number is required');
       const formattedPhone = actionService.formatPhoneNumber(phone);
@@ -1903,7 +1903,8 @@ export const firebaseService = {
             email: lowercaseEmail,
             phone: formattedPhone,
             password: pass,
-            role: role || UserRole.REQUESTER
+            role: role || UserRole.REQUESTER,
+            phone_verified: phoneVerified
           })
         });
         if (backendRes?.success && backendRes?.user) {
