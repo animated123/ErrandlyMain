@@ -1809,7 +1809,7 @@ try {
 
 let activeFirestoreDatabaseId = '(default)';
 let firestoreDbChecked = false;
-const isFirestoreSyncEnabled = false; // Standby mode by default
+const isFirestoreSyncEnabled = true; // Active real-time sync mode
 
 // Real-Time SSE Clients for Firebase Infrastructure & Settings
 const firebaseRealtimeClients = new Set<express.Response>();
@@ -1837,7 +1837,7 @@ function reloadFirebaseConfig() {
 }
 
 async function getActiveFirestoreDbId(): Promise<string> {
-  if (firestoreDbChecked) return activeFirestoreDatabaseId;
+  if (firestoreDbChecked && activeFirestoreDatabaseId) return activeFirestoreDatabaseId;
   if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return '(default)';
   const configured = firebaseConfig.firestoreDatabaseId;
   if (configured && configured !== '(default)') {
@@ -1859,7 +1859,6 @@ async function getActiveFirestoreDbId(): Promise<string> {
 }
 
 function firebaseCollectionForTable(tableName: string): string {
-  if (tableName === 'profiles' || tableName === 'users') return 'users';
   return tableName;
 }
 
@@ -1923,7 +1922,22 @@ async function fetchAllRowsFromFirestore(tableName: string, force = false): Prom
     const col = firebaseCollectionForTable(tableName);
     const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(col)}?pageSize=300&key=${firebaseConfig.apiKey}`;
     const res = await axios.get(url, { timeout: 6000 });
-    const docs = res.data?.documents || [];
+    let docs = res.data?.documents || [];
+    
+    // Smooth fallback for profiles/users collections
+    if (docs.length === 0 && (tableName === 'profiles' || tableName === 'users')) {
+      const altCol = tableName === 'profiles' ? 'users' : 'profiles';
+      try {
+        const altUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(altCol)}?pageSize=300&key=${firebaseConfig.apiKey}`;
+        const altRes = await axios.get(altUrl, { timeout: 6000 });
+        if (altRes.data?.documents && altRes.data.documents.length > 0) {
+          docs = altRes.data.documents;
+        }
+      } catch (_err) {
+        // Fallback collection may not exist, continue
+      }
+    }
+
     return docs.map((d: any) => {
       const item = firestoreFieldsToJs(d.fields || {});
       const docId = d.name ? d.name.split('/').pop() : item.id;
@@ -1949,6 +1963,17 @@ async function upsertFirestoreRecord(tableName: string, docId: string, record: a
       headers: { 'Content-Type': 'application/json' },
       timeout: 10000
     });
+
+    // If updating profiles/users, keep both collections in parity
+    if (tableName === 'profiles' || tableName === 'users') {
+      const altCol = tableName === 'profiles' ? 'users' : 'profiles';
+      const altUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(altCol)}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+      axios.patch(altUrl, payload, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 10000
+      }).catch(() => {});
+    }
+
     return true;
   } catch (err: any) {
     if (err?.response?.status === 429 && retryCount < 5) {
@@ -1969,6 +1994,13 @@ async function deleteFirestoreRecord(tableName: string, docId: string, force = f
     const col = firebaseCollectionForTable(tableName);
     const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(col)}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
     await axios.delete(url, { timeout: 6000 });
+
+    if (tableName === 'profiles' || tableName === 'users') {
+      const altCol = tableName === 'profiles' ? 'users' : 'profiles';
+      const altUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${encodeURIComponent(dbId)}/documents/${encodeURIComponent(altCol)}/${encodeURIComponent(docId)}?key=${firebaseConfig.apiKey}`;
+      axios.delete(altUrl, { timeout: 6000 }).catch(() => {});
+    }
+
     return true;
   } catch (err: any) {
     console.warn(`[Firestore Sync Delete Notice] ${tableName}/${docId}:`, err?.message);
@@ -2028,7 +2060,12 @@ const KNOWN_SYNC_TABLES = [
   'saved_places',
   'featured_services',
   'service_listings',
-  'otp_codes'
+  'otp_codes',
+  'complaints',
+  'tickets',
+  'complaint_tickets',
+  'users',
+  'verification_codes'
 ];
 
 interface SyncAuditLogEntry {
@@ -2114,6 +2151,12 @@ async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
       });
     }
+
+    broadcastFirebaseRealtime('TABLE_DATA_CHANGED', {
+      tableName,
+      sourceUsed,
+      timestamp: new Date().toISOString()
+    });
   } catch (err: any) {
     console.warn(`[Sync Mirror Exception on '${tableName}']:`, err?.message);
   }
@@ -7657,7 +7700,7 @@ Please proceed with the task according to safety guidelines and update milestone
         promises.push((async () => {
           for (const tbl of tableList) {
             try {
-              const rows = await fetchAllRowsFromFirestore(tbl);
+              const rows = await fetchAllRowsFromFirestore(tbl, true);
               firebaseCounts[tbl] = rows.length;
             } catch (e) {
               firebaseCounts[tbl] = 0;
@@ -7772,7 +7815,7 @@ Please proceed with the task according to safety guidelines and update milestone
             executionTimeMs: Date.now() - t0
           });
         }
-        allRows = await fetchAllRowsFromFirestore(tableName);
+        allRows = await fetchAllRowsFromFirestore(tableName, true);
       } else {
         return res.status(400).json({ success: false, error: `Invalid data source: ${source}` });
       }

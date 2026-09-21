@@ -370,6 +370,24 @@ export default function App() {
     }
   }, [searchQuery]);
 
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return;
+      const searchParams = new URLSearchParams(window.location.search);
+      const isLogin = searchParams.get('login') === 'true' || window.location.hash.includes('login=true');
+      const isRegister = searchParams.get('register') === 'true' || window.location.hash.includes('register=true');
+      if (isLogin) {
+        setAuthModalMode('login');
+        setShowAuthModal(true);
+      } else if (isRegister) {
+        setAuthModalMode('register');
+        setShowAuthModal(true);
+      }
+    } catch (err) {
+      console.debug('Failed to parse URL auth query params:', err);
+    }
+  }, [currentPath]);
+
   const handleSmartCreate = async () => {
     if (!smartInput.trim()) return;
     setIsParsing(true);
@@ -1101,21 +1119,75 @@ export default function App() {
     );
   }
 
-  const renderGlobalAuthModal = () => (
-    <AuthModal 
-      isOpen={showAuthModal} 
-      onClose={() => setShowAuthModal(false)} 
-      onAuthSuccess={(u) => {
-        setUser(u);
-        setShowAuthModal(false);
-        if (postLoginRedirectPath) {
-          navigateTo(postLoginRedirectPath);
-          setPostLoginRedirectPath(null);
-        }
-      }} 
-      initialMode={authModalMode}
-      logoUrl={appSettings.logoUrl}
-    />
+  const handleAuthSuccess = (u: User, provider?: string) => {
+    setUser(u);
+    setShowAuthModal(false);
+    
+    // After successful sign in with google, if phone number or email is unverified, create a pop up to verify either
+    const isGoogle = provider === 'google' 
+      || (u as any)?.authProvider === 'google' 
+      || (u as any)?.provider === 'google'
+      || (u as any)?.auth_provider === 'google'
+      || (u as any)?.extraData?.auth_provider === 'google'
+      || (u as any)?.extraData?.auth_provider === 'firebase'
+      || (u as any)?.extra_data?.auth_provider === 'google'
+      || (u as any)?.extra_data?.auth_provider === 'firebase'
+      || (u as any)?.extraData?.auth_primary === true
+      || (u as any)?.auth_primary === true;
+
+    if (isGoogle) {
+      if (!u.phoneVerified || !u.phone) {
+        setShowPhoneVerificationModal(true);
+      } else if (!u.emailVerified) {
+        setShowEmailVerificationModal(true);
+      }
+    }
+    
+    if (postLoginRedirectPath) {
+      navigateTo(postLoginRedirectPath);
+      setPostLoginRedirectPath(null);
+    }
+  };
+
+  const renderGlobalModals = () => (
+    <>
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+        onAuthSuccess={handleAuthSuccess} 
+        initialMode={authModalMode}
+        logoUrl={appSettings.logoUrl}
+      />
+      {showPhoneVerificationModal && user && (
+        <PhoneVerificationModal 
+          user={user}
+          onClose={() => setShowPhoneVerificationModal(false)}
+          onSuccess={async () => {
+            setUser(prev => prev ? { ...prev, phoneVerified: true } : null);
+            const updated = await firebaseService.getCurrentUser();
+            if (updated) {
+              setUser(updated);
+              if (!updated.emailVerified) {
+                setShowEmailVerificationModal(true);
+              }
+            } else if (!user.emailVerified) {
+              setShowEmailVerificationModal(true);
+            }
+          }}
+        />
+      )}
+      {showEmailVerificationModal && user && (
+        <EmailVerificationModal 
+          user={user}
+          onClose={() => setShowEmailVerificationModal(false)}
+          onSuccess={async () => {
+            setUser(prev => prev ? { ...prev, emailVerified: true } : null);
+            const updated = await firebaseService.getCurrentUser();
+            if (updated) setUser(updated);
+          }}
+        />
+      )}
+    </>
   );
 
   if (currentPath === '/privacy' || currentPath === '/privacy-policy') {
@@ -1126,8 +1198,9 @@ export default function App() {
           appSettings={appSettings} 
           onBackToHome={() => navigateTo('/')}
           onNavigateTo={(p) => navigateTo(p)}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1140,8 +1213,9 @@ export default function App() {
           appSettings={appSettings} 
           onBackToHome={() => navigateTo('/')}
           onNavigateTo={(p) => navigateTo(p)}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1154,7 +1228,7 @@ export default function App() {
           appSettings={appSettings} 
           onBackToHome={() => navigateTo('/')} 
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1173,7 +1247,7 @@ export default function App() {
           onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
           onLogout={() => firebaseService.logout().then(() => setUser(null))}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1192,7 +1266,7 @@ export default function App() {
           onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
           onLogout={() => firebaseService.logout().then(() => setUser(null))}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1211,7 +1285,7 @@ export default function App() {
           onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
           onLogout={() => firebaseService.logout().then(() => setUser(null))}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1230,7 +1304,7 @@ export default function App() {
           onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
           onLogout={() => firebaseService.logout().then(() => setUser(null))}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1249,7 +1323,7 @@ export default function App() {
           onRegister={() => { setAuthModalMode('register'); setShowAuthModal(true); }}
           onLogout={() => firebaseService.logout().then(() => setUser(null))}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -1294,9 +1368,10 @@ export default function App() {
           path={currentPath}
           appSettings={appSettings} 
           onBackToHome={() => navigateTo('/')} 
-          onNavigateTo={(p) => navigateTo(p)} 
+          onNavigateTo={(p) => navigateTo(p)}
+          onLogin={() => { setAuthModalMode('login'); setShowAuthModal(true); }}
         />
-        {renderGlobalAuthModal()}
+        {renderGlobalModals()}
       </ErrorBoundary>
     );
   }
@@ -3236,19 +3311,7 @@ export default function App() {
     </Layout>
     </>
     )}
-    <AuthModal 
-        isOpen={showAuthModal} 
-        onClose={() => setShowAuthModal(false)} 
-        onAuthSuccess={(u) => {
-          setUser(u);
-          if (postLoginRedirectPath) {
-            navigateTo(postLoginRedirectPath);
-            setPostLoginRedirectPath(null);
-          }
-        }} 
-        initialMode={authModalMode}
-        logoUrl={appSettings.logoUrl}
-      />
+    {renderGlobalModals()}
 
       {user && (user.isTemporaryPassword || (user as any).is_temporary_password) && (
         <TemporaryPasswordModal 

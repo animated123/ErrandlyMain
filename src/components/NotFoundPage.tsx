@@ -20,13 +20,15 @@ interface NotFoundPageProps {
   appSettings?: AppSettings;
   onBackToHome: () => void;
   onNavigateTo?: (path: string) => void;
+  onLogin?: () => void;
 }
 
 export const NotFoundPage: React.FC<NotFoundPageProps> = ({
   path = '',
   appSettings,
   onBackToHome,
-  onNavigateTo = onBackToHome
+  onNavigateTo = onBackToHome,
+  onLogin
 }) => {
   const [searchErrandId, setSearchErrandId] = useState('');
 
@@ -84,14 +86,25 @@ export const NotFoundPage: React.FC<NotFoundPageProps> = ({
             </div>
           </div>
 
-          <button
-            id="notfound-back-home-nav-btn"
-            onClick={onBackToHome}
-            className="px-4 py-2 bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-black uppercase tracking-wider transition-colors flex items-center gap-2"
-          >
-            <Home size={14} />
-            <span className="hidden sm:inline">Return to Home</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (onLogin) onLogin();
+                else onNavigateTo('/?login=true');
+              }}
+              className="px-3.5 py-2 text-xs font-black uppercase tracking-wider text-[#0a2e5c] dark:text-white hover:text-primary transition-colors cursor-pointer"
+            >
+              Member Login
+            </button>
+            <button
+              id="notfound-back-home-nav-btn"
+              onClick={onBackToHome}
+              className="px-4 py-2 bg-[#0a2e5c] dark:bg-white text-white dark:text-[#0a2e5c] hover:opacity-90 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2"
+            >
+              <Home size={14} />
+              <span className="hidden sm:inline">Return to Home</span>
+            </button>
+          </div>
         </div>
       </header>
 

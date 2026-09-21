@@ -6,7 +6,7 @@ import { UserRole } from '../../types';
 import { Logo } from './Logo';
 
 interface SignUpProps {
-  onSuccess?: (user: any) => void;
+  onSuccess?: (user: any, provider?: string) => void;
   onSwitchToLogin?: () => void;
   logoUrl?: string;
 }
@@ -293,8 +293,8 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
             setError(null);
             try {
               const user = await firebaseService.signInWithOAuth('google');
-              if (user) {
-                onSuccess(user);
+              if (user && onSuccess) {
+                onSuccess(user, 'google');
               }
             } catch (err: any) {
               setError(err?.message || 'Google signup failed');

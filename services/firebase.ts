@@ -62,11 +62,11 @@ if (firebaseConfig && firebaseConfig.apiKey) {
     auth = getAuth(app);
     
     const dbId = firebaseConfig.firestoreDatabaseId;
-    if (dbId) {
+    if (dbId && dbId !== '(default)') {
       console.log(`[Firebase] Initializing Firestore with Database ID: ${dbId}`);
       db = getFirestore(app, dbId);
     } else {
-      console.warn("[Firebase] No firestoreDatabaseId found, falling back to '(default)'");
+      console.log("[Firebase] Initializing Firestore with '(default)' database");
       db = getFirestore(app);
     }
     

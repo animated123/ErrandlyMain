@@ -9,13 +9,15 @@ interface PublicLegalPageProps {
   appSettings?: AppSettings;
   onBackToHome: () => void;
   onNavigateTo: (path: string) => void;
+  onLogin?: () => void;
 }
 
 export const PublicLegalPage: React.FC<PublicLegalPageProps> = ({
   type,
   appSettings,
   onBackToHome,
-  onNavigateTo
+  onNavigateTo,
+  onLogin
 }) => {
   const isPrivacy = type === 'privacy';
   const content = isPrivacy ? PRIVACY_POLICY : TERMS_OF_SERVICE;
@@ -70,6 +72,15 @@ export const PublicLegalPage: React.FC<PublicLegalPageProps> = ({
               className="px-3 py-1.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 text-xs font-bold transition-colors"
             >
               Switch to {isPrivacy ? 'Terms of Service' : 'Privacy Policy'}
+            </button>
+            <button
+              onClick={() => {
+                if (onLogin) onLogin();
+                else onNavigateTo('/?login=true');
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-[#0a2e5c] dark:bg-white text-white dark:text-[#0a2e5c] text-xs font-black uppercase tracking-wider shadow-sm hover:opacity-90 transition-all cursor-pointer"
+            >
+              Member Login
             </button>
           </div>
         </div>

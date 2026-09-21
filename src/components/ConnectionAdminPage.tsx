@@ -227,6 +227,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [syncSearch, setSyncSearch] = useState('');
   const [syncMsg, setSyncMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [autoRefreshSync, setAutoRefreshSync] = useState(true);
+  const [autoRefreshExplorer, setAutoRefreshExplorer] = useState(true);
 
   // Check All Systems Diagnostic State
   const [diagnosticLoading, setDiagnosticLoading] = useState(false);
@@ -1116,10 +1117,12 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     }
   };
 
-  // SSE Stream Listener for Real-Time Firebase Infrastructure Settings
+  // SSE Stream Listener for Real-Time Firebase Infrastructure Settings and Table Data Sync
   useEffect(() => {
-    if (!isAuthenticated || activeTab !== 'firebase') return;
-    fetchFirebaseInfrastructure();
+    if (!isAuthenticated || (activeTab !== 'firebase' && activeTab !== 'explorer' && activeTab !== 'sync')) return;
+    if (activeTab === 'firebase') {
+      fetchFirebaseInfrastructure();
+    }
 
     const token = sessionStorage.getItem('connectionadmin_token') || '';
     if (!token) return;
@@ -1144,6 +1147,23 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
 
       eventSource.addEventListener('HEARTBEAT', () => {
         setFirebaseRealtimeConnected(true);
+      });
+
+      eventSource.addEventListener('TABLE_DATA_CHANGED', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          setFirebaseRealtimeEvents(prev => [{
+            type: 'UPDATED',
+            timestamp: payload.timestamp || new Date().toISOString(),
+            text: `Table '${payload.tableName}' updated via ${payload.sourceUsed}`
+          }, ...prev.slice(0, 19)]);
+          // Instant real-time refresh of Data Explorer and parity counts
+          fetchExplorerTables();
+          fetchExplorerData(explorerSource, explorerTable, explorerPage, explorerPageSize, explorerSearch);
+          fetchSyncStatus(true);
+        } catch (err) {
+          console.debug("Error parsing table change payload", err);
+        }
       });
 
       eventSource.addEventListener('INFRASTRUCTURE_SETTINGS_UPDATED', (e: MessageEvent) => {
@@ -1175,7 +1195,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
         eventSource.close();
       }
     };
-  }, [isAuthenticated, activeTab, fetchFirebaseInfrastructure]);
+  }, [isAuthenticated, activeTab, fetchFirebaseInfrastructure, explorerSource, explorerTable, explorerPage, explorerPageSize, explorerSearch, fetchExplorerTables, fetchExplorerData, fetchSyncStatus]);
 
   // Multi-DB Tables & Data Explorer Helpers (Local, Postgres, Supabase, Firebase)
   const fetchExplorerTables = useCallback(async () => {
@@ -1318,6 +1338,16 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     }, 10000);
     return () => clearInterval(interval);
   }, [isAuthenticated, autoRefreshSync, fetchSyncStatus]);
+
+  // Periodic Multi-DB Explorer Parity Streamer (Live 6s sync)
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'explorer' || !autoRefreshExplorer) return;
+    const interval = setInterval(() => {
+      fetchExplorerTables();
+      fetchExplorerData(explorerSource, explorerTable, explorerPage, explorerPageSize, explorerSearch);
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, activeTab, autoRefreshExplorer, explorerSource, explorerTable, explorerPage, explorerPageSize, explorerSearch, fetchExplorerTables, fetchExplorerData]);
 
   // Periodic log streamer
   useEffect(() => {
@@ -4343,6 +4373,19 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
 
               <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap">
                 <button
+                  onClick={() => setAutoRefreshExplorer(!autoRefreshExplorer)}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 border transition ${
+                    autoRefreshExplorer
+                      ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300 shadow-lg shadow-emerald-950/40'
+                      : 'bg-slate-900 border-slate-800 text-slate-400'
+                  }`}
+                  title={autoRefreshExplorer ? 'Real-time 6s Live Auto-Polling active' : 'Live Auto-Polling paused'}
+                >
+                  <Radio className={`w-3.5 h-3.5 ${autoRefreshExplorer ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
+                  {autoRefreshExplorer ? 'Live Real-Time Sync ON' : 'Real-Time Sync PAUSED'}
+                </button>
+
+                <button
                   onClick={() => {
                     fetchExplorerTables();
                     fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, explorerSearch);
@@ -4352,6 +4395,25 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${explorerLoadingData ? 'animate-spin' : ''}`} />
                   Refresh Table Data
+                </button>
+
+                <button
+                  onClick={async () => {
+                    try {
+                      setSyncTriggering(true);
+                      await handleTriggerSync(true);
+                      fetchExplorerTables();
+                      fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, explorerSearch);
+                    } finally {
+                      setSyncTriggering(false);
+                    }
+                  }}
+                  disabled={syncTriggering}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-cyan-600/20 transition disabled:opacity-50"
+                  title="Synchronize and mirror all mismatched rows across Postgres, Local JSON, and Firebase Firestore"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncTriggering ? 'animate-spin' : ''}`} />
+                  Reconcile All DBs Now
                 </button>
 
                 <button

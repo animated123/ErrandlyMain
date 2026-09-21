@@ -10,7 +10,7 @@ import SignUp from './SignUp';
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAuthSuccess: (user: User) => void;
+  onAuthSuccess: (user: User, provider?: string) => void;
   initialMode: 'login' | 'register';
   logoUrl?: string;
 }
@@ -37,18 +37,6 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
     setError(null);
     setIsProcessing(false);
   }, [initialMode, isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const unsub = firebaseService.subscribeToAuthChanges((u) => {
-      if (u?.id && isOpen) {
-        setIsProcessing(false);
-        onAuthSuccess(u);
-        onClose();
-      }
-    });
-    return () => unsub();
-  }, [isOpen, onAuthSuccess, onClose]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -120,7 +108,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25, ease: "easeOut" }}
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md overflow-y-auto"
+          className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md overflow-y-auto"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               onClose();
@@ -435,7 +423,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
                           try {
                             const user = await firebaseService.signInWithOAuth('google');
                             if (user) {
-                              onAuthSuccess(user);
+                              onAuthSuccess(user, 'google');
                               onClose();
                             }
                           } catch (err: any) {
@@ -466,8 +454,8 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess, initialMode,
                     transition={{ duration: 0.25, ease: "easeOut" }}
                   >
                     <SignUp 
-                      onSuccess={(user) => {
-                        onAuthSuccess(user);
+                      onSuccess={(user, provider) => {
+                        onAuthSuccess(user, provider);
                         onClose();
                       }}
                       onSwitchToLogin={() => setMode('login')}
