@@ -3616,10 +3616,92 @@ Please proceed with the task according to safety guidelines and update milestone
     console.warn(`[OTP] SMS gateway fallback for ${targetPhone}. Reason: ${smsErrorMessage || 'No SMS token'}. Code: ${otp}`);
     return res.json({
       success: true,
-      message: smsErrorMessage ? `SMS gateway unavailable: ${smsErrorMessage}. Code provided for verification.` : "OTP generated (dev/test mode).",
-      devMode: true,
-      code: otp
+      message: smsErrorMessage ? `SMS gateway unavailable: ${smsErrorMessage}.` : "Verification code generated.",
+      devMode: true
     });
+  });
+
+  // Email Verification Status Check
+  app.get("/api/auth/email-verification/status", async (req, res) => {
+    try {
+      const { userId } = req.query;
+      if (!userId) return res.status(400).json({ error: "userId is required" });
+
+      if (!supabase) return res.status(500).json({ error: "Database offline" });
+
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('email_verified')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      res.json({ verified: profile?.email_verified || false });
+    } catch (err: any) {
+      console.error("[Email Verification Status] Error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Email Verification Link Handler (Public)
+  app.get("/api/auth/email-verification/verify", async (req, res) => {
+    try {
+      const { userId, email, code } = req.query;
+      if (!code || (!userId && !email)) {
+        return res.status(400).send("<h1>Invalid verification link</h1>");
+      }
+
+      const emailLower = String(email || '').toLowerCase().trim();
+      
+      // 1. Check otpStore (memory)
+      let stored = emailLower ? otpStore.get(`email:${emailLower}`) : null;
+      
+      // 2. Check Supabase if memory fails or for persistent storage
+      if (!stored && supabase) {
+        const query = supabase.from('otp_codes').select('*').eq('is_used', false);
+        if (emailLower) query.eq('phone_number', emailLower);
+        
+        const { data: dbCodes } = await query.order('created_at', { ascending: false }).limit(1);
+        if (dbCodes && dbCodes.length > 0) {
+          stored = { otp: dbCodes[0].code, expiresAt: new Date(dbCodes[0].expires_at).getTime() };
+        }
+      }
+
+      if (!stored || stored.otp !== code || Date.now() > stored.expiresAt) {
+        return res.status(400).send(`
+          <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+            <h1 style="color: #ef4444;">Verification Link Expired</h1>
+            <p>This verification link is invalid or has expired. Please request a new one from the app.</p>
+            <a href="/" style="color: #4f46e5; font-weight: bold;">Return to Home</a>
+          </div>
+        `);
+      }
+
+      // Mark as verified in DB
+      if (supabase) {
+        const updateQuery = supabase.from('profiles').update({ email_verified: true });
+        if (userId) updateQuery.eq('id', userId);
+        else updateQuery.eq('email', emailLower);
+        
+        await updateQuery;
+        
+        // Mark OTP as used
+        if (emailLower) {
+          await supabase.from('otp_codes').update({ is_used: true }).eq('phone_number', emailLower).eq('code', code);
+        }
+      }
+
+      res.send(`
+        <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+          <h1 style="color: #10b981;">Email Verified!</h1>
+          <p>Your email has been successfully verified. You can now return to the app.</p>
+          <button onclick="window.close()" style="background: #4f46e5; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold;">Close Window</button>
+          <script>setTimeout(() => window.close(), 5000);</script>
+        </div>
+      `);
+    } catch (err: any) {
+      res.status(500).send(`<h1>Verification error</h1><p>${err.message}</p>`);
+    }
   });
 
   // OTP Verification (Robust DB-First Lookup)
@@ -3737,7 +3819,7 @@ Please proceed with the task according to safety guidelines and update milestone
   });
 
   // --- Email Verification Endpoints ---
-  app.post(["/api/email/verify/send", "/api/auth/send-verification-email"], async (req, res) => {
+  app.post(["/api/email/verify/send", "/api/auth/send-verification-email", "/api/auth/email-verification/send"], async (req, res) => {
     try {
       const { email, userId } = req.body;
       if (!email) return res.status(400).json({ error: "Email address is required" });
@@ -3790,6 +3872,8 @@ Please proceed with the task according to safety guidelines and update milestone
       let emailDispatched = false;
       let emailError = "";
 
+      const verificationLink = `${req.protocol}://${req.get('host')}/api/auth/email-verification/verify?userId=${userId || ''}&email=${encodeURIComponent(emailLower)}&code=${otp}`;
+
       const emailHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px 24px; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0;">
           <div style="text-align: center; margin-bottom: 24px;">
@@ -3797,13 +3881,13 @@ Please proceed with the task according to safety guidelines and update milestone
             <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Account Security & Email Verification</p>
           </div>
           <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 24px;">
-            <p style="margin: 0 0 12px; color: #334155; font-size: 15px; font-weight: 500;">Your 6-digit verification code is:</p>
-            <div style="display: inline-block; background: #4f46e5; color: #ffffff; font-size: 32px; font-weight: 900; letter-spacing: 8px; padding: 12px 28px; border-radius: 10px; font-family: monospace;">
-              ${otp}
-            </div>
-            <p style="margin: 14px 0 0; color: #94a3b8; font-size: 13px;">This code will expire in 60 minutes.</p>
+            <p style="margin: 0 0 12px; color: #334155; font-size: 15px; font-weight: 500;">Click the button below to verify your email:</p>
+            <a href="${verificationLink}" style="display: inline-block; background: #4f46e5; color: #ffffff; font-size: 16px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 10px; margin: 12px 0;">
+              Verify Email Address
+            </a>
+            <p style="margin: 14px 0 0; color: #94a3b8; font-size: 13px;">Or use this code: <strong>${otp}</strong> (Expires in 60 minutes)</p>
           </div>
-          <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0;">If you did not request this code, you can safely ignore this email. Someone may have entered your email address by mistake.</p>
+          <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 0;">If you did not request this code, you can safely ignore this email.</p>
           <hr style="border: 0; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
           <p style="color: #94a3b8; font-size: 11px; text-align: center; margin: 0;">&copy; ${new Date().getFullYear()} Errand Runner. All rights reserved.</p>
         </div>
@@ -3867,18 +3951,16 @@ Please proceed with the task according to safety guidelines and update milestone
       if (emailDispatched) {
         return res.json({
           success: true,
-          message: "Verification code sent to your email.",
-          code: otp // Included for seamless fallback / dev testing
+          message: "Verification code sent to your email."
         });
       }
 
-      // If both remote gateways were unavailable, return code for uninterrupted UX
-      console.warn(`[Email OTP] Both email delivery providers unavailable (${emailError}). Providing fallback code.`);
+      // If both remote gateways were unavailable, return success message
+      console.warn(`[Email OTP] Both email delivery providers unavailable (${emailError}).`);
       return res.json({
         success: true,
         message: "Verification code generated.",
-        devMode: true,
-        code: otp
+        devMode: true
       });
     } catch (error: any) {
       console.error("[Email OTP] Error sending verification email:", error);
@@ -4757,7 +4839,7 @@ Please proceed with the task according to safety guidelines and update milestone
         total_tasks: 0,
         theme: 'light',
         phone_verified: false,
-        email_verified: true
+        email_verified: false
       };
 
       const result = await supabase.from('profiles').insert(profilePayload);

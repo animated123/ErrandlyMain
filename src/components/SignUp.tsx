@@ -42,7 +42,9 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
           if (!phoneToVerify || phoneToVerify.length < 5) {
             throw new Error("Please enter a valid phone number");
           }
+          console.log("[SignUp] Sending phone verification to:", phoneToVerify);
           const result = await firebaseService.sendPhoneVerificationCode(phoneToVerify, null);
+          console.log("[SignUp] OTP sent successfully:", result);
           setConfirmationResult(result);
           setOtpSent(true);
           setIsProcessing(false);
@@ -51,15 +53,21 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
           // Verify the code via server
           const phoneToVerify = formData.phone?.trim();
           setIsVerifyingOtp(true);
+          console.log("[SignUp] Verifying OTP:", otpCode, "for", phoneToVerify);
           await firebaseService.verifySmsCode('', phoneToVerify, otpCode);
+          console.log("[SignUp] OTP verified successfully");
           setPhoneVerified(true);
           setOtpSent(false);
           setIsVerifyingOtp(false);
-          // Continue to register after verification
+          
+          // Auto-trigger registration after phone verification if they clicked it once already
+          // We'll set isProcessing back to true to continue the flow
+          setIsProcessing(true);
         }
       }
 
       setSyncStatus('syncing');
+      console.log("[SignUp] Proceeding to final registration for:", formData.email);
       // Step 2: Register with Email/Password and include the verified phone
       const completeUser = await firebaseService.register(
         formData.username, 
@@ -68,8 +76,11 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
         formData.password
       );
 
+      console.log("[SignUp] Registration successful:", completeUser.id);
+
       // Trigger native Firebase email verification
       try {
+        console.log("[SignUp] Triggering email verification for:", completeUser.email);
         await firebaseService.generateEmailVerificationCode(completeUser.id, completeUser.email);
       } catch (verifErr) {
         console.warn("[SignUp] Verification email trigger failed:", verifErr);

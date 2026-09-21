@@ -2072,9 +2072,14 @@ export const firebaseService = {
 
   sendPhoneVerificationCode: async (phoneNumber: string, _recaptchaVerifier: any) => {
     try {
+      console.log("[firebaseService] sendPhoneVerificationCode for:", phoneNumber);
       const formattedPhone = actionService.formatPhoneNumber(phoneNumber);
-      if (!formattedPhone) throw new Error('Invalid phone number format. Please provide a valid number.');
+      if (!formattedPhone) {
+        console.error("[firebaseService] Invalid phone format:", phoneNumber);
+        throw new Error('Invalid phone number format. Please provide a valid number.');
+      }
       
+      console.log("[firebaseService] Calling /api/sms/verify/send with:", formattedPhone);
       const response = await fetch(`${API_BASE_URL}/api/sms/verify/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2082,6 +2087,8 @@ export const firebaseService = {
       });
 
       const data = await response.json();
+      console.log("[firebaseService] /api/sms/verify/send response:", response.status, data);
+      
       if (!response.ok) {
         throw new Error(data.error || data.message || "Failed to send verification code");
       }
@@ -2806,57 +2813,34 @@ export const firebaseService = {
   // Verification logic continues...
   generateEmailVerificationCode: async (userId: string, email: string) => {
     try {
-      if (!auth || !auth.currentUser) throw new Error("No authenticated user found");
-      
-      // If already verified, don't send
-      if (auth.currentUser.emailVerified) {
-        return { success: true, message: "Email already verified" };
+      console.log("[firebaseService] generateEmailVerificationCode for:", email, "UID:", userId);
+      const response = await fetch(`${API_BASE_URL}/api/auth/email-verification/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, email })
+      });
+      console.log("[firebaseService] Email verification send response:", response.status);
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to send verification email");
       }
-
-      console.log(`[AuthService] Sending native Firebase email verification for ${userId}`);
-      const { sendEmailVerification } = await import('firebase/auth');
-      
-      const actionCodeSettings = {
-        url: window.location.origin, // Dynamic URL based on current environment
-        handleCodeInApp: true
-      };
-      
-      await sendEmailVerification(auth.currentUser, actionCodeSettings);
       return { success: true, message: "Verification email sent" };
     } catch (error: any) {
-      if (error?.code === 'auth/too-many-requests' || String(error?.message).includes('too-many-requests')) {
-        console.warn('[AuthService] Firebase rate limit hit for email verification. Skipping.');
-        return { success: true, message: "A verification email was recently sent. Please check your inbox or try again in a few minutes." };
-      }
-      console.debug('Error sending email verification (logged as debug):', error);
+      console.error("[firebaseService] generateEmailVerificationCode error:", error);
       throw error;
     }
   },
 
   checkEmailVerification: async (userId: string) => {
     try {
-      if (!auth || !auth.currentUser) return false;
-      
-      const { reload } = await import('firebase/auth');
-      await reload(auth.currentUser);
-      
-      const isVerified = auth.currentUser.emailVerified;
-      
-      if (isVerified) {
-        // Update database
-        if (supabase) {
-          await supabase.from('profiles').update({ email_verified: true }).eq('id', userId);
-        }
-        
-        // Update cache
-        if (firebaseService._currentUserCache && (firebaseService._currentUserCache.id === userId || (firebaseService._currentUserCache as any).uid === userId)) {
-          firebaseService._currentUserCache.emailVerified = true;
-        }
-      }
-      
-      return isVerified;
+      console.log("[firebaseService] checkEmailVerification for UID:", userId);
+      const response = await fetch(`${API_BASE_URL}/api/auth/email-verification/status?userId=${userId}`);
+      if (!response.ok) return false;
+      const data = await response.json();
+      console.log("[firebaseService] Email verification status:", data.verified);
+      return data.verified || false;
     } catch (error) {
-      console.error('Error checking email verification:', error);
+      console.error("[firebaseService] checkEmailVerification error:", error);
       return false;
     }
   },
