@@ -31,8 +31,6 @@ export default function PhoneVerificationModal({ user, onClose, onSuccess }: Pho
 
     setLoading(true);
     setError(null);
-    setDevMode(false);
-    setDevCode(null);
     try {
       const userId = user?.id || (user as any)?.uid || '';
       const res: any = await firebaseService.sendSmsVerificationCode(userId, phone);
