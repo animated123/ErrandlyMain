@@ -2099,60 +2099,309 @@ function addSyncAuditLog(table: string, action: string, recordsCount: number, st
   }
 }
 
+// =========================================================================
+// SECONDARY DB VERIFICATION & AUTHORIZATION QUEUE
+// Architecture Rules:
+// 1. Supabase is Primary Storage (Source of Truth).
+// 2. PostgreSQL and Local JSON are Secondary Storage (Postgres acts as HA Secondary DB).
+// 3. Changes from Supabase sync to secondary DBs immediately.
+// 4. Changes in Secondary DBs MUST go through Connection Admin verification before authorization to sync to Supabase.
+// 5. Never sync directly to Supabase from secondary DBs without admin authorization.
+// =========================================================================
+
+export interface SyncVerificationItem {
+  id: string;
+  tableName: string;
+  recordId: string;
+  sourceDb: 'postgres_ha' | 'local_storage';
+  sourceDbLabel: string;
+  operation: 'insert' | 'update' | 'upsert' | 'delete';
+  data: any;
+  previousData?: any;
+  status: 'pending' | 'authorized' | 'rejected';
+  createdAt: string;
+  reviewedAt?: string | null;
+  reviewedBy?: string | null;
+  note?: string;
+  syncResult?: any;
+}
+
+const VERIFICATION_QUEUE_FILE = isVercelEnv
+  ? path.join("/tmp", "sync_verification_queue.json")
+  : path.join(process.cwd(), "sync_verification_queue.json");
+
+let syncVerificationQueue: SyncVerificationItem[] = [];
+
+function loadVerificationQueue() {
+  try {
+    if (fs.existsSync(VERIFICATION_QUEUE_FILE)) {
+      const content = fs.readFileSync(VERIFICATION_QUEUE_FILE, "utf-8");
+      syncVerificationQueue = JSON.parse(content) || [];
+      console.log(`[Sync Verification Gate] Loaded ${syncVerificationQueue.length} items from verification queue.`);
+    }
+  } catch (err: any) {
+    console.warn("[Sync Verification Gate] Notice loading verification queue:", err?.message);
+    syncVerificationQueue = [];
+  }
+}
+
+function saveVerificationQueue() {
+  try {
+    safeWriteJsonFile(VERIFICATION_QUEUE_FILE, syncVerificationQueue);
+  } catch (err: any) {
+    console.warn("[Sync Verification Gate] Notice saving verification queue:", err?.message);
+  }
+}
+
+loadVerificationQueue();
+
+function queueSecondaryChangeForVerification(item: {
+  tableName: string;
+  recordId: string;
+  sourceDb: 'postgres_ha' | 'local_storage';
+  sourceDbLabel?: string;
+  operation: 'insert' | 'update' | 'upsert' | 'delete';
+  data: any;
+  previousData?: any;
+}) {
+  const sourceDbLabel = item.sourceDbLabel || (item.sourceDb === 'postgres_ha' ? 'PostgreSQL HA Secondary DB' : 'Local Storage');
+  
+  // Deduplicate pending items for same table and recordId
+  const existingIdx = syncVerificationQueue.findIndex(
+    v => v.tableName === item.tableName && String(v.recordId) === String(item.recordId) && v.status === 'pending'
+  );
+
+  const verificationItem: SyncVerificationItem = {
+    id: existingIdx >= 0 ? syncVerificationQueue[existingIdx].id : `verif_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+    tableName: item.tableName,
+    recordId: String(item.recordId),
+    sourceDb: item.sourceDb,
+    sourceDbLabel,
+    operation: item.operation,
+    data: item.data,
+    previousData: item.previousData,
+    status: 'pending',
+    createdAt: existingIdx >= 0 ? syncVerificationQueue[existingIdx].createdAt : new Date().toISOString(),
+    reviewedAt: null,
+    reviewedBy: null
+  };
+
+  if (existingIdx >= 0) {
+    syncVerificationQueue[existingIdx] = verificationItem;
+  } else {
+    syncVerificationQueue.unshift(verificationItem);
+    if (syncVerificationQueue.length > 500) {
+      syncVerificationQueue.pop();
+    }
+  }
+
+  saveVerificationQueue();
+
+  addSyncAuditLog(
+    item.tableName,
+    'SECONDARY_CHANGE_QUEUED',
+    1,
+    'warning',
+    `Secondary change in ${sourceDbLabel} [ID: ${item.recordId}] blocked from direct Supabase sync. Queued for Connection Admin verification.`
+  );
+
+  console.log(`[HA Secondary Gate] Intercepted change on '${item.tableName}' [ID: ${item.recordId}] from ${item.sourceDb}. Direct sync to Supabase blocked. Queued for Connection Admin authorization.`);
+  return verificationItem;
+}
+
+function extractAndQueueSecondaryChanges(
+  tableName: string,
+  chainCalls: Array<{ method: string, args: any[] }>,
+  sourceDb: 'postgres_ha' | 'local_storage'
+) {
+  try {
+    let operation: 'insert' | 'update' | 'upsert' | 'delete' = 'update';
+    let body: any = null;
+    let targetId: string | null = null;
+
+    for (const call of chainCalls) {
+      if (['insert', 'update', 'upsert', 'delete'].includes(call.method)) {
+        operation = call.method as any;
+        body = call.args[0];
+      }
+      if (call.method === 'eq' && (call.args[0] === 'id' || call.args[0] === '_id')) {
+        targetId = String(call.args[1]);
+      }
+      if (call.method === 'match' && call.args[0] && (call.args[0].id || call.args[0]._id)) {
+        targetId = String(call.args[0].id || call.args[0]._id);
+      }
+    }
+
+    if (operation === 'insert' || operation === 'upsert') {
+      const items = Array.isArray(body) ? body : [body];
+      for (const it of items) {
+        if (!it) continue;
+        const recId = it.id || it._id || targetId || `${tableName}_${Math.random().toString(36).substr(2, 8)}`;
+        queueSecondaryChangeForVerification({
+          tableName,
+          recordId: recId,
+          sourceDb,
+          operation,
+          data: it
+        });
+      }
+    } else if (operation === 'update') {
+      const recId = targetId || body?.id || `target_${Date.now()}`;
+      queueSecondaryChangeForVerification({
+        tableName,
+        recordId: recId,
+        sourceDb,
+        operation,
+        data: body
+      });
+    } else if (operation === 'delete') {
+      const recId = targetId || 'unknown';
+      queueSecondaryChangeForVerification({
+        tableName,
+        recordId: recId,
+        sourceDb,
+        operation,
+        data: { id: recId }
+      });
+    }
+  } catch (err: any) {
+    console.warn(`[extractAndQueueSecondaryChanges] Error on '${tableName}':`, err?.message);
+  }
+}
+
+async function authorizeSecondaryChange(verificationId: string, reviewedBy: string = 'admin') {
+  const item = syncVerificationQueue.find(v => v.id === verificationId);
+  if (!item) {
+    throw new Error(`Verification record '${verificationId}' not found.`);
+  }
+
+  if (item.status === 'authorized') {
+    return { success: true, item, message: "Item is already authorized." };
+  }
+
+  if (!primaryPgPool || !primaryPgConnected) {
+    throw new Error("Primary Supabase database connection is offline. Cannot synchronize authorized change.");
+  }
+
+  let syncResult: any = null;
+  if (item.operation === 'delete') {
+    syncResult = await executePostgresOperation(primaryPgPool, item.tableName, [
+      { method: 'delete', args: [] },
+      { method: 'eq', args: ['id', item.recordId] }
+    ]);
+  } else {
+    syncResult = await executePostgresOperation(primaryPgPool, item.tableName, [
+      { method: 'upsert', args: [item.data] }
+    ]);
+  }
+
+  // Once Supabase is updated, immediately synchronize down to other databases:
+  // "After supabase change it can sync to other db. Never sync directly to supabase"
+  const chainCalls = item.operation === 'delete'
+    ? [{ method: 'delete', args: [] }, { method: 'eq', args: ['id', item.recordId] }]
+    : [{ method: 'upsert', args: [item.data] }];
+
+  // Synchronize immediately to secondary DBs (Postgres HA and local storage)
+  if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
+    executePostgresOperation(localPgPool, item.tableName, chainCalls).catch(e => {
+      console.warn(`[Sync Mirror After Supabase Authorization] Local PG:`, e.message);
+    });
+  }
+  executeLocalDbOperation(item.tableName, chainCalls).catch(e => {
+    console.warn(`[Sync Mirror After Supabase Authorization] Local JSON:`, e.message);
+  });
+  mirrorWriteToFirestore(item.tableName, chainCalls).catch(e => {
+    console.warn(`[Sync Mirror After Supabase Authorization] Firestore:`, e?.message);
+  });
+
+  item.status = 'authorized';
+  item.reviewedAt = new Date().toISOString();
+  item.reviewedBy = reviewedBy;
+  item.syncResult = syncResult;
+  saveVerificationQueue();
+
+  addSyncAuditLog(
+    item.tableName,
+    'ADMIN_AUTHORIZED_SYNC',
+    1,
+    'success',
+    `Authorized & synchronized change from ${item.sourceDbLabel} [ID: ${item.recordId}] to Supabase. Immediately propagated downstream to all secondary DBs.`
+  );
+
+  return { success: true, item };
+}
+
+function rejectSecondaryChange(verificationId: string, note?: string, reviewedBy: string = 'admin') {
+  const item = syncVerificationQueue.find(v => v.id === verificationId);
+  if (!item) {
+    throw new Error(`Verification record '${verificationId}' not found.`);
+  }
+
+  item.status = 'rejected';
+  item.reviewedAt = new Date().toISOString();
+  item.reviewedBy = reviewedBy;
+  item.note = note || 'Rejected by Connection Admin';
+  saveVerificationQueue();
+
+  addSyncAuditLog(
+    item.tableName,
+    'ADMIN_REJECTED_SYNC',
+    1,
+    'warning',
+    `Admin rejected sync to Supabase for ${item.sourceDbLabel} change [ID: ${item.recordId}]. Note: ${item.note}`
+  );
+
+  return { success: true, item };
+}
+
 async function mirrorWriteToActiveSources(tableName: string, chainCalls: Array<{ method: string, args: any[] }>, sourceUsed: 'primary' | 'local_pg' | 'json' | 'firebase') {
   try {
     if (sourceUsed === 'primary') {
+      // 1. Primary (Supabase) write: Synchronize to other DBs (Postgres HA Secondary & Local JSON) immediately!
       if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
         executePostgresOperation(localPgPool, tableName, chainCalls).catch(err => {
-          console.warn(`[Sync Mirror] Notice mirroring write to Local PG on '${tableName}':`, err.message);
+          console.warn(`[Sync Mirror] Notice mirroring write from Supabase to Postgres HA Secondary on '${tableName}':`, err.message);
         });
       }
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
-        console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
+        console.warn(`[Sync Mirror] Notice mirroring write from Supabase to Local JSON on '${tableName}':`, err.message);
       });
       mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
       });
     } else if (sourceUsed === 'local_pg') {
-      if (primaryPgPool && primaryPgConnected && primaryPgPool !== localPgPool) {
-        executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
-          console.warn(`[Sync Mirror] Notice mirroring write to Primary PG on '${tableName}':`, err.message);
-        });
-      }
+      // 2. Postgres HA Secondary write:
+      // Never sync directly to Supabase! Keep secondary stores in sync, and queue change for Connection Admin verification
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
       });
       mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
       });
+      extractAndQueueSecondaryChanges(tableName, chainCalls, 'postgres_ha');
     } else if (sourceUsed === 'json') {
-      if (primaryPgPool && primaryPgConnected) {
-        executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
-          console.warn(`[Sync Mirror] Notice mirroring write to Primary PG from JSON on '${tableName}':`, err.message);
-        });
-      }
+      // 3. Local Storage write:
+      // Never sync directly to Supabase! Keep Postgres HA standby in sync, and queue change for Connection Admin verification
       if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
         executePostgresOperation(localPgPool, tableName, chainCalls).catch(err => {
-          console.warn(`[Sync Mirror] Notice mirroring write to Local PG from JSON on '${tableName}':`, err.message);
+          console.warn(`[Sync Mirror] Notice mirroring write from JSON to Postgres HA Secondary on '${tableName}':`, err.message);
         });
       }
       mirrorWriteToFirestore(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Firestore on '${tableName}':`, err?.message);
       });
+      extractAndQueueSecondaryChanges(tableName, chainCalls, 'local_storage');
     } else if (sourceUsed === 'firebase') {
-      if (primaryPgPool && primaryPgConnected) {
-        executePostgresOperation(primaryPgPool, tableName, chainCalls).catch(err => {
-          console.warn(`[Sync Mirror] Notice mirroring write to Primary PG from Firebase on '${tableName}':`, err.message);
-        });
-      }
+      // Firebase fallback: queue for verification before any Supabase modification
       if (localPgPool && localPgConnected && localPgPool !== primaryPgPool) {
         executePostgresOperation(localPgPool, tableName, chainCalls).catch(err => {
-          console.warn(`[Sync Mirror] Notice mirroring write to Local PG from Firebase on '${tableName}':`, err.message);
+          console.warn(`[Sync Mirror] Notice mirroring write to Postgres HA Secondary from Firebase on '${tableName}':`, err.message);
         });
       }
       executeLocalDbOperation(tableName, chainCalls).catch(err => {
         console.warn(`[Sync Mirror] Notice mirroring write to Local JSON on '${tableName}':`, err.message);
       });
+      extractAndQueueSecondaryChanges(tableName, chainCalls, 'local_storage');
     }
 
     broadcastFirebaseRealtime('TABLE_DATA_CHANGED', {
@@ -2391,34 +2640,67 @@ async function syncDataBetweenSources(options: { autoHeal?: boolean; targetTable
         }
 
         // Check if missing or outdated across available tiers
-        const primaryNeedsSync = isPrimaryOnline && (!inPrimary || (inPrimary && recPrimary.updated_at && bestRecord.updated_at && Math.abs(new Date(recPrimary.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000));
-        const localPgNeedsSync = isLocalPgOnline && (!inLocalPg || (inLocalPg && recLocalPg.updated_at && bestRecord.updated_at && Math.abs(new Date(recLocalPg.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000));
-        const jsonNeedsSync = !inJson || (inJson && recJson.updated_at && bestRecord.updated_at && Math.abs(new Date(recJson.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000);
-        const firestoreNeedsSync = !inFirestore || (inFirestore && recFirestore.updated_at && bestRecord.updated_at && Math.abs(new Date(recFirestore.updated_at).getTime() - new Date(bestRecord.updated_at).getTime()) > 1000);
+        // RULE: Supabase is primary storage. Downstream changes from Supabase sync immediately to secondary DBs.
+        // Secondary DB changes (Postgres HA / Local JSON) MUST NOT sync directly to Supabase; they must be queued for verification!
+        const hasSecondaryDrift = (!inPrimary) || (inPrimary && (
+          (recLocalPg && recLocalPg.updated_at && recPrimary.updated_at && new Date(recLocalPg.updated_at).getTime() > new Date(recPrimary.updated_at).getTime() + 1000) ||
+          (recJson && recJson.updated_at && recPrimary.updated_at && new Date(recJson.updated_at).getTime() > new Date(recPrimary.updated_at).getTime() + 1000)
+        ));
 
-        if (primaryNeedsSync || localPgNeedsSync || jsonNeedsSync || firestoreNeedsSync) {
+        // Downstream sync: Supabase record needs to be synchronized to Postgres HA or Local JSON
+        const localPgNeedsDownstream = isLocalPgOnline && inPrimary && (!inLocalPg || (inLocalPg && recLocalPg.updated_at && recPrimary.updated_at && new Date(recPrimary.updated_at).getTime() > new Date(recLocalPg.updated_at).getTime() + 1000));
+        const jsonNeedsDownstream = inPrimary && (!inJson || (inJson && recJson.updated_at && recPrimary.updated_at && new Date(recPrimary.updated_at).getTime() > new Date(recJson.updated_at).getTime() + 1000));
+        const firestoreNeedsDownstream = inPrimary && (!inFirestore || (inFirestore && recFirestore.updated_at && recPrimary.updated_at && new Date(recPrimary.updated_at).getTime() > new Date(recFirestore.updated_at).getTime() + 1000));
+
+        // Secondary peer sync: Keep Postgres HA and Local JSON aligned with each other for HA resilience
+        const secondaryPeerSyncLocalPg = isLocalPgOnline && !inLocalPg && inJson;
+        const secondaryPeerSyncJson = isLocalPgOnline && inLocalPg && !inJson;
+
+        if (hasSecondaryDrift || localPgNeedsDownstream || jsonNeedsDownstream || secondaryPeerSyncLocalPg || secondaryPeerSyncJson) {
           tableMismatches++;
+
+          // 1. If change originated from secondary DBs, queue it for Connection Admin verification (NEVER sync directly to Supabase)
+          if (hasSecondaryDrift) {
+            const secRecord = recLocalPg || recJson || bestRecord;
+            const secSource: 'postgres_ha' | 'local_storage' = inLocalPg ? 'postgres_ha' : 'local_storage';
+            queueSecondaryChangeForVerification({
+              tableName,
+              recordId: String(id),
+              sourceDb: secSource,
+              sourceDbLabel: secSource === 'postgres_ha' ? 'PostgreSQL HA Secondary DB' : 'Local Storage',
+              operation: inPrimary ? 'update' : 'insert',
+              data: secRecord,
+              previousData: inPrimary ? recPrimary : undefined
+            });
+          }
 
           if (autoHeal) {
             const syncPromises = [];
-            if (primaryNeedsSync && isPrimaryOnline) {
-              syncPromises.push(executePostgresOperation(primaryPgPool, tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal Primary PG] ${tableName}/${id}:`, e.message)));
+
+            // 2. Downstream sync from Supabase to Secondary DBs happens immediately!
+            if (localPgNeedsDownstream && isLocalPgOnline) {
+              syncPromises.push(executePostgresOperation(localPgPool, tableName, [{ method: 'upsert', args: [recPrimary] }]).catch(e => console.warn(`[Immediate Downstream Sync to Postgres HA] ${tableName}/${id}:`, e.message)));
             }
-            if (localPgNeedsSync && isLocalPgOnline) {
-              syncPromises.push(executePostgresOperation(localPgPool, tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal Local PG] ${tableName}/${id}:`, e.message)));
+            if (jsonNeedsDownstream) {
+              syncPromises.push(executeLocalDbOperation(tableName, [{ method: 'upsert', args: [recPrimary] }]).catch(e => console.warn(`[Immediate Downstream Sync to JSON] ${tableName}/${id}:`, e.message)));
             }
-            if (jsonNeedsSync) {
-              syncPromises.push(executeLocalDbOperation(tableName, [{ method: 'upsert', args: [bestRecord] }]).catch(e => console.warn(`[Sync AutoHeal JSON] ${tableName}/${id}:`, e.message)));
+            if (firestoreNeedsDownstream) {
+              syncPromises.push(upsertFirestoreRecord(tableName, String(id), recPrimary, 0, forceFirestore).catch(e => console.warn(`[Immediate Downstream Sync to Firestore] ${tableName}/${id}:`, e.message)));
             }
-            if (firestoreNeedsSync) {
-              syncPromises.push(upsertFirestoreRecord(tableName, String(id), bestRecord, 0, forceFirestore).catch(e => console.warn(`[Sync AutoHeal Firestore] ${tableName}/${id}:`, e.message)));
+
+            // 3. Keep secondary storage peers (Postgres HA & Local JSON) in sync with each other
+            if (secondaryPeerSyncLocalPg && isLocalPgOnline) {
+              syncPromises.push(executePostgresOperation(localPgPool, tableName, [{ method: 'upsert', args: [recJson] }]).catch(e => console.warn(`[Secondary HA Peer Sync to Postgres HA] ${tableName}/${id}:`, e.message)));
             }
+            if (secondaryPeerSyncJson) {
+              syncPromises.push(executeLocalDbOperation(tableName, [{ method: 'upsert', args: [recLocalPg] }]).catch(e => console.warn(`[Secondary HA Peer Sync to JSON] ${tableName}/${id}:`, e.message)));
+            }
+
             if (syncPromises.length > 0) {
               await Promise.allSettled(syncPromises);
-              // Add a small breather between mismatched records to avoid hitting rate limits
-              await new Promise(resolve => setTimeout(resolve, 100));
+              await new Promise(resolve => setTimeout(resolve, 50));
+              tableReconciled++;
             }
-            tableReconciled++;
           }
         }
       }
@@ -7010,11 +7292,31 @@ Please proceed with the task according to safety guidelines and update milestone
     try {
       const autoHeal = req.query.autoHeal !== 'false';
       const syncResult = await syncDataBetweenSources({ autoHeal });
+      const pendingVerifications = syncVerificationQueue.filter(v => v.status === 'pending');
       res.json({
         ...syncResult,
         auditLogs: syncAuditLog.slice(0, 100),
         autoSyncIntervalSeconds: 25,
-        autoSyncEnabled: true
+        autoSyncEnabled: true,
+        pendingVerificationsCount: pendingVerifications.length,
+        verifications: syncVerificationQueue.slice(0, 100),
+        storageRoles: {
+          primary: {
+            name: "Supabase Cloud PostgreSQL",
+            role: "Primary Storage (Source of Truth)",
+            description: "Authoritative storage. Direct writes applied here immediately synchronize downstream to secondary DBs."
+          },
+          haSecondary: {
+            name: "PostgreSQL HA Standby Replica",
+            role: "HA Secondary DB",
+            description: "High Availability standby database. Any writes or drift here are queued for Connection Admin verification before Supabase authorization."
+          },
+          localSecondary: {
+            name: "Resilient Local JSON Storage",
+            role: "Secondary Storage",
+            description: "Embedded offline/resilient storage. Any writes or drift here are queued for Connection Admin verification before Supabase authorization."
+          }
+        }
       });
     } catch (err: any) {
       console.error("[Sync Status Endpoint Error]:", err);
@@ -7024,6 +7326,125 @@ Please proceed with the task according to safety guidelines and update milestone
 
   app.get("/api/connectionadmin/sync/status", requireConnectionAdminAuth, handleGetSyncStatus);
   app.get("/api/admin/sync/status", handleGetSyncStatus);
+
+  // 1b. Verification Queue Endpoints for Connection Admin Panel
+  const handleGetVerifications = (req: express.Request, res: express.Response) => {
+    try {
+      const pending = syncVerificationQueue.filter(v => v.status === 'pending');
+      const history = syncVerificationQueue.filter(v => v.status !== 'pending');
+      res.json({
+        success: true,
+        pending,
+        history: history.slice(0, 150),
+        stats: {
+          pendingCount: pending.length,
+          authorizedCount: syncVerificationQueue.filter(v => v.status === 'authorized').length,
+          rejectedCount: syncVerificationQueue.filter(v => v.status === 'rejected').length,
+          total: syncVerificationQueue.length
+        }
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  };
+
+  const handleAuthorizeVerification = async (req: express.Request, res: express.Response) => {
+    try {
+      const { id, ids } = req.body || {};
+      const targetIds: string[] = Array.isArray(ids) ? ids : (id ? [id] : []);
+
+      if (targetIds.length === 0) {
+        return res.status(400).json({ success: false, error: "Verification ID or array of IDs is required." });
+      }
+
+      const results = [];
+      const errors = [];
+      const adminEmail = (req as any).user?.email || "Connection Admin";
+
+      for (const targetId of targetIds) {
+        try {
+          const authRes = await authorizeSecondaryChange(targetId, adminEmail);
+          results.push(authRes);
+        } catch (itemErr: any) {
+          errors.push({ id: targetId, error: itemErr.message });
+        }
+      }
+
+      const pendingRemaining = syncVerificationQueue.filter(v => v.status === 'pending').length;
+
+      res.json({
+        success: errors.length === 0 || results.length > 0,
+        authorizedCount: results.length,
+        errors,
+        pendingCount: pendingRemaining,
+        message: `Authorized and synchronized ${results.length} secondary change(s) to Supabase. Immediate downstream synchronization propagated to other DBs.`
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  };
+
+  const handleRejectVerification = (req: express.Request, res: express.Response) => {
+    try {
+      const { id, ids, note } = req.body || {};
+      const targetIds: string[] = Array.isArray(ids) ? ids : (id ? [id] : []);
+
+      if (targetIds.length === 0) {
+        return res.status(400).json({ success: false, error: "Verification ID or array of IDs is required." });
+      }
+
+      const results = [];
+      const errors = [];
+      const adminEmail = (req as any).user?.email || "Connection Admin";
+
+      for (const targetId of targetIds) {
+        try {
+          const rejRes = rejectSecondaryChange(targetId, note, adminEmail);
+          results.push(rejRes);
+        } catch (itemErr: any) {
+          errors.push({ id: targetId, error: itemErr.message });
+        }
+      }
+
+      const pendingRemaining = syncVerificationQueue.filter(v => v.status === 'pending').length;
+
+      res.json({
+        success: true,
+        rejectedCount: results.length,
+        errors,
+        pendingCount: pendingRemaining,
+        message: `Rejected ${results.length} secondary change(s). Supabase was preserved without changes.`
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  };
+
+  const handleClearVerifications = (req: express.Request, res: express.Response) => {
+    try {
+      syncVerificationQueue = syncVerificationQueue.filter(v => v.status === 'pending');
+      saveVerificationQueue();
+      res.json({
+        success: true,
+        message: "Processed verification history cleared. Pending verifications preserved.",
+        remainingPending: syncVerificationQueue.length
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  };
+
+  app.get("/api/connectionadmin/sync/verifications", requireConnectionAdminAuth, handleGetVerifications);
+  app.get("/api/admin/sync/verifications", handleGetVerifications);
+
+  app.post("/api/connectionadmin/sync/verify-authorize", requireConnectionAdminAuth, handleAuthorizeVerification);
+  app.post("/api/admin/sync/verify-authorize", handleAuthorizeVerification);
+
+  app.post("/api/connectionadmin/sync/verify-reject", requireConnectionAdminAuth, handleRejectVerification);
+  app.post("/api/admin/sync/verify-reject", handleRejectVerification);
+
+  app.post("/api/connectionadmin/sync/verifications/clear", requireConnectionAdminAuth, handleClearVerifications);
+  app.post("/api/admin/sync/verifications/clear", handleClearVerifications);
 
   // 2. Force Full Bi-Directional Database Sync
   const handleTriggerSync = async (req: express.Request, res: express.Response) => {

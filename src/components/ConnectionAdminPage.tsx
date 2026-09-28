@@ -166,6 +166,23 @@ export interface SyncAuditLog {
   details: string;
 }
 
+export interface SyncVerificationItem {
+  id: string;
+  tableName: string;
+  recordId: string;
+  sourceDb: 'postgres_ha' | 'local_storage';
+  sourceDbLabel: string;
+  operation: 'insert' | 'update' | 'upsert' | 'delete';
+  data: any;
+  previousData?: any;
+  status: 'pending' | 'authorized' | 'rejected';
+  createdAt: string;
+  reviewedAt?: string | null;
+  reviewedBy?: string | null;
+  note?: string;
+  syncResult?: any;
+}
+
 export interface SyncStatusResponse {
   success: boolean;
   synced: boolean;
@@ -177,6 +194,13 @@ export interface SyncStatusResponse {
   auditLogs: SyncAuditLog[];
   autoSyncIntervalSeconds: number;
   autoSyncEnabled: boolean;
+  pendingVerificationsCount?: number;
+  verifications?: SyncVerificationItem[];
+  storageRoles?: {
+    primary: { name: string; role: string; description: string };
+    haSecondary: { name: string; role: string; description: string };
+    localSecondary: { name: string; role: string; description: string };
+  };
   sources: {
     primary: {
       connected: boolean;
@@ -228,6 +252,17 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
   const [syncMsg, setSyncMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [autoRefreshSync, setAutoRefreshSync] = useState(true);
   const [autoRefreshExplorer, setAutoRefreshExplorer] = useState(true);
+
+  // Secondary DB Verification & Authorization Gate State
+  const [verifications, setVerifications] = useState<SyncVerificationItem[]>([]);
+  const [verificationsLoading, setVerificationsLoading] = useState(false);
+  const [verificationsFilter, setVerificationsFilter] = useState<'pending' | 'authorized' | 'rejected' | 'all'>('pending');
+  const [authorizingId, setAuthorizingId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [expandedVerificationId, setExpandedVerificationId] = useState<string | null>(null);
+  const [authorizingAll, setAuthorizingAll] = useState(false);
+  const [rejectModalItem, setRejectModalItem] = useState<SyncVerificationItem | null>(null);
+  const [rejectReasonInput, setRejectReasonInput] = useState('');
 
   // Check All Systems Diagnostic State
   const [diagnosticLoading, setDiagnosticLoading] = useState(false);
@@ -562,6 +597,118 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       }
     } catch (err) {
       console.warn("Failed to clear sync logs:", err);
+    }
+  };
+
+  // Secondary DB Verification Queue Fetcher & Action Handlers
+  const fetchVerifications = useCallback(async () => {
+    setVerificationsLoading(true);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/sync/verifications', {
+        headers: getAuthHeaders()
+      });
+      if (ok && data && Array.isArray(data.pending)) {
+        const all = [...data.pending, ...(data.history || [])];
+        setVerifications(all);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch sync verifications:", err);
+    } finally {
+      setVerificationsLoading(false);
+    }
+  }, []);
+
+  const handleAuthorizeVerification = async (id: string) => {
+    setAuthorizingId(id);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/sync/verify-authorize', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ id })
+      });
+      if (ok && data.success) {
+        setSyncMsg({
+          type: 'success',
+          text: data.message || `Authorized & synchronized secondary change to Supabase. Downstream sync propagated immediately.`
+        });
+        await Promise.all([fetchSyncStatus(false), fetchVerifications()]);
+      } else {
+        setSyncMsg({
+          type: 'error',
+          text: data?.error || 'Failed to authorize change to Supabase.'
+        });
+      }
+    } catch (err: any) {
+      setSyncMsg({ type: 'error', text: err.message || 'Error authorizing change.' });
+    } finally {
+      setAuthorizingId(null);
+      setTimeout(() => setSyncMsg(null), 6000);
+    }
+  };
+
+  const handleAuthorizeAllPending = async () => {
+    const pendingIds = verifications.filter(v => v.status === 'pending').map(v => v.id);
+    if (pendingIds.length === 0) return;
+    setAuthorizingAll(true);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/sync/verify-authorize', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ ids: pendingIds })
+      });
+      if (ok && data.success) {
+        setSyncMsg({
+          type: 'success',
+          text: `Batch authorized ${data.authorizedCount} change(s) to Supabase. Immediate downstream sync propagated to all secondary DBs.`
+        });
+        await Promise.all([fetchSyncStatus(false), fetchVerifications()]);
+      } else {
+        setSyncMsg({ type: 'error', text: data?.error || 'Failed to batch authorize changes.' });
+      }
+    } catch (err: any) {
+      setSyncMsg({ type: 'error', text: err.message || 'Error in batch authorization.' });
+    } finally {
+      setAuthorizingAll(false);
+      setTimeout(() => setSyncMsg(null), 6000);
+    }
+  };
+
+  const handleRejectVerification = async (id: string, note?: string) => {
+    setRejectingId(id);
+    try {
+      const { ok, data } = await safeFetchJson('/api/connectionadmin/sync/verify-reject', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ id, note })
+      });
+      if (ok && data.success) {
+        setSyncMsg({
+          type: 'success',
+          text: `Secondary change rejected. Supabase was preserved without changes.`
+        });
+        await Promise.all([fetchSyncStatus(false), fetchVerifications()]);
+      } else {
+        setSyncMsg({ type: 'error', text: data?.error || 'Failed to reject change.' });
+      }
+    } catch (err: any) {
+      setSyncMsg({ type: 'error', text: err.message || 'Error rejecting change.' });
+    } finally {
+      setRejectingId(null);
+      setRejectModalItem(null);
+      setRejectReasonInput('');
+      setTimeout(() => setSyncMsg(null), 6000);
+    }
+  };
+
+  const handleClearProcessedVerifications = async () => {
+    try {
+      await safeFetchJson('/api/connectionadmin/sync/verifications/clear', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+      await fetchVerifications();
+    } catch (err) {
+      console.warn("Failed to clear processed verifications:", err);
     }
   };
 
@@ -1309,17 +1456,20 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
     }
   };
 
-  // Tab switch listener for Firebase and Explorer
+  // Tab switch listener for Sync, Firebase, and Explorer
   useEffect(() => {
     if (!isAuthenticated) return;
-    if (activeTab === 'firebase') {
+    if (activeTab === 'sync') {
+      fetchSyncStatus(true);
+      fetchVerifications();
+    } else if (activeTab === 'firebase') {
       fetchFirebaseAdminStatus();
       fetchFirebaseBackupUsers(1, firebaseBackupSearch);
     } else if (activeTab === 'explorer') {
       fetchExplorerTables();
       fetchExplorerData(explorerSource, explorerTable, 1, explorerPageSize, explorerSearch);
     }
-  }, [activeTab, isAuthenticated, fetchFirebaseAdminStatus, fetchFirebaseBackupUsers, fetchExplorerTables, fetchExplorerData, explorerSource, explorerTable, explorerPageSize, explorerSearch, firebaseBackupSearch]);
+  }, [activeTab, isAuthenticated, fetchSyncStatus, fetchVerifications, fetchFirebaseAdminStatus, fetchFirebaseBackupUsers, fetchExplorerTables, fetchExplorerData, explorerSource, explorerTable, explorerPageSize, explorerSearch, firebaseBackupSearch]);
 
   // Auto-fetch on mount & authentication
   useEffect(() => {
@@ -1327,17 +1477,19 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
       fetchStatus();
       fetchLogs();
       fetchSyncStatus(true);
+      fetchVerifications();
     }
-  }, [isAuthenticated, fetchStatus, fetchLogs, fetchSyncStatus]);
+  }, [isAuthenticated, fetchStatus, fetchLogs, fetchSyncStatus, fetchVerifications]);
 
   // Periodic DB Sync Status Streamer
   useEffect(() => {
     if (!isAuthenticated || !autoRefreshSync) return;
     const interval = setInterval(() => {
       fetchSyncStatus(true);
+      fetchVerifications();
     }, 10000);
     return () => clearInterval(interval);
-  }, [isAuthenticated, autoRefreshSync, fetchSyncStatus]);
+  }, [isAuthenticated, autoRefreshSync, fetchSyncStatus, fetchVerifications]);
 
   // Periodic Multi-DB Explorer Parity Streamer (Live 6s sync)
   useEffect(() => {
@@ -1581,7 +1733,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             }`}
           >
             <Server className="w-4 h-4 text-amber-400" />
-            2. Local PostgreSQL DB
+            2. PostgreSQL HA Secondary DB
             <span className={`w-2 h-2 rounded-full ${status?.database?.fallbackConfig?.connected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
           </button>
 
@@ -1637,6 +1789,7 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             onClick={() => {
               setActiveTab('sync');
               fetchSyncStatus(true);
+              fetchVerifications();
             }}
             className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition shrink-0 ${
               activeTab === 'sync'
@@ -1645,16 +1798,20 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
             }`}
           >
             <RefreshCw className={`w-4 h-4 text-emerald-400 ${syncLoading ? 'animate-spin' : ''}`} />
-            7. DB Sync & Auto-Reconcile
-            {syncStatus && (
+            7. DB Sync & Secondary Verification
+            {verifications.filter(v => v.status === 'pending').length > 0 ? (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500 text-slate-950 font-bold border border-amber-400 animate-pulse">
+                {verifications.filter(v => v.status === 'pending').length} Pending Auth
+              </span>
+            ) : syncStatus ? (
               <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
                 syncStatus.synced 
                   ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60' 
                   : 'bg-indigo-950 text-indigo-300 border border-indigo-700/60'
               }`}>
-                {syncStatus.synced ? '100% Synced' : `${syncStatus.recordsReconciled} Reconciled`}
+                {syncStatus.synced ? 'Supabase In-Sync' : `${syncStatus.recordsReconciled} Reconciled`}
               </span>
-            )}
+            ) : null}
           </button>
 
           <button
@@ -3418,30 +3575,37 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-lg font-black tracking-tight text-white">
-                        Multi-Tier Database Synchronization & Auto-Reconciliation Engine
+                        Multi-Tier Storage Synchronization & Secondary DB Verification Gate
                       </h2>
                       <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        syncStatus?.synced 
+                        verifications.filter(v => v.status === 'pending').length > 0
+                          ? 'bg-amber-950 text-amber-300 border border-amber-500/80 animate-pulse'
+                          : syncStatus?.synced 
                           ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/80' 
-                          : 'bg-amber-950 text-amber-300 border border-amber-700/80'
+                          : 'bg-indigo-950 text-indigo-300 border border-indigo-700/80'
                       }`}>
-                        {syncStatus?.synced ? 'All Tiers Synchronized' : 'Auto-Healing / Mismatches Reconciled'}
+                        {verifications.filter(v => v.status === 'pending').length > 0 
+                          ? `${verifications.filter(v => v.status === 'pending').length} Changes Pending Auth` 
+                          : syncStatus?.synced ? 'Supabase Primary In-Sync' : 'Auto-Healing Active'}
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 max-w-3xl leading-relaxed">
-                      Continuous background auto-healing checks data parity across Primary PostgreSQL, Local Fallback PostgreSQL, and Resilient Local JSON storage every 25 seconds. Any detected drift is automatically healed using latest timestamp reconciliation.
+                      <strong>Storage Architecture:</strong> Supabase serves as primary storage (source of truth). PostgreSQL acts as HA secondary DB and local JSON acts as resilient secondary storage. Changes made in Supabase synchronize to other DBs immediately. Changes made in secondary DBs (Postgres HA or Local Storage) must go through verification on this Connection Admin Panel before authorization to synchronize to Supabase. Direct sync to Supabase is strictly prevented.
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0 flex-wrap">
                   <button
-                    onClick={() => fetchSyncStatus(true)}
-                    disabled={syncLoading}
+                    onClick={() => {
+                      fetchSyncStatus(true);
+                      fetchVerifications();
+                    }}
+                    disabled={syncLoading || verificationsLoading}
                     className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold flex items-center gap-2 transition active:scale-95 border border-slate-700 disabled:opacity-50"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${syncLoading ? 'animate-spin' : ''}`} />
-                    Check Sync Status
+                    <RefreshCw className={`w-3.5 h-3.5 ${(syncLoading || verificationsLoading) ? 'animate-spin' : ''}`} />
+                    Refresh & Scan Tiers
                   </button>
 
                   <button
@@ -3452,12 +3616,12 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                     {syncTriggering ? (
                       <>
                         <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Reconciling All Tiers...
+                        Reconciling Tiers...
                       </>
                     ) : (
                       <>
                         <Zap className="w-3.5 h-3.5" />
-                        Force Full Auto-Sync
+                        Run Downstream Sync
                       </>
                     )}
                   </button>
@@ -3479,68 +3643,78 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
 
               {/* 3 Active Tiers Health Card Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800/80">
-                {/* Tier 1: Primary PostgreSQL */}
-                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-2">
+                {/* Tier 1: Primary Storage (Supabase) */}
+                <div className="p-4 bg-slate-950/60 border border-indigo-900/50 rounded-2xl space-y-2 relative overflow-hidden">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Database className="w-4 h-4 text-indigo-400" />
-                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">1. Primary PostgreSQL</span>
+                      <span className="text-xs font-black uppercase tracking-wider text-white">1. Primary Storage (Supabase)</span>
                     </div>
                     <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
                       syncStatus?.sources?.primary?.connected 
                         ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' 
                         : 'bg-red-950 text-red-300 border border-red-800'
                     }`}>
-                      {syncStatus?.sources?.primary?.connected ? 'Online' : 'Offline'}
+                      {syncStatus?.sources?.primary?.connected ? 'Online (Authoritative)' : 'Offline'}
                     </span>
                   </div>
                   <div className="text-xs space-y-1 text-slate-400 font-mono">
                     <div className="flex justify-between">
                       <span>Host:</span>
-                      <span className="text-slate-200 truncate max-w-[130px] font-bold" title={syncStatus?.sources?.primary?.host}>
-                        {syncStatus?.sources?.primary?.host || 'Not configured'}
+                      <span className="text-indigo-200 truncate max-w-[130px] font-bold" title={syncStatus?.sources?.primary?.host}>
+                        {syncStatus?.sources?.primary?.host || 'db.ksflmdvqvseiprebgrcp.supabase.co'}
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Total Active Rows:</span>
+                      <span>Active Authoritative Rows:</span>
                       <span className="text-indigo-300 font-bold">{syncStatus?.sources?.primary?.totalRecords ?? 0}</span>
+                    </div>
+                    <div className="text-[10px] text-emerald-400/90 pt-1 flex items-center gap-1 font-sans">
+                      <CheckCircle2 className="w-3 h-3 shrink-0" />
+                      <span>Changes sync immediately downstream</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Tier 2: Fallback Local PostgreSQL */}
-                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-2">
+                {/* Tier 2: HA Secondary DB (PostgreSQL) */}
+                <div className="p-4 bg-slate-950/60 border border-emerald-900/50 rounded-2xl space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Server className="w-4 h-4 text-emerald-400" />
-                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">2. Local PG Fallback</span>
+                      <span className="text-xs font-black uppercase tracking-wider text-white">2. HA Secondary DB (Postgres)</span>
                     </div>
                     <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
                       syncStatus?.sources?.localPg?.connected 
                         ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' 
                         : 'bg-slate-900 text-slate-400 border border-slate-800'
                     }`}>
-                      {syncStatus?.sources?.localPg?.connected ? 'Active' : 'Standby / Offline'}
+                      {syncStatus?.sources?.localPg?.connected ? 'HA Standby Active' : 'Standby / Offline'}
                     </span>
                   </div>
                   <div className="text-xs space-y-1 text-slate-400 font-mono">
                     <div className="flex justify-between">
-                      <span>Host:</span>
-                      <span className="text-slate-200 font-bold">{syncStatus?.sources?.localPg?.host || '127.0.0.1:5432'}</span>
+                      <span>HA Instance:</span>
+                      <span className="text-emerald-200 font-bold truncate max-w-[130px]" title={syncStatus?.sources?.localPg?.host}>
+                        {syncStatus?.sources?.localPg?.host || '127.0.0.1:5432'}
+                      </span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Total Active Rows:</span>
+                      <span>Total Replicated Rows:</span>
                       <span className="text-emerald-300 font-bold">{syncStatus?.sources?.localPg?.totalRecords ?? 0}</span>
+                    </div>
+                    <div className="text-[10px] text-amber-400/90 pt-1 flex items-center gap-1 font-sans">
+                      <ShieldCheck className="w-3 h-3 shrink-0" />
+                      <span>Verification required to sync to Supabase</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Tier 3: Local JSON Resilient File Store */}
-                <div className="p-4 bg-slate-950/60 border border-slate-800 rounded-2xl space-y-2">
+                {/* Tier 3: Secondary Storage (Local JSON Store) */}
+                <div className="p-4 bg-slate-950/60 border border-sky-900/50 rounded-2xl space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <HardDrive className="w-4 h-4 text-sky-400" />
-                      <span className="text-xs font-black uppercase tracking-wider text-slate-200">3. JSON Resilient Store</span>
+                      <span className="text-xs font-black uppercase tracking-wider text-white">3. Secondary Storage (Local JSON)</span>
                     </div>
                     <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-sky-950 text-sky-300 border border-sky-800">
                       Always Active
@@ -3548,14 +3722,35 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                   </div>
                   <div className="text-xs space-y-1 text-slate-400 font-mono">
                     <div className="flex justify-between">
-                      <span>Local Storage Path:</span>
-                      <span className="text-slate-200 font-bold">.local_db/*.json</span>
+                      <span>Local Storage File:</span>
+                      <span className="text-sky-200 font-bold truncate max-w-[130px]">local_db.json</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Total Cached Rows:</span>
                       <span className="text-sky-300 font-bold">{syncStatus?.sources?.json?.totalRecords ?? 0}</span>
                     </div>
+                    <div className="text-[10px] text-amber-400/90 pt-1 flex items-center gap-1 font-sans">
+                      <Lock className="w-3 h-3 shrink-0" />
+                      <span>Direct sync to Supabase blocked</span>
+                    </div>
                   </div>
+                </div>
+              </div>
+
+              {/* Policy Rules Banner */}
+              <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-slate-300">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="font-bold">Sync Enforcement Rule:</span>
+                  <span className="text-slate-400">Supabase changes sync downstream immediately. Secondary DB changes must be verified below before authorization to synchronize to Supabase.</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg bg-red-950/80 text-red-300 border border-red-800 font-mono text-[10px] font-bold">
+                    Direct Upstream Sync: BLOCKED
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono text-[10px] font-bold">
+                    Admin Verification Gate: ENFORCED
+                  </span>
                 </div>
               </div>
 
@@ -3566,17 +3761,335 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                   <span className="text-lg font-black text-white font-mono">{syncStatus?.tables?.length ?? 0}</span>
                 </div>
                 <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
-                  <span className="block text-[10px] text-slate-400 uppercase font-black">Auto-Healed Mismatches</span>
-                  <span className="text-lg font-black text-emerald-400 font-mono">{syncStatus?.mismatchesDetected ?? 0}</span>
+                  <span className="block text-[10px] text-slate-400 uppercase font-black">Pending Authorizations</span>
+                  <span className={`text-lg font-black font-mono ${verifications.filter(v => v.status === 'pending').length > 0 ? 'text-amber-400 animate-pulse' : 'text-slate-400'}`}>
+                    {verifications.filter(v => v.status === 'pending').length}
+                  </span>
                 </div>
                 <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
-                  <span className="block text-[10px] text-slate-400 uppercase font-black">Total Records Reconciled</span>
-                  <span className="text-lg font-black text-indigo-300 font-mono">{syncStatus?.recordsReconciled ?? 0}</span>
+                  <span className="block text-[10px] text-slate-400 uppercase font-black">Authorized & Synced</span>
+                  <span className="text-lg font-black text-emerald-400 font-mono">
+                    {verifications.filter(v => v.status === 'authorized').length}
+                  </span>
                 </div>
                 <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl">
-                  <span className="block text-[10px] text-slate-400 uppercase font-black">Scan Duration</span>
-                  <span className="text-lg font-black text-sky-300 font-mono">{syncStatus?.durationMs ?? 0} ms</span>
+                  <span className="block text-[10px] text-slate-400 uppercase font-black">Downstream Parity</span>
+                  <span className="text-lg font-black text-sky-300 font-mono">{syncStatus?.synced ? '100% In Sync' : 'Reconciling'}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* SECONDARY DB VERIFICATION & AUTHORIZATION GATE PANEL */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl relative">
+              {/* Alert Callout if Pending Changes Exist */}
+              {verifications.filter(v => v.status === 'pending').length > 0 && (
+                <div className="p-4 rounded-2xl bg-amber-950/70 border border-amber-600/80 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fadeIn shadow-lg shadow-amber-950/40">
+                  <div className="flex items-start sm:items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5 sm:mt-0 animate-bounce" />
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-amber-300">
+                        {verifications.filter(v => v.status === 'pending').length} Secondary Storage Changes Require Verification
+                      </h4>
+                      <p className="text-xs text-amber-200/90 mt-0.5">
+                        Changes made in PostgreSQL HA Secondary or Local Storage are held in this gate. In compliance with your policy, they will <strong>never sync directly to Supabase</strong> until you review and authorize them.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAuthorizeAllPending}
+                    disabled={authorizingAll}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition shrink-0 shadow-lg shadow-emerald-600/30 disabled:opacity-50"
+                  >
+                    <CheckCheck className={`w-4 h-4 ${authorizingAll ? 'animate-spin' : ''}`} />
+                    {authorizingAll ? 'Authorizing All...' : 'Authorize All to Supabase'}
+                  </button>
+                </div>
+              )}
+
+              {/* Header and Controls */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-indigo-600/20 border border-indigo-500/40 rounded-2xl text-indigo-400 shrink-0">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white flex items-center gap-2">
+                      Secondary DB Verification & Authorization Gate
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+                        Never Sync Directly to Supabase
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Review, authorize, or reject modifications originating in secondary DBs before synchronization to Supabase.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    <button
+                      onClick={() => setVerificationsFilter('pending')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        verificationsFilter === 'pending'
+                          ? 'bg-amber-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>Pending</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                        verificationsFilter === 'pending' ? 'bg-amber-800 text-white' : 'bg-slate-800 text-amber-300'
+                      }`}>
+                        {verifications.filter(v => v.status === 'pending').length}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setVerificationsFilter('authorized')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        verificationsFilter === 'authorized'
+                          ? 'bg-emerald-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>Authorized</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                        verificationsFilter === 'authorized' ? 'bg-emerald-800 text-white' : 'bg-slate-800 text-emerald-300'
+                      }`}>
+                        {verifications.filter(v => v.status === 'authorized').length}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setVerificationsFilter('rejected')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        verificationsFilter === 'rejected'
+                          ? 'bg-rose-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <span>Rejected</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                        verificationsFilter === 'rejected' ? 'bg-rose-800 text-white' : 'bg-slate-800 text-rose-300'
+                      }`}>
+                        {verifications.filter(v => v.status === 'rejected').length}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setVerificationsFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        verificationsFilter === 'all'
+                          ? 'bg-indigo-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      All ({verifications.length})
+                    </button>
+                  </div>
+
+                  {verifications.filter(v => v.status !== 'pending').length > 0 && (
+                    <button
+                      onClick={handleClearProcessedVerifications}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1 border border-slate-700 transition"
+                      title="Clear processed (authorized & rejected) items"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Clear History
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Verifications List */}
+              <div className="space-y-3">
+                {verifications
+                  .filter(v => {
+                    if (verificationsFilter === 'pending') return v.status === 'pending';
+                    if (verificationsFilter === 'authorized') return v.status === 'authorized';
+                    if (verificationsFilter === 'rejected') return v.status === 'rejected';
+                    return true;
+                  })
+                  .length > 0 ? (
+                  verifications
+                    .filter(v => {
+                      if (verificationsFilter === 'pending') return v.status === 'pending';
+                      if (verificationsFilter === 'authorized') return v.status === 'authorized';
+                      if (verificationsFilter === 'rejected') return v.status === 'rejected';
+                      return true;
+                    })
+                    .map((item) => (
+                      <div
+                        key={item.id}
+                        className={`p-4 rounded-2xl border transition ${
+                          item.status === 'pending'
+                            ? 'bg-slate-950/90 border-amber-500/40 hover:border-amber-400/80 shadow-md'
+                            : item.status === 'authorized'
+                            ? 'bg-slate-950/60 border-emerald-900/60'
+                            : 'bg-slate-950/60 border-rose-900/60'
+                        }`}
+                      >
+                        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 flex-wrap text-xs">
+                              {/* Source DB Badge */}
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-bold ${
+                                item.sourceDb === 'postgres_ha'
+                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/80'
+                                  : 'bg-sky-950 text-sky-300 border border-sky-800/80'
+                              }`}>
+                                {item.sourceDb === 'postgres_ha' ? (
+                                  <Server className="w-3.5 h-3.5" />
+                                ) : (
+                                  <HardDrive className="w-3.5 h-3.5" />
+                                )}
+                                {item.sourceDbLabel || (item.sourceDb === 'postgres_ha' ? 'PostgreSQL HA Secondary' : 'Local Storage')}
+                              </span>
+
+                              {/* Target Table */}
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 text-slate-200 border border-slate-800 font-mono font-bold">
+                                <Database className="w-3 h-3 text-indigo-400" />
+                                {item.tableName}
+                              </span>
+
+                              {/* Operation Type */}
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase font-mono ${
+                                item.operation === 'insert'
+                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                                  : item.operation === 'delete'
+                                  ? 'bg-rose-950 text-rose-300 border border-rose-800'
+                                  : 'bg-amber-950 text-amber-300 border border-amber-800'
+                              }`}>
+                                {item.operation}
+                              </span>
+
+                              {/* Record ID */}
+                              <span className="text-slate-400 font-mono text-[11px] bg-slate-900/80 px-2 py-0.5 rounded border border-slate-800">
+                                ID: <strong className="text-white">{item.recordId}</strong>
+                              </span>
+
+                              {/* Status Badge */}
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                item.status === 'pending'
+                                  ? 'bg-amber-950 text-amber-300 border border-amber-700 animate-pulse'
+                                  : item.status === 'authorized'
+                                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700'
+                                  : 'bg-rose-950 text-rose-300 border border-rose-700'
+                              }`}>
+                                {item.status === 'pending' ? 'Pending Review' : item.status === 'authorized' ? 'Authorized & Synced' : 'Rejected'}
+                              </span>
+                            </div>
+
+                            {/* Timestamp & Notes */}
+                            <div className="flex items-center gap-4 text-xs text-slate-400 font-sans">
+                              <span className="flex items-center gap-1 text-[11px]">
+                                <Clock className="w-3 h-3 text-slate-500" />
+                                Captured: {new Date(item.createdAt).toLocaleString()}
+                              </span>
+
+                              {item.reviewedAt && (
+                                <span className="text-[11px] text-slate-500">
+                                  Reviewed: {new Date(item.reviewedAt).toLocaleTimeString()} by {item.reviewedBy || 'Admin'}
+                                </span>
+                              )}
+
+                              {item.note && (
+                                <span className="text-[11px] text-rose-300 font-mono">
+                                  Reason: {item.note}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {/* Inspect Payload Toggle */}
+                            <button
+                              onClick={() => setExpandedVerificationId(expandedVerificationId === item.id ? null : item.id)}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition"
+                            >
+                              {expandedVerificationId === item.id ? (
+                                <>
+                                  <EyeOff className="w-3.5 h-3.5" />
+                                  Hide Data
+                                </>
+                              ) : (
+                                <>
+                                  <Eye className="w-3.5 h-3.5" />
+                                  Inspect Data
+                                </>
+                              )}
+                            </button>
+
+                            {/* Pending State Actions */}
+                            {item.status === 'pending' && (
+                              <>
+                                <button
+                                  onClick={() => handleAuthorizeVerification(item.id)}
+                                  disabled={authorizingId === item.id}
+                                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition shadow-lg shadow-emerald-600/30 disabled:opacity-50"
+                                >
+                                  <Zap className={`w-3.5 h-3.5 ${authorizingId === item.id ? 'animate-spin' : ''}`} />
+                                  {authorizingId === item.id ? 'Authorizing...' : 'Authorize & Sync'}
+                                </button>
+
+                                <button
+                                  onClick={() => {
+                                    setRejectModalItem(item);
+                                    setRejectReasonInput('');
+                                  }}
+                                  disabled={rejectingId === item.id}
+                                  className="px-3 py-1.5 bg-slate-800 hover:bg-rose-900/60 hover:border-rose-700 text-rose-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-700 transition"
+                                >
+                                  <XCircle className="w-3.5 h-3.5" />
+                                  Reject
+                                </button>
+                              </>
+                            )}
+
+                            {/* Authorized State Summary */}
+                            {item.status === 'authorized' && (
+                              <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1 bg-emerald-950/40 px-3 py-1 rounded-xl border border-emerald-800/40">
+                                <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                Synced to Supabase & Propagated Downstream
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Expanded JSON Data Viewer */}
+                        {expandedVerificationId === item.id && (
+                          <div className="mt-3 pt-3 border-t border-slate-800 space-y-2 animate-fadeIn">
+                            <div className="flex items-center justify-between text-xs text-slate-400">
+                              <span className="font-bold text-slate-300">Payload Details ({item.operation}):</span>
+                              <span className="text-[10px] text-slate-500">Record will be applied to Supabase upon authorization</span>
+                            </div>
+                            <pre className="p-3 bg-slate-950 border border-slate-800/90 rounded-xl text-[11px] font-mono text-emerald-300 max-h-64 overflow-y-auto">
+                              {JSON.stringify(item.data, null, 2)}
+                            </pre>
+                            {item.previousData && (
+                              <div className="space-y-1">
+                                <span className="text-[11px] font-bold text-slate-400">Previous Supabase State:</span>
+                                <pre className="p-3 bg-slate-950 border border-slate-800/90 rounded-xl text-[11px] font-mono text-slate-400 max-h-48 overflow-y-auto">
+                                  {JSON.stringify(item.previousData, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                ) : (
+                  <div className="p-8 text-center text-slate-500 font-sans text-xs bg-slate-950/40 border border-slate-800/60 rounded-2xl space-y-1">
+                    <ShieldCheck className="w-8 h-8 text-slate-600 mx-auto" />
+                    <p className="font-bold text-slate-400">No records found for current filter.</p>
+                    <p className="text-slate-500 text-[11px]">
+                      {verificationsFilter === 'pending'
+                        ? 'All secondary DB modifications have been verified. Supabase primary storage is fully protected.'
+                        : 'No records matching selected criteria.'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -5209,6 +5722,93 @@ export default function ConnectionAdminPage({ onBackToHome }: { onBackToHome?: (
                     )}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Reject Secondary DB Change Modal */}
+        {rejectModalItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-rose-600/20 border border-rose-500/30 rounded-2xl text-rose-400">
+                    <XCircle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white">Reject Secondary DB Change</h3>
+                    <p className="text-xs text-slate-400">Supabase primary database will remain untouched</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setRejectModalItem(null)}
+                  className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5 font-mono">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Source Database:</span>
+                    <span className="text-white font-bold">{rejectModalItem.sourceDbLabel}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Target Table:</span>
+                    <span className="text-indigo-300 font-bold">{rejectModalItem.tableName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Record ID:</span>
+                    <span className="text-slate-200">{rejectModalItem.recordId}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Operation:</span>
+                    <span className="text-amber-300 uppercase font-bold">{rejectModalItem.operation}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-slate-300 font-bold">
+                    Rejection Reason / Note (Optional):
+                  </label>
+                  <textarea
+                    value={rejectReasonInput}
+                    onChange={(e) => setRejectReasonInput(e.target.value)}
+                    placeholder="e.g., Stale test record, duplicate entry, unauthorized change..."
+                    rows={3}
+                    className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder:text-slate-600 outline-none focus:border-rose-500 font-sans resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRejectModalItem(null)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRejectVerification(rejectModalItem.id, rejectReasonInput)}
+                  disabled={rejectingId === rejectModalItem.id}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition shadow-lg shadow-rose-600/30 disabled:opacity-50"
+                >
+                  {rejectingId === rejectModalItem.id ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Rejecting...
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="w-3.5 h-3.5" />
+                      Confirm Rejection
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
