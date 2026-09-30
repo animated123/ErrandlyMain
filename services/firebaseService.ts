@@ -1985,6 +1985,8 @@ export const firebaseService = {
                            lowercaseEmail.includes('supaadmin') ||
                            lowercaseEmail.startsWith('supaadmin@');
 
+      const isPhoneVerifiedVal = phoneVerified !== undefined ? Boolean(phoneVerified) : false;
+
       const profilePayload: any = {
         id: userId,
         email: lowercaseEmail,
@@ -1993,9 +1995,9 @@ export const firebaseService = {
         role: isSuperAdmin ? 'admin' : (role || 'REQUESTER'),
         is_runner: (role === UserRole.RUNNER),
         is_admin: isSuperAdmin,
-        phone_verified: false,
+        phone_verified: isPhoneVerifiedVal,
         email_verified: false,
-        is_verified: false,
+        is_verified: isPhoneVerifiedVal,
         wallet_balance: isSuperAdmin ? 10000 : 0,
         balance: isSuperAdmin ? 10000 : 0,
         completed_errands: 0,
@@ -2031,6 +2033,7 @@ export const firebaseService = {
       localStorage.setItem('errand_runner_jwt_token', token);
       localStorage.setItem('errand_runner_user_profile', JSON.stringify(mappedUser));
 
+      firebaseService._currentUserCache = mappedUser;
       firebaseService._broadcastAuthChange(mappedUser);
       return mappedUser;
     } catch (error: any) {

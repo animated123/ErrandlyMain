@@ -50,6 +50,14 @@ try {
   console.warn('[Env] Notice loading env file:', envErr?.message);
 }
 
+// Global process error guards to prevent unexpected background exits
+process.on('uncaughtException', (err: any) => {
+  console.error('[Process] Uncaught Exception caught safely:', err?.message || err);
+});
+process.on('unhandledRejection', (reason: any, promise: any) => {
+  console.warn('[Process] Unhandled Rejection caught safely:', reason?.message || reason);
+});
+
 // Global captured logs tracker
 interface LogEntry {
   timestamp: string;
@@ -3718,7 +3726,10 @@ Please proceed with the task according to safety guidelines and update milestone
       rawEndpoint = `https://${rawEndpoint}`;
     }
     const endpoint = rawEndpoint;
-    const senderId = process.env.TALKSASA_SENDER_ID || process.env.TEXTSASA_SENDER_ID || "Errandly";
+    let senderId = process.env.TALKSASA_SENDER_ID || process.env.TEXTSASA_SENDER_ID || "TALK-SASA";
+    if (senderId === 'TALKS-SASA' || senderId === 'Errandly' || senderId === 'ErrandRun') {
+      senderId = 'TALK-SASA';
+    }
 
     if (!token) {
       return res.status(500).json({ error: "SMS API token is not configured" });
@@ -3838,7 +3849,10 @@ Please proceed with the task according to safety guidelines and update milestone
       rawEndpoint = `https://${rawEndpoint}`;
     }
     const endpoint = rawEndpoint;
-    const senderId = process.env.TALKSASA_SENDER_ID || process.env.TEXTSASA_SENDER_ID || "Errandly";
+    let senderId = process.env.TALKSASA_SENDER_ID || process.env.TEXTSASA_SENDER_ID || "TALK-SASA";
+    if (senderId === 'TALKS-SASA' || senderId === 'Errandly' || senderId === 'ErrandRun') {
+      senderId = 'TALK-SASA';
+    }
 
     let smsSent = false;
     let smsErrorMessage = "";
@@ -3891,7 +3905,11 @@ Please proceed with the task according to safety guidelines and update milestone
     }
 
     if (smsSent) {
-      return res.json({ success: true, message: "Verification code sent to your phone." });
+      return res.json({ 
+        success: true, 
+        message: "Verification code sent to your phone via SMS.",
+        phoneNumber: targetPhone
+      });
     }
 
     // Fallback if SMS provider is not configured, unreachable, or delivery rejected
@@ -3899,7 +3917,8 @@ Please proceed with the task according to safety guidelines and update milestone
     return res.json({
       success: true,
       message: smsErrorMessage ? `SMS gateway unavailable: ${smsErrorMessage}.` : "Verification code generated.",
-      devMode: true
+      devMode: true,
+      phoneNumber: targetPhone
     });
   });
 
@@ -4084,6 +4103,35 @@ Please proceed with the task according to safety guidelines and update milestone
           }
         }
       }
+
+      // Also persist to local secondary DB
+      try {
+        const localDb = loadLocalDb();
+        if (localDb.profiles && Array.isArray(localDb.profiles)) {
+          let updatedLocal = false;
+          for (const p of localDb.profiles) {
+            const matchesId = userId && p.id === userId;
+            const matchesPhone = phone && (
+              normalizePhone(p.phone || '') === normalizePhone(phone) ||
+              normalizePhone(p.phoneNumber || '') === normalizePhone(phone)
+            );
+            if (matchesId || matchesPhone) {
+              p.phone_verified = true;
+              p.phoneVerified = true;
+              if (p.extra_data) p.extra_data.phone_verified = true;
+              if (p.extraData) p.extraData.phone_verified = true;
+              updatedLocal = true;
+            }
+          }
+          if (updatedLocal) {
+            saveLocalDb(localDb);
+            console.log(`[OTP] Updated local_db.json phone_verified for ${phone || userId}`);
+          }
+        }
+      } catch (localErr: any) {
+        console.warn("[OTP] Local DB update error:", localErr.message);
+      }
+
       otpStore.delete(phone);
 
       console.log(`[OTP] Verification successful for ${phone || userId}`);
@@ -8455,7 +8503,10 @@ Please proceed with the task according to safety guidelines and update milestone
       rawEndpoint = `https://${rawEndpoint}`;
     }
     const endpoint = rawEndpoint;
-    const senderId = process.env.TEXTSASA_SENDER_ID || process.env.TALKSASA_SENDER_ID || "ErrandRun";
+    let senderId = process.env.TEXTSASA_SENDER_ID || process.env.TALKSASA_SENDER_ID || "TALK-SASA";
+    if (senderId === 'TALKS-SASA' || senderId === 'Errandly' || senderId === 'ErrandRun') {
+      senderId = 'TALK-SASA';
+    }
 
     if (!token) {
       console.warn("[SMS Helper] SMS token is missing from environment. Skipping actual transmission.");
@@ -8629,7 +8680,10 @@ Please proceed with the task according to safety guidelines and update milestone
         await sendSmsHelper(targetPhone, smsMessage);
       }
 
-      res.json({ success: true, message: "Verification OTP sent successfully!" });
+      res.json({ 
+        success: true, 
+        message: "Verification OTP sent successfully!" 
+      });
     } catch (error: any) {
       console.error("[Runner OTP Send Error]:", error);
       res.status(500).json({ error: error.message });
@@ -9249,7 +9303,8 @@ Please proceed with the task according to safety guidelines and update milestone
         const vite = await createViteServer({
           server: {
             middlewareMode: true,
-            allowedHosts: true
+            allowedHosts: true,
+            hmr: false
           },
           appType: "spa",
         });
@@ -9295,9 +9350,33 @@ export default async function handler(req: any, res: any) {
 if (!process.env.VERCEL) {
   const PORT = 3000;
   getApp().then((app) => {
-    app.listen(PORT, "0.0.0.0", () => {
+    const server3000 = app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
+    server3000.on("error", (err: any) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`[Server] Port ${PORT} is already in use.`);
+      } else {
+        console.error(`[Server] Port ${PORT} listener error:`, err.message);
+      }
+    });
+
+    // If environment passes a different PORT (e.g. 8080 in container environments), also bind it
+    const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
+    if (envPort && envPort !== PORT && !isNaN(envPort)) {
+      try {
+        const serverEnv = app.listen(envPort, "0.0.0.0", () => {
+          console.log(`Server also running on container PORT ${envPort}`);
+        });
+        serverEnv.on("error", (err: any) => {
+          if (err.code !== "EADDRINUSE") {
+            console.warn(`[Server] Container port ${envPort} note:`, err.message);
+          }
+        });
+      } catch (portErr: any) {
+        console.warn(`[Server] Container port ${envPort} bind note:`, portErr?.message);
+      }
+    }
   }).catch(err => {
     console.error("[Server] Critical failure during startup (continuing if possible):", err);
   });

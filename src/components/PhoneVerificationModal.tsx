@@ -33,7 +33,7 @@ export default function PhoneVerificationModal({ user, onClose, onSuccess }: Pho
     setError(null);
     try {
       const userId = user?.id || (user as any)?.uid || '';
-      const res: any = await firebaseService.sendSmsVerificationCode(userId, phone);
+      await firebaseService.sendSmsVerificationCode(userId, phone);
       setStep('code');
       setResendCooldown(60); // 1 minute cooldown
     } catch (err: any) {
@@ -56,6 +56,10 @@ export default function PhoneVerificationModal({ user, onClose, onSuccess }: Pho
       const userId = user?.id || (user as any)?.uid || '';
       await firebaseService.verifySmsCode(userId, phone, cleanCode);
       await firebaseService.updateUserProfile(userId, { phoneVerified: true, phone });
+      if (user) {
+        user.phoneVerified = true;
+        (user as any).phone_verified = true;
+      }
       onSuccess();
       onClose();
     } catch (err: any) {

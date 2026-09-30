@@ -405,8 +405,8 @@
       "theme": "light",
       "is_online": true,
       "isOnline": true,
-      "phone_verified": false,
-      "phoneVerified": false,
+      "phone_verified": true,
+      "phoneVerified": true,
       "email_verified": false,
       "emailVerified": false,
       "notification_settings": {
@@ -431,7 +431,7 @@
         "auth_primary": true,
         "auth_provider": "firebase",
         "email_verified": false,
-        "phone_verified": false,
+        "phone_verified": true,
         "lastKnownLocation": {
           "lat": -1.2864154840526807,
           "lng": 36.952849248458506
@@ -442,7 +442,7 @@
         "auth_primary": true,
         "auth_provider": "firebase",
         "email_verified": false,
-        "phone_verified": false,
+        "phone_verified": true,
         "lastKnownLocation": {
           "lat": -1.2864154840526807,
           "lng": 36.952849248458506
@@ -756,8 +756,8 @@
       "theme": "light",
       "is_online": true,
       "isOnline": true,
-      "phone_verified": false,
-      "phoneVerified": false,
+      "phone_verified": true,
+      "phoneVerified": true,
       "email_verified": true,
       "emailVerified": true,
       "notification_settings": {
@@ -786,7 +786,7 @@
         "auth_primary": false,
         "auth_provider": "supabase",
         "email_verified": true,
-        "phone_verified": false
+        "phone_verified": true
       },
       "extraData": {
         "lastKnownLocation": {
@@ -797,7 +797,7 @@
         "auth_primary": false,
         "auth_provider": "supabase",
         "email_verified": true,
-        "phone_verified": false
+        "phone_verified": true
       },
       "last_known_location": {
         "lng": 36.82472113387251,
@@ -865,8 +865,8 @@
       "profilePhoto": "",
       "biography": "",
       "theme": "light",
-      "phone_verified": false,
-      "phoneVerified": false,
+      "phone_verified": true,
+      "phoneVerified": true,
       "backend_admin": true,
       "backendAdmin": true,
       "email": "errands@codexict.co.ke",
@@ -890,7 +890,7 @@
           "lat": -1.2863535928214855
         },
         "auth_primary": false,
-        "phone_verified": false,
+        "phone_verified": true,
         "auth_provider": "supabase"
       },
       "extra_data": {
@@ -901,7 +901,7 @@
           "lat": -1.2863535928214855
         },
         "auth_primary": false,
-        "phone_verified": false,
+        "phone_verified": true,
         "auth_provider": "supabase"
       }
     },
@@ -981,8 +981,8 @@
     },
     {
       "id": "usr_5tq1gkn5y",
-      "updated_at": "2026-09-27T13:21:25.125Z",
-      "updatedAt": "2026-09-27T13:21:25.125Z",
+      "updated_at": "2026-09-28T09:21:51.519Z",
+      "updatedAt": "2026-09-28T09:19:21.369Z",
       "phone": "254722603149",
       "is_admin": false,
       "isAdmin": false,
@@ -990,20 +990,20 @@
       "role": "client",
       "completed_errands": 0,
       "completedErrands": 0,
-      "balance": "0",
+      "balance": 0,
       "is_runner": false,
       "isRunner": false,
-      "wallet_balance": "0",
+      "wallet_balance": 0,
       "walletBalance": "0",
       "extra_data": {
         "isOnline": true,
         "auth_primary": true,
         "auth_provider": "firebase",
         "email_verified": false,
-        "phone_verified": false,
+        "phone_verified": true,
         "lastKnownLocation": {
-          "lat": -1.2864688436328788,
-          "lng": 36.95293504037583
+          "lat": -1.286354,
+          "lng": 36.952885
         }
       },
       "extraData": {
@@ -1011,10 +1011,10 @@
         "auth_primary": true,
         "auth_provider": "firebase",
         "email_verified": false,
-        "phone_verified": false,
+        "phone_verified": true,
         "lastKnownLocation": {
-          "lat": -1.2864688436328788,
-          "lng": 36.95293504037583
+          "lat": -1.286354,
+          "lng": 36.952885
         }
       },
       "profile_photo": "",
@@ -1022,15 +1022,15 @@
       "email_verified": false,
       "emailVerified": false,
       "avatar": "",
-      "rating": "5",
+      "rating": 5,
       "biography": "",
       "is_verified": false,
       "isVerified": false,
       "username": "erer",
       "total_tasks": 0,
       "totalTasks": 0,
-      "phone_verified": false,
-      "phoneVerified": false,
+      "phone_verified": true,
+      "phoneVerified": true,
       "created_at": "2026-09-21T15:18:34.377Z",
       "createdAt": "2026-09-21T15:18:34.377Z",
       "rating_count": 0,
@@ -1038,8 +1038,8 @@
       "theme": "light",
       "is_online": true,
       "last_known_location": {
-        "lat": -1.2864688436328788,
-        "lng": 36.95293504037583
+        "lat": -1.286354,
+        "lng": 36.952885
       },
       "name": null,
       "isOnline": true,
@@ -1054,8 +1054,8 @@
         "email": true
       },
       "lastKnownLocation": {
-        "lat": -1.2864688436328788,
-        "lng": 36.95293504037583
+        "lat": -1.286354,
+        "lng": 36.952885
       },
       "password_hash": null,
       "passwordHash": null,
@@ -1141,6 +1141,46 @@
       "createdAt": "2026-09-21T12:45:13.091Z",
       "it_admin": true,
       "backend_admin": true
+    },
+    {
+      "id": "p2MaqnF3RaMFGRzrnwpEymwvkQn1",
+      "email": "aws@codexict.co.ke",
+      "username": "aws",
+      "phone": "",
+      "role": "client",
+      "is_runner": false,
+      "is_admin": false,
+      "phone_verified": false,
+      "email_verified": false,
+      "is_verified": false,
+      "rating": 5,
+      "rating_count": 0,
+      "wallet_balance": 0,
+      "balance": 0,
+      "completed_errands": 0,
+      "total_tasks": 0,
+      "biography": "",
+      "theme": "light",
+      "avatar": "",
+      "profile_photo": "",
+      "created_at": "2026-09-28T09:26:30.139Z",
+      "updated_at": "2026-09-28T09:45:58.623Z",
+      "extra_data": {
+        "phone_verified": false,
+        "email_verified": false,
+        "auth_provider": "firebase",
+        "auth_primary": true,
+        "lastKnownLocation": {
+          "lat": -1.286292,
+          "lng": 36.952932
+        },
+        "isOnline": true
+      },
+      "is_online": true,
+      "last_known_location": {
+        "lat": -1.286292,
+        "lng": 36.952932
+      }
     }
   ],
   "errands": [],
@@ -5172,15 +5212,15 @@
     {
       "id": "254722603149",
       "email/phone": null,
-      "code": "180859",
-      "expires_at": "2026-09-18T23:18:21.919Z",
+      "code": "425147",
+      "expires_at": "2026-09-28T12:35:49.772Z",
       "expiresAt": "2026-09-18T23:18:21.919Z",
-      "created_at": "2026-09-18T22:48:21.919Z",
+      "created_at": "2026-09-28T12:05:49.772Z",
       "createdAt": "2026-09-18T22:48:21.919Z",
       "used": false,
       "phone_number": "254722603149",
       "phoneNumber": "254722603149",
-      "is_used": true,
+      "is_used": false,
       "isUsed": true
     },
     {
@@ -5560,6 +5600,48 @@
       "phoneNumber": "aws@codexict.co.ke",
       "is_used": false,
       "isUsed": false
+    },
+    {
+      "id": "80327825-31d8-4dae-9fb5-6158605818f0",
+      "email/phone": null,
+      "code": "443370",
+      "expires_at": "2026-09-28T10:17:43.862Z",
+      "expiresAt": "2026-09-28T10:17:43.862Z",
+      "created_at": "2026-09-28T09:47:43.863Z",
+      "createdAt": "2026-09-28T09:47:43.863Z",
+      "used": false,
+      "phone_number": "254722603149",
+      "phoneNumber": "254722603149",
+      "is_used": true,
+      "isUsed": false
+    },
+    {
+      "id": "63412886-97df-484e-bdb8-a908f8f2f168",
+      "email/phone": null,
+      "code": "147797",
+      "expires_at": "2026-09-28T10:20:02.533Z",
+      "expiresAt": "2026-09-28T10:20:02.533Z",
+      "created_at": "2026-09-28T09:50:02.533Z",
+      "createdAt": "2026-09-28T09:50:02.533Z",
+      "used": false,
+      "phone_number": "254722603149",
+      "phoneNumber": "254722603149",
+      "is_used": true,
+      "isUsed": false
+    },
+    {
+      "id": "641fc8cb-6567-4db6-a69f-8f11ab07f924",
+      "email/phone": null,
+      "code": "502019",
+      "expires_at": "2026-09-28T10:20:14.501Z",
+      "expiresAt": "2026-09-28T10:20:14.501Z",
+      "created_at": "2026-09-28T09:50:14.501Z",
+      "createdAt": "2026-09-28T09:50:14.501Z",
+      "used": false,
+      "phone_number": "254722603149",
+      "phoneNumber": "254722603149",
+      "is_used": true,
+      "isUsed": false
     }
   ],
   "runner_applications": [
@@ -5702,8 +5784,8 @@
         "email_verified": false,
         "phone_verified": false,
         "lastKnownLocation": {
-          "lat": -1.2864688436328788,
-          "lng": 36.95293504037583
+          "lat": -1.286354,
+          "lng": 36.952885
         }
       },
       "extraData": {
@@ -5713,8 +5795,8 @@
         "email_verified": false,
         "phone_verified": false,
         "lastKnownLocation": {
-          "lat": -1.2864688436328788,
-          "lng": 36.95293504037583
+          "lat": -1.286354,
+          "lng": 36.952885
         }
       },
       "total_tasks": 0,
@@ -5744,8 +5826,8 @@
       "walletBalance": "0",
       "is_runner": false,
       "isRunner": false,
-      "updated_at": "2026-09-27T13:21:25.125Z",
-      "updatedAt": "2026-09-27T13:21:25.125Z",
+      "updated_at": "2026-09-28T09:19:21.369Z",
+      "updatedAt": "2026-09-28T09:19:21.369Z",
       "profile_photo": "",
       "profilePhoto": "",
       "role": "client",
@@ -5764,12 +5846,12 @@
         "email": true
       },
       "last_known_location": {
-        "lat": -1.2864688436328788,
-        "lng": 36.95293504037583
+        "lat": -1.286354,
+        "lng": 36.952885
       },
       "lastKnownLocation": {
-        "lat": -1.2864688436328788,
-        "lng": 36.95293504037583
+        "lat": -1.286354,
+        "lng": 36.952885
       },
       "password_hash": null,
       "passwordHash": null,
@@ -7009,6 +7091,99 @@
       "isAdmin": true,
       "balance": 0,
       "phone": ""
+    },
+    {
+      "id": "p2MaqnF3RaMFGRzrnwpEymwvkQn1",
+      "name": null,
+      "email": "aws@codexict.co.ke",
+      "phone": "",
+      "role": "client",
+      "is_admin": false,
+      "isAdmin": false,
+      "balance": "0",
+      "avatar": "",
+      "biography": "",
+      "theme": "light",
+      "is_online": true,
+      "isOnline": true,
+      "phone_verified": false,
+      "phoneVerified": false,
+      "email_verified": false,
+      "emailVerified": false,
+      "notification_settings": {
+        "sms": true,
+        "push": true,
+        "email": true
+      },
+      "notificationSettings": {
+        "sms": true,
+        "push": true,
+        "email": true
+      },
+      "created_at": "2026-09-28T09:26:30.139Z",
+      "createdAt": "2026-09-28T09:26:30.139Z",
+      "updated_at": "2026-09-28T09:45:58.623Z",
+      "updatedAt": "2026-09-28T09:45:58.623Z",
+      "wallet_balance": "0",
+      "walletBalance": "0",
+      "username": "aws",
+      "extra_data": {
+        "phone_verified": false,
+        "email_verified": false,
+        "auth_provider": "firebase",
+        "auth_primary": true,
+        "lastKnownLocation": {
+          "lat": -1.286292,
+          "lng": 36.952932
+        },
+        "isOnline": true
+      },
+      "extraData": {
+        "phone_verified": false,
+        "email_verified": false,
+        "auth_provider": "firebase",
+        "auth_primary": true,
+        "lastKnownLocation": {
+          "lat": -1.286292,
+          "lng": 36.952932
+        },
+        "isOnline": true
+      },
+      "last_known_location": {
+        "lat": -1.286292,
+        "lng": 36.952932
+      },
+      "lastKnownLocation": {
+        "lat": -1.286292,
+        "lng": 36.952932
+      },
+      "profile_photo": "",
+      "profilePhoto": "",
+      "password_hash": null,
+      "passwordHash": null,
+      "backend_admin": "no",
+      "backendAdmin": "no",
+      "phone_number": null,
+      "phoneNumber": null,
+      "is_runner": false,
+      "isRunner": false,
+      "it_admin": false,
+      "itAdmin": false,
+      "is_verified": false,
+      "isVerified": false,
+      "is_suspended": false,
+      "isSuspended": false,
+      "suspension_reason": null,
+      "suspensionReason": null,
+      "rating": "5",
+      "rating_count": 0,
+      "ratingCount": 0,
+      "completed_errands": 0,
+      "completedErrands": 0,
+      "total_tasks": 0,
+      "totalTasks": 0,
+      "is_temporary_password": false,
+      "isTemporaryPassword": false
     }
   ],
   "firebase_infrastructure": [

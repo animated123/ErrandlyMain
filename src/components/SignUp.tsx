@@ -43,7 +43,7 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
             throw new Error("Please enter a valid phone number");
           }
           console.log("[SignUp] Sending phone verification to:", phoneToVerify);
-          const result = await firebaseService.sendPhoneVerificationCode(phoneToVerify, null);
+          const result: any = await firebaseService.sendPhoneVerificationCode(phoneToVerify, null);
           console.log("[SignUp] OTP sent successfully:", result);
           setConfirmationResult(result);
           setOtpSent(true);
@@ -69,13 +69,14 @@ const SignUp: React.FC<SignUpProps> = ({ onSuccess, onSwitchToLogin, logoUrl }) 
       setSyncStatus('syncing');
       console.log("[SignUp] Proceeding to final registration for:", formData.email);
       // Step 2: Register with Email/Password and include the verified phone
+      // IMPORTANT: Phone is verified, pass true explicitly so it is saved as verified in DB
       const completeUser = await firebaseService.register(
         formData.username, 
         formData.email, 
         formData.phone, 
         formData.password,
         UserRole.REQUESTER,
-        phoneVerified
+        true
       );
 
       console.log("[SignUp] Registration successful:", completeUser.id);
