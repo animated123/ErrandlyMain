@@ -66,6 +66,7 @@ export default function RunnerApplicationPage({
 
   // Verification Overlay / Logic
   const [showVerification, setShowVerification] = useState(false);
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
   const [emailOtp, setEmailOtp] = useState('');
   const [phoneOtp, setPhoneOtp] = useState('');
   const [emailOtpSent, setEmailOtpSent] = useState(false);
@@ -112,7 +113,7 @@ export default function RunnerApplicationPage({
   // Request physical location
   const handleGetLocation = () => {
     if (!navigator.geolocation) {
-      alert("Geolocation is not supported by your browser");
+      setError("Geolocation is not supported by your browser");
       return;
     }
     setIsGettingLocation(true);
@@ -126,7 +127,7 @@ export default function RunnerApplicationPage({
       },
       (err) => {
         console.error("GPS error:", err);
-        alert("Failed to capture live location coordinates. Please enable site permissions.");
+        setError("Failed to capture live location coordinates. Please enable site permissions.");
         setIsGettingLocation(false);
       },
       { enableHighAccuracy: true, timeout: 5000 }
@@ -219,10 +220,10 @@ export default function RunnerApplicationPage({
 
       if (channel === 'email') {
         setEmailOtpSent(true);
-        alert("A 6-digit OTP code has been dispatched to your email: " + form.email);
+        setVerificationNotice("A 6-digit verification code has been dispatched to your email: " + form.email);
       } else {
         setPhoneOtpSent(true);
-        alert("A 6-digit OTP code has been transmitted to your phone: " + form.phone);
+        setVerificationNotice("A 6-digit verification code has been transmitted to your phone: " + form.phone);
       }
     } catch (err: any) {
       setError(err.message || "Failed to transmit verification code.");
@@ -252,10 +253,10 @@ export default function RunnerApplicationPage({
 
       if (channel === 'email') {
         setEmailVerified(true);
-        alert("Email verification successful!");
+        setVerificationNotice("Email verification successful!");
       } else {
         setPhoneVerified(true);
-        alert("Phone contact verification successful!");
+        setVerificationNotice("Phone contact verification successful!");
       }
     } catch (err: any) {
       setError(err.message || "Incorrect verification credential.");
@@ -289,7 +290,7 @@ export default function RunnerApplicationPage({
 
       if (data.exists) {
         // Case A: exists -> trigger notification & must verify
-        alert("Account Linked: Your existing account will be automatically converted to a Runner account once your application is approved.");
+        setVerificationNotice("Existing account detected. Please verify your contact details below to link your runner application.");
         setShowVerification(true);
         // Dispatch OTPs automatically to save steps
         if (!emailVerified) handleTriggerOtp('email');
@@ -944,6 +945,13 @@ export default function RunnerApplicationPage({
                   To trace and link this application securely to your pre-existing profile, verify ownership of email & phone counters.
                 </p>
               </div>
+
+              {verificationNotice && (
+                <div className="p-3.5 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-2xl flex items-start gap-2.5 text-xs font-bold leading-relaxed">
+                  <CheckCircle2 size={16} className="shrink-0 mt-0.5 text-indigo-600" />
+                  <span>{verificationNotice}</span>
+                </div>
+              )}
 
               <div className="space-y-6 pt-4">
                 {/* Email verification input */}
